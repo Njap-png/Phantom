@@ -2,29 +2,6 @@
 // Phantom — space evolving multi-agent terminal
 // Zero dependencies. Run: node phantom.mjs
 
-// ── ANSI helpers ──────────────────────────────────────────
-const R = "\x1b[0m", B = "\x1b[1m", D = "\x1b[2m";
-const FG = (r, g, b) => `\x1b[38;2;${r};${g};${b}m`;
-const BG = (r, g, b) => `\x1b[48;2;${r};${g};${b}m`;
-const at = (c, r) => `\x1b[${r};${c}H`;
-const cls = "\x1b[2J";
-const home = "\x1b[H";
-const hide = "\x1b[?25l";
-const show = "\x1b[?25h";
-const svcur = "\x1b7";
-const rscur = "\x1b8";
-
-const theme = {
-  bg: [10, 10, 26], fg: [192, 192, 224],
-  green: [0, 255, 136], cyan: [0, 204, 255],
-  magenta: [255, 0, 204], yellow: [255, 136, 0],
-  red: [255, 34, 68], dim: [51, 51, 85],
-  border: [68, 68, 170], borderFocus: [136, 68, 255],
-  titleBg: [26, 26, 58], panelBg: [13, 13, 36],
-};
-
-const c = (name) => FG(...theme[name]);
-
 // ── EventBus ──────────────────────────────────────────────
 class EventBus {
   static i = new EventBus();
@@ -180,32 +157,178 @@ class AgentManager {
   get count() { return this.agents.size; }
 }
 
-// ── UI: Desktop (full-screen panels) ──────────────────────
-function isTermux() {
-  return !!(
-    process.env.TERMUX_VERSION ||
-    process.env.PREFIX?.startsWith("/data/data/com.termux")
-  );
-}
+// ── Environment Detection ─────────────────────────────────
+const ENV = (() => {
+  const isTTY = !!process.stdin.isTTY;
+  const isTermux = !!(process.env.TERMUX_VERSION || process.env.PREFIX?.startsWith("/data/data/com.termux"));
+  const isCI = !!process.env.CI || !!process.env.GITHUB_ACTIONS;
+  const isWindows = process.platform === "win32";
+  const isWSL = process.env.WSL_DISTRO_NAME || (process.env.OS?.includes("Linux") && isWindows);
+  const isTmux = !!process.env.TMUX;
+  const isScreen = !!process.env.STYLE;
+  const term = (process.env.TERM || "unknown").toLowerCase();
+  const colorterm = (process.env.COLORTERM || "").toLowerCase();
+
+  // Detect terminal emulator
+  let terminal = "unknown";
+  if (isTermux) terminal = "termux";
+  else if (term.includes("kitty")) terminal = "kitty";
+  else if (term.includes("alacritty")) terminal = "alacritty";
+  else if (term.includes("gnome")) terminal = "gnome";
+  else if (term.includes("konsole")) terminal = "konsole";
+  else if (term.includes("tmux")) terminal = "tmux";
+  else if (isTmux) terminal = "tmux";
+  else if (isScreen) terminal = "screen";
+  else if (term.includes("xterm")) terminal = "xterm";
+  else if (term.includes("vt100") || term.includes("vt220")) terminal = "legacy";
+  else if (term.includes("linux")) terminal = "linux-console";
+  else if (isWindows) terminal = "windows-console";
+  else if (process.env.TERM_PROGRAM === "iterm2") terminal = "iterm2";
+  else if (process.env.TERM_PROGRAM === "Apple_Terminal") terminal = "apple-terminal";
+  else if (process.env.VSCODE_INJECTION) terminal = "vscode";
+  else if (process.env.TERMINAL_EMULATOR === "JetBrains-JediTerm") terminal = "jetbrains";
+
+  // Detect color capability
+  let colors = 16;
+  if (colorterm === "truecolor" || colorterm === "24bit" ||
+      term.includes("truecolor") || term.includes("24bit") ||
+      terminal === "kitty" || terminal === "iterm2" ||
+      process.env.COLORTERM === "truecolor" ||
+      process.env.COLORTERM === "24bit") {
+    colors = 16777216; // truecolor
+  } else if (term.includes("256") || term.includes("xterm") || terminal === "gnome" || terminal === "konsole") {
+    colors = 256;
+  }
+
+  // Detect screen size
+  const getWinSize = () => {
+    try {
+      if (process.stdout.getWindowSize) {
+        const [c, r] = process.stdout.getWindowSize();
+        return { cols: Math.max(c, 20), rows: Math.max(r, 10) };
+      }
+    } catch {}
+    return { cols: 80, rows: 24 };
+  };
+
+  const { cols, rows } = getWinSize();
+  let screenSize = "medium";
+  if (cols < 60 || rows < 15) screenSize = "tiny";
+  else if (cols < 80 || rows < 24) screenSize = "small";
+  else if (cols >= 120 && rows >= 40) screenSize = "large";
+  else if (cols >= 160 && rows >= 50) screenSize = "huge";
+
+  // Detect platform
+  let platform = process.platform;
+  if (isTermux) platform = "termux";
+  if (isWSL) platform = "wsl";
+
+  // Detect mobile/touch
+  let inputMode = "keyboard";
+  if (isTermux) {
+    if (process.env.TERMUX_APP__DATA_DIR || process.env.TERMUX_VERSION) {
+      // Check if touch keyboard might be used
+      inputMode = process.env.TERMUX__PERCENTAGE ? "touch" : "keyboard";
+    }
+  }
+
+  return {
+    tty: isTTY,
+    interactive: isTTY && !isCI,
+    platform,
+    terminal,
+    colors,
+    hasTrueColor: colors >= 16777216,
+    has256: colors >= 256,
+    cols,
+    rows,
+    screenSize,
+    inputMode,
+    isTermux,
+    isTmux,
+    isWSL,
+    isWindows,
+    term,
+  };
+})();
+
+// ── ANSI adapters (based on color capability) ─────────────
+const ansi = (() => {
+  const useBasic = !ENV.has256;
+  const use256 = ENV.has256 && !ENV.hasTrueColor;
+
+  if (useBasic) {
+    // 16 color palette
+    const map = {
+      bg: 0, fg: 7, green: 2, cyan: 6, magenta: 5, yellow: 3, red: 1, dim: 8,
+      border: 4, borderFocus: 5, titleBg: 0, panelBg: 0,
+    };
+    return {
+      fg: (name) => `\x1b[3${map[name] || 7}m`,
+      bg: (name) => `\x1b[4${map[name] || 0}m`,
+      fgrgb: () => "",
+      bgrgb: () => "",
+      reset: "\x1b[0m",
+      bold: "\x1b[1m",
+      dim: "\x1b[2m",
+      uline: "\x1b[4m",
+    };
+  }
+
+  if (use256) {
+    const map256 = {
+      bg: 16, fg: 188, green: 46, cyan: 45, magenta: 199, yellow: 214, red: 196,
+      dim: 60, border: 61, borderFocus: 99, titleBg: 17, panelBg: 16,
+    };
+    const fg = (name) => `\x1b[38;5;${map256[name] || 188}m`;
+    const bg = (name) => `\x1b[48;5;${map256[name] || 16}m`;
+    const fgrgb = () => "";
+    const bgrgb = () => "";
+    return { fg, bg, fgrgb, bgrgb, reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m", uline: "\x1b[4m" };
+  }
+
+  // True color
+  const col = { bg: [10,10,26], fg: [192,192,224], green: [0,255,136], cyan: [0,204,255],
+    magenta: [255,0,204], yellow: [255,136,0], red: [255,34,68], dim: [51,51,85],
+    border: [68,68,170], borderFocus: [136,68,255], titleBg: [26,26,58], panelBg: [13,13,36] };
+  const fg = (name) => `\x1b[38;2;${col[name].join(";")}m`;
+  const bg = (name) => `\x1b[48;2;${col[name].join(";")}m`;
+  const fgrgb = (r,g,b) => `\x1b[38;2;${r};${g};${b}m`;
+  const bgrgb = (r,g,b) => `\x1b[48;2;${r};${g};${b}m`;
+  return { fg, bg, fgrgb, bgrgb, reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m", uline: "\x1b[4m" };
+})();
+
+const R = ansi.reset, B = ansi.bold, D = ansi.dim;
+const c = (name) => ansi.fg(name);
+const agentFg = (ac) => ENV.hasTrueColor ? `\x1b[38;2;${ac[0]};${ac[1]};${ac[2]}m` :
+                         ENV.has256 ? `\x1b[38;5;${16 + (ac[0]*6/256|0)*36 + (ac[1]*6/256|0)*6 + (ac[2]*6/256|0)}m` :
+                         "";
+const BG = (name) => ansi.bg(name);
+const at = (c, r) => `\x1b[${r};${c}H`;
+const cls = "\x1b[2J";
+const home = "\x1b[H";
+const hide = "\x1b[?25l";
+const show = "\x1b[?25h";
+const mono = !ENV.has256;
 
 // Terminal raw mode helpers
 let rawMode = false;
 function raw(on) {
   if (on && !rawMode && process.stdin.isTTY) {
-    process.stdin.setRawMode(true);
-    rawMode = true;
+    try { process.stdin.setRawMode(true); rawMode = true; } catch {}
   } else if (!on && rawMode) {
-    process.stdin.setRawMode(false);
-    rawMode = false;
+    try { process.stdin.setRawMode(false); rawMode = false; } catch {}
   }
 }
 
 function getSize() {
-  if (process.stdout.getWindowSize) {
-    const [c, r] = process.stdout.getWindowSize();
-    return { cols: Math.max(c, 20), rows: Math.max(r, 10) };
-  }
-  return { cols: 80, rows: 24 };
+  try {
+    if (process.stdout.getWindowSize) {
+      const [c, r] = process.stdout.getWindowSize();
+      return { cols: Math.max(c, 20), rows: Math.max(r, 10) };
+    }
+  } catch {}
+  return { cols: ENV.cols || 80, rows: ENV.rows || 24 };
 }
 
 // ── Desktop Mode ──────────────────────────────────────────
@@ -229,7 +352,7 @@ class DesktopUI {
     });
 
     this.bus.on("agent:msg", ({ agent, text }) => {
-      this.log(agent.id, `${FG(...agent.color)}${agent.name}${R} ${D}»${R} ${text}`);
+      this.log(agent.id, `${agentFg(agent.color)}${agent.name}${R} ${D}»${R} ${text}`);
       this.render();
     });
 
@@ -290,7 +413,7 @@ class DesktopUI {
     const agents = this.am.list;
     const thinking = agents.filter(a => a.status === "thinking").length;
     const statusStr = thinking > 0 ? `${c("yellow")}🧠 ${thinking} thinking${R}` : `${c("green")}⚡ idle${R}`;
-    out += `${BG(...theme.titleBg)}${c("green")}${B} PHANTOM${R}${BG(...theme.titleBg)} ${D}space evolving terminal${R}${BG(...theme.titleBg)} ${D}|${R}${BG(...theme.titleBg)} agents: ${agents.length} ${D}|${R}${BG(...theme.titleBg)} ${statusStr}${R}`;
+    out += `${BG("titleBg")}${c("green")}${B} PHANTOM${R}${BG("titleBg")} ${D}space evolving terminal${R}${BG("titleBg")} ${D}|${R}${BG("titleBg")} agents: ${agents.length} ${D}|${R}${BG("titleBg")} ${statusStr}${R}`;
     out += " ".repeat(Math.max(0, termW - 60)) + "\n";
 
     // ── Panels ──
@@ -302,8 +425,7 @@ class DesktopUI {
       const x = col * pW + 1;
       const y = row * pH + headerH + 1;
       const isFocused = i === this.focused;
-      const borderC = isFocused ? c("borderFocus") : c("border");
-      const borderR = isFocused ? FG(...theme.borderFocus) : FG(...theme.border);
+      const borderFg = isFocused ? ansi.fg("borderFocus") : ansi.fg("border");
 
       // top border
       out += `${at(x, y)}${borderR}┌${borderR}${"─".repeat(Math.max(0, pW - 2))}${borderR}┐${R}`;
@@ -324,13 +446,13 @@ class DesktopUI {
       for (let l = 0; l < bodyH; l++) {
         const ly = y + 1 + l;
         if (ly >= termH) break;
-        out += `${at(x, ly)}${borderR}${R}${BG(...theme.panelBg)} ${R}`;
+        out += `${at(x, ly)}${borderR}${R}${BG("panelBg")} ${R}`;
         const logIdx = start + l;
         if (logIdx < logs.length) {
           let line = logs[logIdx];
           const maxW = pW - 3;
           if (line.length > maxW) line = line.substring(0, maxW - 1) + "…";
-          out += `${BG(...theme.panelBg)}${line}${R}`;
+          out += `${BG("panelBg")}${line}${R}`;
         }
         out += " ".repeat(Math.max(0, pW - 2));
         out += `${at(x + pW - 1, ly)}${borderR}${R}`;
@@ -355,11 +477,11 @@ class DesktopUI {
     // ── Command line ──
     if (this.cmdMode) {
       const cmdY = termH - 1;
-      out += `${at(1, cmdY)}${BG(...theme.bg)}${c("cyan")}⚡${R} ${this.cmdBuf}${R}`;
+      out += `${at(1, cmdY)}${BG("bg")}${c("cyan")}⚡${R} ${this.cmdBuf}${R}`;
       out += " ".repeat(Math.max(0, termW - this.cmdBuf.length - 3));
     } else {
       const footerY = termH;
-      out += `${at(1, footerY)}${BG(...theme.titleBg)}${D}ESC cmd  TAB focus  →← panels  SPC agents  q quit${R}`;
+      out += `${at(1, footerY)}${BG("titleBg")}${D}ESC cmd  TAB focus  →← panels  SPC agents  q quit${R}`;
     }
 
     process.stdout.write(out);
@@ -526,7 +648,7 @@ class TermuxUI {
       this.draw();
     });
     this.bus.on("agent:msg", ({ agent, text }) => {
-      this.w(`${FG(...agent.color)}${agent.name}${R} ${D}»${R} ${text}`);
+      this.w(`${agentFg(agent.color)}${agent.name}${R} ${D}»${R} ${text}`);
       this.draw();
     });
     this.bus.on("agent:evolved", ({ agent, level }) => {
@@ -625,30 +747,120 @@ class TermuxUI {
   }
 }
 
+// ── UI: Minimal (for tiny screens, CI, pipes) ─────────────
+class MinimalUI {
+  constructor(am) {
+    this.am = am;
+    this.bus = EventBus.i;
+    this.log = [];
+    this.running = true;
+    this.bus.on("agent:msg", ({ agent, text }) => {
+      this.w(`${agentFg(agent.color)}${agent.name}${R} » ${text}`);
+      this.flush();
+    });
+    this.bus.on("agent:spawned", (a) => {
+      this.w(`${a.name} spawned [${a.role}]`);
+      this.flush();
+    });
+    this.bus.on("agent:evolved", ({ agent, level }) => {
+      this.w(`${agent.name} → level ${level}`);
+      this.flush();
+    });
+    this.bus.on("agent:removed", (id) => {
+      this.w(`Agent ${id} removed`);
+      this.flush();
+    });
+  }
+  w(msg) { this.log.push(msg); if (this.log.length > 100) this.log.shift(); }
+  flush() { if (this.log.length > 0) console.log(this.log[this.log.length - 1]); }
+  start() {
+    console.log(`Phantom${D} space evolving terminal${R}`);
+    this.am.spawnDefaults();
+    if (!this.am.llm?.hasLLM) console.log(`${D}No LLM. Set OPENAI_API_KEY for AI responses.${R}`);
+    if (!ENV.interactive) {
+      // Non-interactive: just output and wait a bit then exit
+      setTimeout(() => process.exit(0), 2000);
+    } else {
+      this.prompt();
+    }
+  }
+  prompt() {
+    if (!this.running) return;
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+    rl.question(`${c("cyan")}⚡${R} `, (ans) => {
+      rl.close();
+      if (ans.trim()) this.handleCommand(ans.trim());
+      else this.prompt();
+    });
+  }
+  handleCommand(cmd) {
+    const p = cmd.trim().split(/\s+/);
+    const op = p[0]?.toLowerCase(), args = p.slice(1);
+    switch (op) {
+      case "spawn": case "s": this.am.spawn(args[0], args[1], args.slice(2).join(" ")); break;
+      case "list": case "ls": console.log(`Agents: ${this.am.list.map(a => `${a.name}[${this.am.agents.get(a.id).status}]`).join(", ")}`); break;
+      case "broadcast": case "b": { const f = this.am.list[0]?.id; if (f) this.am.broadcast(f, args.join(" ")); break; }
+      case "debate": case "d": this.am.debate(args.join(" ") || "what should we build?"); break;
+      case "evolve": case "e": this.am.evolveAll(); break;
+      case "clear": case "c": this.log = []; break;
+      case "quit": case "q": this.running = false; console.log("Bye."); process.exit(0);
+      default: console.log(`? ${cmd}`);
+    }
+    if (this.running) this.prompt();
+  }
+}
+
+// ── UI Selector ───────────────────────────────────────────
+function selectUI(am) {
+  const e = ENV;
+
+  // Show environment info
+  const info = [];
+  if (e.isTermux) info.push("Termux");
+  if (e.isTmux) info.push("tmux");
+  if (e.isWSL) info.push("WSL");
+  if (e.isWindows) info.push("Windows");
+  if (info.length) console.error(`${D}${info.join("/")} mode${R}`);
+
+  // Non-interactive (CI, pipe): minimal output
+  if (!e.interactive) {
+    console.error(`${D}Non-interactive mode${R}`);
+    return new MinimalUI(am);
+  }
+
+  // Termux: use readline-based UI
+  if (e.isTermux) return new TermuxUI(am);
+
+  // Tiny/small screens: minimal UI
+  if (e.screenSize === "tiny") return new MinimalUI(am);
+  if (e.screenSize === "small") return new TermuxUI(am);
+
+  // Windows console (cmd.exe): Termux UI (no ANSI box drawing support)
+  if (e.isWindows && e.terminal === "windows-console") return new TermuxUI(am);
+
+  // Desktop with full terminal: multi-panel
+  try {
+    const ui = new DesktopUI(am);
+    return ui;
+  } catch (err) {
+    console.error(`${D}Full UI unavailable, falling back: ${err.message}${R}`);
+    return new TermuxUI(am);
+  }
+}
+
 // ── Main ──────────────────────────────────────────────────
 import readline from "readline";
 
 const llm = createProvider();
 const am = new AgentManager(llm);
 
-if (isTermux()) {
-  const ui = new TermuxUI(am);
-  ui.start();
-} else {
-  // Check if terminal supports cursor positioning (desktop mode)
-  try {
-    const ui = new DesktopUI(am);
-    ui.start();
-  } catch (e) {
-    console.error("Desktop UI failed, falling back to Termux mode:", e.message);
-    const ui = new TermuxUI(am);
-    ui.start();
-  }
-}
+const ui = selectUI(am);
+ui.start();
 
 process.on("SIGINT", () => process.exit(0));
 process.on("SIGTERM", () => process.exit(0));
 process.on("exit", () => {
-  process.stdout.write(show);
-  raw(false);
+  if (typeof raw !== "undefined") {
+    try { process.stdout.write(show); raw(false); } catch {}
+  }
 });
