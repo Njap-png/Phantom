@@ -1,0 +1,25 @@
+{
+  "name": "phantom",
+  "version": "0.1.0",
+  "description": "Space-evolving multi-agent terminal UI",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "phantom": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "dependencies": {
+    "blessed": "^0.1.81",
+    "blessed-contrib": "^4.11.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/blessed": "^0.1.25",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0"
+  }
+}
