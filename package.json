@@ -1,21 +1,21 @@
 {
   "name": "phantom",
   "version": "0.2.0",
-  "description": "Space-evolving multi-agent terminal UI — works on desktop & Termux",
-  "main": "dist/index.js",
+  "description": "Space-evolving multi-agent terminal UI — zero-setup, works on desktop & Termux",
+  "main": "phantom.mjs",
   "type": "module",
   "bin": {
-    "phantom": "./dist/index.js"
+    "phantom": "./phantom.mjs"
   },
   "scripts": {
+    "start": "node phantom.mjs",
     "build": "tsc",
-    "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js",
     "clean": "rm -rf dist"
   },
   "keywords": ["agent", "terminal", "ai", "multi-agent", "termux"],
   "license": "MIT",
-  "dependencies": {
+  "optionalDependencies": {
     "blessed": "^0.1.81"
   },
   "devDependencies": {
