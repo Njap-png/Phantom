@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node phantom.mjs",
+    "run": "bash run.sh",
     "build": "tsc",
     "dev": "tsc && node dist/index.js",
     "clean": "rm -rf dist"
