@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 
-import { PhantomTerminal } from "./ui/terminal.js";
+import { isTermux } from "./core/config.js";
 
-const terminal = new PhantomTerminal();
-terminal.start();
+if (isTermux()) {
+  const { PhantomTermuxUI } = await import("./ui/termux.js");
+  const ui = new PhantomTermuxUI();
+  ui.start();
+} else {
+  const { PhantomTerminal } = await import("./ui/terminal.js");
+  const terminal = new PhantomTerminal();
+  terminal.start();
+}
