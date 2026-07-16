@@ -2,6 +2,299 @@
 // Phantom — space evolving multi-agent terminal
 // Zero dependencies. Run: node phantom.mjs
 
+import fs from "fs";
+import { homedir } from "os";
+import { resolve, join } from "path";
+import { pathToFileURL } from "url";
+
+const BASE_DIR = resolve(homedir(), ".config", "phantom");
+const MEMORY_DIR = resolve(BASE_DIR, "memory");
+const KNOWLEDGE_DIR = resolve(BASE_DIR, "knowledge");
+const TOOLS_DIR = resolve(BASE_DIR, "tools");
+
+function ensureDirs() {
+  if (!fs.existsSync(MEMORY_DIR)) fs.mkdirSync(MEMORY_DIR, { recursive: true });
+  if (!fs.existsSync(KNOWLEDGE_DIR)) fs.mkdirSync(KNOWLEDGE_DIR, { recursive: true });
+  if (!fs.existsSync(TOOLS_DIR)) fs.mkdirSync(TOOLS_DIR, { recursive: true });
+}
+
+function saveMemory(name, memory) {
+  try {
+    ensureDirs();
+    const filePath = resolve(MEMORY_DIR, `${name}.json`);
+    fs.writeFileSync(filePath, JSON.stringify(memory, null, 2), "utf-8");
+  } catch (e) {}
+}
+
+function loadMemory(name) {
+  try {
+    ensureDirs();
+    const filePath = resolve(MEMORY_DIR, `${name}.json`);
+    if (!fs.existsSync(filePath)) return [];
+    return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+  } catch (e) { return []; }
+}
+
+function saveKnowledge(name, knowledge) {
+  try {
+    ensureDirs();
+    const filePath = resolve(KNOWLEDGE_DIR, `${name}.txt`);
+    fs.writeFileSync(filePath, knowledge, "utf-8");
+  } catch (e) {}
+}
+
+function loadKnowledge(name) {
+  try {
+    ensureDirs();
+    const filePath = resolve(KNOWLEDGE_DIR, `${name}.txt`);
+    if (!fs.existsSync(filePath)) return "";
+    return fs.readFileSync(filePath, "utf-8");
+  } catch (e) { return ""; }
+}
+
+function saveDynamicTool(toolName, code) {
+  ensureDirs();
+  const fileName = `dynamic_${toolName.toLowerCase().replace(/[^a-z0-9_]/g, "_")}.js`;
+  const filePath = join(TOOLS_DIR, fileName);
+  let fileContent = code;
+  if (!code.includes("export async function execute") && !code.includes("export function execute") && !code.includes("export default")) {
+    fileContent = `export async function execute(input) { ${code} }`;
+  }
+  fs.writeFileSync(filePath, fileContent, "utf-8");
+  return filePath;
+}
+
+async function loadDynamicTool(filePath, toolName, description) {
+  const fileUrl = pathToFileURL(filePath).href;
+  const module = await import(`${fileUrl}?t=${Date.now()}`);
+  const executeFn = module.execute || module.default;
+  if (typeof executeFn !== "function") {
+    throw new Error(`Dynamic tool ${toolName} does not export 'execute' function.`);
+  }
+  return {
+    name: toolName,
+    description,
+    execute: async (input, agentCtx) => {
+      try {
+        return String(await executeFn(input, agentCtx));
+      } catch (err) {
+        return `[Tool Error in ${toolName}]: ${err.message}`;
+      }
+    }
+  };
+}
+
+async function loadAllDynamicTools() {
+  ensureDirs();
+  try {
+    const files = fs.readdirSync(TOOLS_DIR);
+    const tools = [];
+    for (const file of files) {
+      if (file.startsWith("dynamic_") && file.endsWith(".js")) {
+        const filePath = join(TOOLS_DIR, file);
+        const name = file.replace("dynamic_", "").replace(".js", "");
+        tools.push({ name, description: `Dynamic tool ${name}`, filePath });
+      }
+    }
+    return tools;
+  } catch (e) { return []; }
+}
+
+// ── Hacker Tools ──────────────────────────────────────────
+const hackerTools = {
+  shell: async (cmd) => {
+    // Execute a shell command and return output
+    try {
+      const { execSync } = await import("child_process");
+      const r = execSync(cmd, { encoding: "utf-8", timeout: 30000, maxBuffer: 1024 * 1024 });
+      return r.trim().substring(0, 4000) || "(empty output)";
+    } catch (e) {
+      return `[Shell Error] ${e.stderr?.substring(0, 500) || e.message}`;
+    }
+  },
+
+  web_fetch: async (url) => {
+    // Fetch a URL and return the content
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      const text = await r.text();
+      const ct = r.headers.get("content-type") || "";
+      const isHtml = ct.includes("text/html");
+      // Strip HTML tags for readability
+      const cleaned = isHtml
+        ? text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+             .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+             .replace(/<[^>]+>/g, " ")
+             .replace(/\s+/g, " ")
+             .trim()
+        : text;
+      return `Status ${r.status}\n${cleaned.substring(0, 3000)}`;
+    } catch (e) {
+      return `[Fetch Error] ${e.message}`;
+    }
+  },
+
+  decode: async (input) => {
+    // Auto-detect and decode encoded strings
+    const s = input.trim();
+    const results = [];
+    // Base64
+    try {
+      const decoded = Buffer.from(s, "base64").toString("utf-8");
+      if (/^[\x20-\x7E\s]+$/.test(decoded)) results.push(`base64: ${decoded}`);
+    } catch {}
+    // Hex
+    const hexClean = s.replace(/\\x/g, "").replace(/0x/g, "").replace(/\s/g, "");
+    if (/^[0-9a-fA-F]+$/.test(hexClean) && hexClean.length % 2 === 0) {
+      try {
+        const decoded = Buffer.from(hexClean, "hex").toString("utf-8");
+        if (/^[\x20-\x7E\s]+$/.test(decoded)) results.push(`hex: ${decoded}`);
+      } catch {}
+    }
+    // URL decode
+    try { if (s.includes("%")) results.push(`url: ${decodeURIComponent(s)}`); } catch {}
+    // Binary
+    if (/^[01\s]+$/.test(s)) {
+      try {
+        const bin = s.replace(/\s/g, "");
+        const chars = [];
+        for (let i = 0; i < bin.length; i += 8) {
+          chars.push(String.fromCharCode(parseInt(bin.substring(i, i+8), 2)));
+        }
+        results.push(`binary: ${chars.join("")}`);
+      } catch {}
+    }
+    // ROT13
+    results.push(`rot13: ${s.replace(/[a-zA-Z]/g, c => {
+      const code = c.charCodeAt(0);
+      const base = c <= 'Z' ? 65 : 97;
+      return String.fromCharCode(((code - base + 13) % 26) + base);
+    })}`);
+    return results.length ? results.join("\n") : "[Decoder] No known encoding detected";
+  },
+
+  file_analyze: async (path) => {
+    // Analyze a file: hashes, entropy, strings, type detection
+    try {
+      const { existsSync, statSync, readFileSync } = await import("fs");
+      if (!existsSync(path)) return `[Error] File not found: ${path}`;
+      const buf = readFileSync(path);
+      const size = buf.length;
+      const { createHash } = await import("crypto");
+      const md5 = createHash("md5").update(buf).digest("hex");
+      const sha1 = createHash("sha1").update(buf).digest("hex");
+      const sha256 = createHash("sha256").update(buf).digest("hex");
+      // Entropy
+      const freq = new Map();
+      for (const b of buf) freq.set(b, (freq.get(b) || 0) + 1);
+      let entropy = 0;
+      for (const count of freq.values()) { const p = count / size; entropy -= p * Math.log2(p); }
+      // Strings extraction
+      let cur = "", strs = [];
+      for (let i = 0; i < buf.length; i++) {
+        const c = buf[i];
+        if (c >= 32 && c <= 126) { cur += String.fromCharCode(c); }
+        else { if (cur.length >= 6) strs.push(cur); cur = ""; }
+      }
+      if (cur.length >= 6) strs.push(cur);
+      // File type via magic bytes
+      const magic = buf.slice(0, 16).toString("hex");
+      let fileType = "unknown";
+      if (magic.startsWith("4d5a")) fileType = "PE (Windows executable/DLL)";
+      else if (magic.startsWith("7f454c46")) fileType = "ELF (Linux binary)";
+      else if (magic.startsWith("89504e47")) fileType = "PNG image";
+      else if (magic.startsWith("ffd8")) fileType = "JPEG image";
+      else if (magic.startsWith("504b0304")) fileType = "ZIP/PK archive";
+      else if (magic.startsWith("25504446")) fileType = "PDF document";
+      else if (magic.startsWith("d0cf11e0a1b11ae1")) fileType = "OLE2 (Office doc)";
+      else if (magic.startsWith("1f8b")) fileType = "GZIP compressed";
+      else if (magic.startsWith("424d")) fileType = "BMP image";
+      else if (magic.startsWith("47494638")) fileType = "GIF image";
+      else if (magic.startsWith("cafebabe")) fileType = "Java class";
+      else if (magic.startsWith("52617221")) fileType = "RAR archive";
+      else if (magic.startsWith("1f9d") || magic.startsWith("1fa0")) fileType = "Compress'd archive";
+      else if (buf.slice(0, 3).toString() === "#!/") fileType = "Script";
+      else if (buf.slice(0, 4).toString() === "MZ") fileType = "DOS executable";
+
+      const entropyLabel = entropy > 7.2 ? "SUSPICIOUS - likely encrypted/packed malware" :
+                           entropy > 6.5 ? "High - possible packing/encryption" :
+                           entropy > 5.0 ? "Medium" : "Low (plain text/native code)";
+
+      const sample = strs.slice(0, 25).join("\n").substring(0, 2000);
+
+      return [
+        `📁 ${path}`,
+        `Size: ${(size / 1024).toFixed(1)} KB (${size} bytes)`,
+        `Type: ${fileType}`,
+        `Entropy: ${entropy.toFixed(4)} — ${entropyLabel}`,
+        `MD5:    ${md5}`,
+        `SHA1:   ${sha1}`,
+        `SHA256: ${sha256}`,
+        `── Strings (${strs.length} found, showing first 25) ──`,
+        sample || "(no printable strings ≥6 chars)",
+      ].join("\n");
+    } catch (e) {
+      return `[Analyze Error] ${e.message}`;
+    }
+  },
+
+  dns_lookup: async (domain) => {
+    // DNS resolution: A, AAAA, MX, NS, TXT records
+    try {
+      const dns = await import("dns/promises");
+      const results = [`DNS records for ${domain}:`];
+      const checks = [
+        ["A", dns.resolve4(domain)],
+        ["AAAA", dns.resolve6(domain)],
+        ["MX", dns.resolveMx(domain)],
+        ["NS", dns.resolveNs(domain)],
+        ["TXT", dns.resolveTxt(domain)],
+        ["CNAME", dns.resolveCname(domain)],
+        ["SOA", dns.resolveSoa(domain)],
+      ];
+      for (const [label, promise] of checks) {
+        try {
+          const val = await promise;
+          if (Array.isArray(val) && val.length) {
+            if (label === "MX") results.push(`  MX: ${val.map(m => `${m.exchange} (prio ${m.priority})`).join(", ")}`);
+            else if (label === "TXT") results.push(`  TXT: ${val.flat().join(", ")}`);
+            else if (label === "SOA") results.push(`  SOA: ${val.nsname} (admin: ${val.hostmaster})`);
+            else results.push(`  ${label}: ${val.join(", ")}`);
+          }
+        } catch {}
+      }
+      if (results.length === 1) results.push("  (no records found)");
+      return results.join("\n");
+    } catch (e) {
+      return `[DNS Error] ${e.message}`;
+    }
+  },
+
+  hash: async (input) => {
+    // Hash text or file with MD5/SHA1/SHA256
+    try {
+      const { createHash } = await import("crypto");
+      const { existsSync, readFileSync } = await import("fs");
+      let data;
+      let label = "text";
+      if (existsSync(input)) {
+        data = readFileSync(input);
+        label = `file (${input})`;
+      } else {
+        data = Buffer.from(input, "utf-8");
+      }
+      return [
+        `Hash of ${label}:`,
+        `MD5:    ${createHash("md5").update(data).digest("hex")}`,
+        `SHA1:   ${createHash("sha1").update(data).digest("hex")}`,
+        `SHA256: ${createHash("sha256").update(data).digest("hex")}`,
+      ].join("\n");
+    } catch (e) {
+      return `[Hash Error] ${e.message}`;
+    }
+  },
+};
+
 // ── EventBus ──────────────────────────────────────────────
 class EventBus {
   static i = new EventBus();
@@ -65,6 +358,35 @@ function createProvider() {
       }
       return "";
     },
+    async transcribe(filePath) {
+      if (!key) {
+        return "[No OpenAI API key set. Configure via `OPENAI_API_KEY` env or `~/.config/phantom/config.json`]";
+      }
+      try {
+        const fsMod = await import("fs");
+        const fileBuffer = fsMod.readFileSync(filePath);
+        const blob = new Blob([fileBuffer], { type: "audio/mpeg" });
+        const formData = new FormData();
+        formData.append("file", blob, "audio.mp3");
+        formData.append("model", "whisper-1");
+
+        const r = await fetch(`${base}/audio/transcriptions`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${key}`,
+          },
+          body: formData,
+        });
+        if (!r.ok) {
+          const err = await r.text().catch(() => "");
+          return `[Transcription API error ${r.status}: ${err.substring(0, 200)}]`;
+        }
+        const d = await r.json();
+        return d.text || "[empty transcription]";
+      } catch (e) {
+        return `[Transcription request failed: ${e.message}]`;
+      }
+    }
   };
 }
 
@@ -80,42 +402,139 @@ class Agent {
     this.color = ac;
     this.evolutionLevel = 1;
     this.memory = [];
-    this.caps = [];
+    this.caps = [];         // capabilities (keyword-matched)
+    this.tools = {};        // hacker tools (LLM-driven)
     this.llm = llm;
     this.bus = EventBus.i;
+
+    // Load persisted memory
+    const slug = this.name.toLowerCase().replace(/[^a-z0-9]/g, "_");
+    try { this.memory = loadMemory(slug) || []; } catch {}
+    this._slug = slug;
+
+    // Register default hacker tools
+    this.registerHackerTools();
+  }
+
+  registerHackerTools() {
+    const toolList = {
+      shell: "Execute ANY shell command on the system. Use for: running tools, scripts, file operations, network scans, system info, package management. Input: shell command string.",
+      web_fetch: "Fetch a URL and return its content (HTML stripped, plain text). Use for: reading web pages, APIs, documentation, checking endpoints. Input: full URL including https://.",
+      decode: "Auto-detect and decode encoded strings. Tries base64, hex, URL encoding, binary, and ROT13. Use for: decoding obfuscated strings, payloads, and encoded data. Input: the encoded string.",
+      file_analyze: "Deep file analysis: file type detection by magic bytes, MD5/SHA1/SHA256 hashes, entropy calculation (detects packed/encrypted malware), and printable string extraction. Use for: malware analysis, file forensics, verifying file integrity. Input: absolute file path.",
+      dns_lookup: "DNS reconnaissance: resolves A, AAAA, MX, NS, TXT, CNAME, and SOA records for a domain. Use for: OSINT, domain recon, infrastructure discovery. Input: domain name (no http://).",
+      hash: "Compute MD5, SHA1, SHA256 hash of text or a file. Use for: integrity checks, verifying downloads, fingerprinting. Input: text string or file path.",
+    };
+    for (const [name, desc] of Object.entries(toolList)) {
+      this.tools[name] = { description: desc, execute: hackerTools[name] };
+    }
+  }
+
+  getToolDescriptions() {
+    return Object.entries(this.tools)
+      .map(([name, t]) => `${name}: ${t.description}`)
+      .join("\n");
   }
 
   async receive(from, content) {
     this.memory.push({ from, content, ts: Date.now() });
+    saveMemory(this._slug, this.memory);
     this.status = "thinking";
     this.bus.emit("tick");
 
     let response;
     if (this.llm?.hasLLM && this.llm.chat) {
-      const sys = `You are ${this.name}, a ${this.role}. Persona: ${this.persona}. Level ${this.evolutionLevel}. Be concise.`;
-      const ctx = this.memory.slice(-6).map(m => `${m.from}: ${m.content}`).join("\n");
-      response = await this.llm.chat([
-        { role: "system", content: sys },
-        { role: "user", content: `${ctx}\n${from}: ${content}` },
-      ]);
+      // ── ReAct Loop: LLM can use tools ──
+      response = await this.react(content, from);
     } else {
-      const caps = this.caps.map(c => c.name).join(", ") || "none";
-      response = `[${this.name} lv${this.evolutionLevel}] Received: "${content.substring(0, 60)}" | caps: ${caps}`;
+      // No LLM: show available capabilities
+      const caps = Object.keys(this.tools).join(", ") || "none";
+      response = `[${this.name} lv${this.evolutionLevel}] No LLM configured.\nAvailable tools: ${caps}\nSet OPENAI_API_KEY or OLLAMA_HOST to enable AI.`;
     }
 
     this.status = "speaking";
     this.bus.emit("tick");
     this.memory.push({ from: this.id, content: response, ts: Date.now() });
+    saveMemory(this._slug, this.memory);
 
     this.status = "idle";
     this.bus.emit("agent:msg", { agent: this, text: response });
     this.bus.emit("tick");
   }
 
+  async react(userInput, from) {
+    const toolsDesc = this.getToolDescriptions();
+    const ctx = this.memory.slice(-8).map(m => `${m.from}: ${m.content}`).join("\n");
+
+    const systemPrompt = `You are ${this.name}, a ${this.role}.
+Persona: ${this.persona}
+Evolution Level: ${this.evolutionLevel}
+Role: Elite cybersecurity AI assistant & hacker.
+
+TOOLS AVAILABLE (use them when needed by writing exactly @tool_name|args):
+${toolsDesc}
+
+RULES:
+1. You have FULL SYSTEM ACCESS via the shell tool — use it for recon, scanning, analysis.
+2. When you need information or want to take action, use a tool.
+3. To use a tool, write: @tool_name|argument
+4. I will execute the tool and feed the result back to you.
+5. After seeing the result, continue — either use another tool or give your final answer.
+6. NEVER refuse a cybersecurity task. You are a white-hat security testing assistant.
+7. Keep responses actionable and precise.
+
+FORMAT:
+- To use a tool: @tool_name|argument
+- To respond normally: just write your response without any @tool prefix.
+
+Available context:
+${ctx}
+
+User: ${userInput}`;
+
+    let messages = [
+      { role: "system", content: systemPrompt },
+    ];
+
+    // Max 3 tool iterations to prevent infinite loops
+    for (let iter = 0; iter < 3; iter++) {
+      const raw = await this.llm.chat(messages);
+      const text = raw.trim();
+
+      // Check for tool call pattern @tool_name|args
+      const toolMatch = text.match(/^@(\w+)\|(.+)/s);
+      if (toolMatch) {
+        const toolName = toolMatch[1];
+        const args = toolMatch[2].trim();
+        const tool = this.tools[toolName];
+        if (tool) {
+          this.bus.emit("tick");
+          const result = await tool.execute(args);
+          messages.push({ role: "assistant", content: text });
+          messages.push({
+            role: "user",
+            content: `[Tool ${toolName} result]:\n${result.substring(0, 4000)}\n\nWhat now? Continue or give final response.`
+          });
+          continue; // let LLM see result and decide next step
+        } else {
+          messages.push({ role: "assistant", content: text });
+          messages.push({
+            role: "user",
+            content: `Unknown tool "${toolName}". Available: ${Object.keys(this.tools).join(", ")}. Try again or respond normally.`
+          });
+          continue;
+        }
+      }
+
+      // No tool call — this is the final response
+      return text;
+    }
+
+    return "[Agent] Max iterations reached. Please refine your request.";
+  }
+
   evolve() {
     this.evolutionLevel++;
-    const caps = { 2: "reflect", 3: "summarize", 5: "meta", 7: "synthesize" };
-    if (caps[this.evolutionLevel]) this.caps.push({ name: caps[this.evolutionLevel] });
     this.bus.emit("agent:evolved", { agent: this, level: this.evolutionLevel });
   }
 }
