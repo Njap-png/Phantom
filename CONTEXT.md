@@ -41,7 +41,7 @@
 └── CONTEXT.md           ← THIS FILE
 ```
 
-## All 18 Tools
+## All 26 Tools
 
 | Tool | What it does |
 |------|-------------|
@@ -63,6 +63,14 @@
 | `cve_search` | Search NVD for CVEs by query (e.g. "apache 2.4.49") |
 | `searchsploit` | Search exploit-db/packetstorm for public exploits |
 | `bruteforce` | Multi-protocol brute force: SSH, FTP, HTTP, MySQL |
+| `file_read` | Read any file (max 100KB) |
+| `file_write` | Write content to any file (creates dirs) — `path|content` |
+| `file_edit` | Find/replace text in a file — `path|old|new` |
+| `file_search` | Search file contents by pattern — `[dir|]pattern` |
+| `file_list` | List directory contents with sizes |
+| `self_info` | **Show Phantom version, tools, runtime, LLM status** |
+| `self_read` | **Read Phantom's own source (project-locked)** |
+| `self_edit` | **Edit Phantom's own source (project-locked)** |
 
 ## How to Use
 

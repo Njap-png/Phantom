@@ -1,6 +1,6 @@
 import { execSync } from "child_process";
 import { createHash } from "crypto";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "fs";
 import { homedir } from "os";
 import { resolve } from "path";
 import * as dns from "dns/promises";
@@ -728,10 +728,8 @@ async function tryLogin(protocol: string, target: string, user: string, pass: st
           signal: AbortSignal.timeout(8000),
         });
         const text = await r.text().catch(() => "");
-        // Common failure indicators
         if (r.status === 302 || r.status === 301) return "✅ SUCCESS (redirect)";
         if (r.status === 200 && !text.includes("incorrect") && !text.includes("Invalid") && !text.includes("error") && !text.includes("failed")) {
-          // Could be a login page again — check if we got something different
           return !text.includes("password") && !text.includes("login") ? "⚠ maybe" : "❌ failed";
         }
         if (r.status === 401 || r.status === 403) return "❌ denied";
@@ -753,6 +751,185 @@ async function tryLogin(protocol: string, target: string, user: string, pass: st
     }
     default:
       return `❌ unknown protocol "${protocol}"`;
+  }
+}
+
+// ── FILE TOOLS ────────────────────────────────────────────
+const PHANTOM_DIR = resolve(import.meta.dirname || __dirname || ".", "..", "..");
+
+async function fileRead(path: string): Promise<string> {
+  try {
+    const resolved = resolve(path);
+    if (!existsSync(resolved)) return `[File Error] Not found: ${path}`;
+    const content = readFileSync(resolved, "utf-8");
+    if (content.length > 100000) return `[File Error] Too large (>100KB): ${path} (${content.length} chars)`;
+    return content;
+  } catch (e: any) {
+    if (e.code === "EISDIR") return `[File Error] Is a directory: ${path}`;
+    return `[File Error] ${e.message}`;
+  }
+}
+
+async function fileWrite(input: string): Promise<string> {
+  const idx = input.indexOf("|");
+  if (idx === -1) return "[File Write] Usage: path|content\nSeparate path and content with |";
+  const path = input.substring(0, idx).trim();
+  const content = input.substring(idx + 1).trimStart();
+  if (!path || !content) return "[File Write] Usage: path|content";
+  try {
+    const resolved = resolve(path);
+    const dir = resolve(resolved, "..");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(resolved, content, "utf-8");
+    return `✅ Wrote ${content.length} bytes to ${resolved}`;
+  } catch (e: any) {
+    return `[File Write Error] ${e.message}`;
+  }
+}
+
+async function fileEdit(input: string): Promise<string> {
+  const parts = input.split("|");
+  if (parts.length < 3) return "[File Edit] Usage: path|old_string|new_string";
+  const [path, oldStr, ...rest] = parts;
+  const newStr = rest.join("|");
+  try {
+    const resolved = resolve(path);
+    if (!existsSync(resolved)) return `[File Edit] Not found: ${path}`;
+    let content = readFileSync(resolved, "utf-8");
+    if (!content.includes(oldStr)) return `[File Edit] String not found in ${path}`;
+    content = content.replace(oldStr, newStr);
+    writeFileSync(resolved, content, "utf-8");
+    return `✅ Edited ${path} — replaced "${oldStr.substring(0, 60)}..."`;
+  } catch (e: any) {
+    return `[File Edit Error] ${e.message}`;
+  }
+}
+
+async function fileSearch(input: string): Promise<string> {
+  const parts = input.split("|").map(s => s.trim());
+  const searchPath = parts.length >= 2 ? parts[0] : ".";
+  const pattern = parts.length >= 2 ? parts[1] : parts[0];
+  if (!pattern) return "[File Search] Usage: [path|]pattern";
+  try {
+    const r = execSync(
+      `rg -rn '${pattern.replace(/'/g, "'\\''")}' '${searchPath}' 2>/dev/null | head -40`,
+      { encoding: "utf-8", timeout: 15000, maxBuffer: 1024 * 1024 }
+    );
+    if (!r.trim()) return `(no matches for "${pattern}" in ${searchPath})`;
+    const lines = r.trim().split("\n");
+    return `🔍 "${pattern}" in ${searchPath}: ${lines.length} matches\n${lines.slice(0, 40).join("\n")}`;
+  } catch {
+    return `(no matches or rg not available for "${pattern}" in ${searchPath})`;
+  }
+}
+
+async function fileList(path: string): Promise<string> {
+  try {
+    const resolved = resolve(path || ".");
+    if (!existsSync(resolved)) return `[File List] Not found: ${path}`;
+    const entries = readdirSync(resolved, { withFileTypes: true });
+    const lines: string[] = [`📁 ${resolved}:`];
+    const dirs: string[] = [], files: string[] = [];
+    for (const e of entries) {
+      if (e.name.startsWith(".")) continue;
+      if (e.isDirectory()) dirs.push(e.name);
+      else files.push(e.name);
+    }
+    dirs.sort().forEach(d => lines.push(`  📁 ${d}/`));
+    files.sort().forEach(f => {
+      try {
+        const s = statSync(resolve(resolved, f));
+        lines.push(`  📄 ${f} (${s.size.toLocaleString()}b)`);
+      } catch { lines.push(`  📄 ${f}`); }
+    });
+    lines.push(`\n${dirs.length} dirs, ${files.length} files`);
+    return lines.join("\n");
+  } catch (e: any) {
+    return `[File List Error] ${e.message}`;
+  }
+}
+
+// ── SELF TOOLS ────────────────────────────────────────────
+async function selfInfo(): Promise<string> {
+  try {
+    const pkg: any = existsSync(resolve(PHANTOM_DIR, "package.json"))
+      ? JSON.parse(readFileSync(resolve(PHANTOM_DIR, "package.json"), "utf-8"))
+      : {};
+    const toolNames = Object.keys(hackerTools).sort();
+    const srcFiles: string[] = [];
+    function walk(dir: string) {
+      let entries: string[];
+      try { entries = readdirSync(dir); } catch { return; }
+      for (const e of entries) {
+        if (e === "node_modules" || e.startsWith(".")) continue;
+        const full = resolve(dir, e);
+        try {
+          if (statSync(full).isDirectory()) walk(full);
+          else if (e.endsWith(".ts") || e.endsWith(".mjs") || e.endsWith(".json")) srcFiles.push(full.replace(PHANTOM_DIR, "."));
+        } catch {}
+      }
+    }
+    walk(PHANTOM_DIR);
+
+    const lines: string[] = [
+      `╔══════════════════════════════════════╗`,
+      `║  PHANTOM — Cybersecurity Assistant   ║`,
+      `╚══════════════════════════════════════╝`,
+      ``,
+      `Version:  ${pkg.version || "dev"}`,
+      `Runtime:  Node.js ${process.version}`,
+      `Platform: ${process.platform} ${process.arch}`,
+      `Project:  ${PHANTOM_DIR}`,
+      `Config:   ${resolve(homedir(), ".config", "phantom", "config.json")}`,
+      ``,
+      `📦 ${toolNames.length} Tools:`,
+      `  ${toolNames.join(", ")}`,
+      ``,
+      `📁 ${srcFiles.length} Source Files:`,
+      ...srcFiles.map(f => `  ${f}`),
+      ``,
+      `🤖 ReAct Loop: Active`,
+      `   LLM: ${process.env.OPENAI_API_KEY ? "Connected (OpenAI)" : process.env.OLLAMA_HOST ? "Ollama" : "Not connected (demo mode)"}`,
+      `   Memory: ~/.config/phantom/memory/`,
+      `   Reports: ~/.config/phantom/reports/`,
+    ];
+    return lines.join("\n");
+  } catch (e: any) {
+    return `[Self Info Error] ${e.message}`;
+  }
+}
+
+async function selfRead(path: string): Promise<string> {
+  try {
+    const resolved = resolve(PHANTOM_DIR, path.replace(/^\.\//, ""));
+    if (!resolved.startsWith(PHANTOM_DIR)) return `[Self Read] Access denied: path outside project`;
+    if (!existsSync(resolved)) return `[Self Read] Not found: ${path}`;
+    const content = readFileSync(resolved, "utf-8");
+    if (content.length > 50000) {
+      return content.substring(0, 50000) + `\n... (truncated, ${content.length} chars total)`;
+    }
+    return content;
+  } catch (e: any) {
+    return `[Self Read Error] ${e.message}`;
+  }
+}
+
+async function selfEdit(input: string): Promise<string> {
+  const parts = input.split("|");
+  if (parts.length < 3) return "[Self Edit] Usage: relative_path|old_string|new_string";
+  const [relPath, oldStr, ...rest] = parts;
+  const newStr = rest.join("|");
+  try {
+    const resolved = resolve(PHANTOM_DIR, relPath.replace(/^\.\//, ""));
+    if (!resolved.startsWith(PHANTOM_DIR)) return `[Self Edit] Access denied: path outside project`;
+    if (!existsSync(resolved)) return `[Self Edit] Not found: ${relPath}`;
+    let content = readFileSync(resolved, "utf-8");
+    if (!content.includes(oldStr)) return `[Self Edit] String not found in ${relPath}`;
+    content = content.replace(oldStr, newStr);
+    writeFileSync(resolved, content, "utf-8");
+    return `✅ Self-edited ${relPath} — replaced "${oldStr.substring(0, 60)}..."`;
+  } catch (e: any) {
+    return `[Self Edit Error] ${e.message}`;
   }
 }
 
@@ -850,5 +1027,49 @@ export const hackerTools: Record<string, HackerTool> = {
     description:
       "Multi-protocol brute force login. Supports SSH, FTP, HTTP POST, and MySQL. Format: protocol|target|user|pass1,pass2,pass3. Use for: password testing, credential auditing. Input: protocol|target|username|comma-separated-passwords.",
     execute: bruteforceFn,
+  },
+
+  // ── FILE TOOLS ──
+  file_read: {
+    description:
+      "Read the contents of any file on the system. Use for: viewing source code, configs, logs, data files. Shows full content (max 100KB). Input: absolute or relative file path.",
+    execute: fileRead,
+  },
+  file_write: {
+    description:
+      "Write content to a file (creates or overwrites). Creates parent directories automatically. Use for: saving generated code, writing scripts, creating config files. Format: path|content — separate path and content with pipe.",
+    execute: fileWrite,
+  },
+  file_edit: {
+    description:
+      "Find and replace text in an existing file. Uses exact string matching (not regex). Use for: patching code, modifying configs, fixing errors. Format: path|old_string|new_string — pipe-separated.",
+    execute: fileEdit,
+  },
+  file_search: {
+    description:
+      "Search file contents for a text pattern across a directory. Uses ripgrep if available. Use for: finding code references, error messages, configuration values. Format: [directory|]pattern — defaults to current dir.",
+    execute: fileSearch,
+  },
+  file_list: {
+    description:
+      "List files and directories in a path. Shows file sizes, dir count. Use for: exploring project structure, finding files, directory recon. Input: directory path (defaults to current dir).",
+    execute: fileList,
+  },
+
+  // ── SELF TOOLS ──
+  self_info: {
+    description:
+      "Show Phantom's own information: version, runtime, platform, all available tools, source file tree, LLM connection status, config paths. Use for: self-awareness, capability discovery, debugging.",
+    execute: selfInfo,
+  },
+  self_read: {
+    description:
+      "Read Phantom's own source files (locked to project directory). Use for: code review, understanding architecture, self-modification planning. Input: relative path from project root (e.g. 'phantom.mjs' or 'src/core/hacker-tools.ts').",
+    execute: selfRead,
+  },
+  self_edit: {
+    description:
+      "Edit Phantom's own source code (locked to project directory). Use for: self-improvement, adding tools, fixing bugs, evolving capabilities. Format: relative_path|old_string|new_string — pipe-separated.",
+    execute: selfEdit,
   },
 };
