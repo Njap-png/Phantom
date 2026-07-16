@@ -2,6 +2,7 @@ import { PhantomConfig } from "../core/config.js";
 
 export interface LLMProvider {
   chat: (messages: { role: string; content: string }[], opts?: { model?: string; temperature?: number }) => Promise<string>;
+  transcribe?: (filePath: string) => Promise<string>;
 }
 
 export function createOpenAIProvider(config: PhantomConfig): LLMProvider {
@@ -37,6 +38,40 @@ export function createOpenAIProvider(config: PhantomConfig): LLMProvider {
         return data.choices?.[0]?.message?.content?.trim() || "[empty response]";
       } catch (e: any) {
         return `[Request failed: ${e.message}]`;
+      }
+    },
+
+    async transcribe(filePath) {
+      if (!apiKey) {
+        return "[No OpenAI API key set. Configure via `OPENAI_API_KEY` env or `~/.config/phantom/config.json`]";
+      }
+
+      try {
+        const { readFileSync } = await import("fs");
+        const fileBuffer = readFileSync(filePath);
+        // Note: Node.js 18+ has global Blob and FormData.
+        const blob = new Blob([fileBuffer], { type: "audio/mpeg" });
+        const formData = new FormData();
+        formData.append("file", blob, "audio.mp3");
+        formData.append("model", "whisper-1");
+
+        const resp = await fetch(`${baseUrl}/audio/transcriptions`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: formData,
+        });
+
+        if (!resp.ok) {
+          const err = await resp.text().catch(() => "");
+          return `[Transcription API error ${resp.status}: ${err.substring(0, 200)}]`;
+        }
+
+        const data: any = await resp.json();
+        return data.text || "[empty transcription]";
+      } catch (e: any) {
+        return `[Transcription request failed: ${e.message}]`;
       }
     },
   };
