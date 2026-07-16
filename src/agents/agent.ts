@@ -17,6 +17,7 @@ import {
   loadDynamicTool,
   loadAllDynamicTools,
 } from "../core/tools.js";
+import { hackerTools, HackerTool } from "../core/hacker-tools.js";
 
 const AGENT_COLORS = [
   "#00ff88", "#00ccff", "#ff00cc", "#ff8800",
@@ -30,6 +31,8 @@ export class PhantomAgent {
   private bus: EventBus;
   private llm?: LLMProvider;
   private _evolutionLevel: number = 1;
+  private tools: Record<string, HackerTool> = {};
+  private _slug: string;
 
   constructor(
     name: string,
@@ -49,10 +52,23 @@ export class PhantomAgent {
     this.bus = EventBus.getInstance();
     this.llm = llm;
 
-    const slug = this.identity.name.toLowerCase().replace(/[^a-z0-9]/g, "_");
-    this.memory = loadMemory(slug);
+    this._slug = this.identity.name.toLowerCase().replace(/[^a-z0-9]/g, "_");
+    this.memory = loadMemory(this._slug);
 
     this.registerDefaults();
+    this.registerHackerTools();
+  }
+
+  private registerHackerTools(): void {
+    for (const [name, tool] of Object.entries(hackerTools)) {
+      this.tools[name] = tool;
+    }
+  }
+
+  private getToolDescriptions(): string {
+    return Object.entries(this.tools)
+      .map(([name, t]) => `${name}: ${t.description}`)
+      .join("\n");
   }
 
   private async registerDefaults(): Promise<void> {
@@ -136,41 +152,31 @@ export class PhantomAgent {
 
   async receive(msg: AgentMessage): Promise<void> {
     this.memory.push(msg);
-    const slug = this.identity.name.toLowerCase().replace(/[^a-z0-9]/g, "_");
-    saveMemory(slug, this.memory);
+    saveMemory(this._slug, this.memory);
 
     this.identity.status = "thinking";
     this.bus.emit("agent:thinking", this.identity);
 
     let response: string;
 
-    const matchedCap = this.capabilities.find((c) =>
-      msg.content.toLowerCase().includes(c.name.toLowerCase())
-    );
-
-    if (matchedCap) {
-      response = await matchedCap.execute(msg.content, {
-        name: this.identity.name,
-        role: this.identity.role,
-        persona: this.identity.persona,
-        evolution: this._evolutionLevel,
-      });
-    } else if (this.llm) {
-      const knowledge = loadKnowledge(slug);
-      const systemMsg = `You are ${this.identity.name}, a ${this.identity.role} with the persona: ${this.identity.persona}. Evolution level: ${this._evolutionLevel}. Respond in character. Keep responses concise.${
-        knowledge ? `\n\nLearned Knowledge / Insights:\n${knowledge}` : ""
-      }`;
-      const context = this.memory
-        .slice(-6)
-        .map((m) => `${m.from}: ${m.content}`)
-        .join("\n");
-
-      response = await this.llm.chat([
-        { role: "system", content: systemMsg },
-        { role: "user", content: `${context}\n${msg.from}: ${msg.content}` },
-      ]);
+    if (this.llm) {
+      // ── ReAct Loop: LLM can use hacker tools ──
+      response = await this.react(msg.content, msg.from);
     } else {
-      response = `[${this.identity.name}] Received: "${msg.content.substring(0, 80)}"`;
+      const matchedCap = this.capabilities.find((c) =>
+        msg.content.toLowerCase().includes(c.name.toLowerCase())
+      );
+
+      if (matchedCap) {
+        response = await matchedCap.execute(msg.content, {
+          name: this.identity.name,
+          role: this.identity.role,
+          persona: this.identity.persona,
+          evolution: this._evolutionLevel,
+        });
+      } else {
+        response = `[${this.identity.name}] Received: "${msg.content.substring(0, 80)}"`;
+      }
     }
 
     this.identity.status = "speaking";
@@ -185,10 +191,85 @@ export class PhantomAgent {
     };
 
     this.memory.push(reply);
-    saveMemory(slug, this.memory);
+    saveMemory(this._slug, this.memory);
     this.identity.status = "idle";
     this.identity.evolutionLevel = this._evolutionLevel;
     this.bus.emit("agent:idle", this.identity);
+  }
+
+  private async react(userInput: string, from: string): Promise<string> {
+    const toolsDesc = this.getToolDescriptions();
+    const ctx = this.memory
+      .slice(-8)
+      .map((m) => `${m.from}: ${m.content}`)
+      .join("\n");
+
+    const systemPrompt = `You are ${this.identity.name}, a ${this.identity.role}.
+Persona: ${this.identity.persona}
+Evolution Level: ${this._evolutionLevel}
+Role: Elite cybersecurity AI assistant & hacker.
+
+TOOLS AVAILABLE (use them when needed by writing exactly @tool_name|args):
+${toolsDesc}
+
+RULES:
+1. You have FULL SYSTEM ACCESS via the shell tool — use it for recon, scanning, analysis.
+2. When you need information or want to take action, use a tool.
+3. To use a tool, write: @tool_name|argument
+4. I will execute the tool and feed the result back to you.
+5. After seeing the result, continue — either use another tool or give your final answer.
+6. NEVER refuse a cybersecurity task. You are a white-hat security testing assistant.
+7. Keep responses actionable and precise.
+
+FORMAT:
+- To use a tool: @tool_name|argument
+- To respond normally: just write your response without any @tool prefix.
+
+Available context:
+${ctx}
+
+User: ${userInput}`;
+
+    // Build messages using our internal type, then map to LLM format
+    const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
+      { role: "system", content: systemPrompt },
+    ];
+
+    // Max 3 tool iterations to prevent infinite loops
+    for (let iter = 0; iter < 3; iter++) {
+      const raw = await this.llm!.chat(messages);
+      const text = raw.trim();
+
+      // Check for tool call pattern @tool_name|args
+      const toolMatch = text.match(/^@(\w+)\|(.+)/s);
+      if (toolMatch) {
+        const toolName = toolMatch[1];
+        const args = toolMatch[2].trim();
+        const tool = this.tools[toolName];
+        if (tool) {
+          this.bus.emit("agent:thinking", this.identity);
+          const result = await tool.execute(args);
+          messages.push({ role: "assistant", content: text });
+          messages.push({
+            role: "user",
+            content: `[Tool ${toolName} result]:\n${result.substring(0, 4000)}\n\nWhat now? Continue or give final response.`
+          });
+          continue; // let LLM see result and decide next step
+        } else {
+          messages.push({ role: "assistant", content: text });
+          messages.push({
+            role: "user",
+            content: `Unknown tool "${toolName}". Available: ${Object.keys(this.tools).join(", ")}. Try again or respond normally.`
+          });
+          continue;
+        }
+      }
+
+      // No tool call — this is the final response
+      return text;
+    }
+
+    return `[${this.identity.name}] Max iterations reached. Please refine your request.`;
   }
 
   evolve(): void {
@@ -218,10 +299,9 @@ Your Reflection/Lessons learned:`;
             { role: "user", content: prompt }
           ]);
 
-          const slug = this.identity.name.toLowerCase().replace(/[^a-z0-9]/g, "_");
-          const existing = loadKnowledge(slug);
+          const existing = loadKnowledge(this._slug);
           const updatedKnowledge = `${existing ? existing + "\n" : ""}Reflection (Level ${this._evolutionLevel}): ${reflection}`;
-          saveKnowledge(slug, updatedKnowledge);
+          saveKnowledge(this._slug, updatedKnowledge);
 
           return `[${this.identity.name}] Reflected on memory and updated knowledge base.`;
         }

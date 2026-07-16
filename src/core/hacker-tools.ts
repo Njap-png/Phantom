@@ -172,7 +172,12 @@ async function dnsLookup(domain: string): Promise<string> {
     for (const [label, promise] of checks) {
       try {
         const val = await promise;
-        if (Array.isArray(val) && val.length) {
+        if (label === "SOA" && val && typeof val === "object" && !Array.isArray(val)) {
+          const soa = val as any;
+          results.push(
+            `  SOA: ${soa.nsname} (admin: ${soa.hostmaster})`
+          );
+        } else if (Array.isArray(val) && val.length) {
           if (label === "MX")
             results.push(
               `  MX: ${val
@@ -181,10 +186,6 @@ async function dnsLookup(domain: string): Promise<string> {
             );
           else if (label === "TXT")
             results.push(`  TXT: ${val.flat().join(", ")}`);
-          else if (label === "SOA")
-            results.push(
-              `  SOA: ${val.nsname} (admin: ${val.hostmaster})`
-            );
           else results.push(`  ${label}: ${val.join(", ")}`);
         }
       } catch {}
