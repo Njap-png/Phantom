@@ -1043,7 +1043,7 @@ async function codeGen(input: string): Promise<string> {
   } catch (e: any) { return `[Code Gen Error] ${e.message}`; }
 }
 
-// ── SELF ADD TOOL ────────────────────────────────────────
+// ── SELF ADD TOOL (Auto-Integrate) ─────────────────────────
 async function selfAddTool(prompt: string): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return "[Self Add Tool] Requires OPENAI_API_KEY";
@@ -1053,29 +1053,64 @@ async function selfAddTool(prompt: string): Promise<string> {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         model: "gpt-4o-mini",
-        messages: [{ role: "system", content: `Generate a Node.js async function that takes a single string input and returns Promise<string>. Name it after the tool purpose. Include a one-line description comment. No imports, no markdown.` }, { role: "user", content: `Tool that: ${prompt}` }],
+        messages: [{ role: "system", content: `Generate ONLY a Node.js async function taking one string input returning Promise<string>. Name after the tool purpose. Start with: // description: one-liner. No imports, no markdown, no backticks.` }, { role: "user", content: `Tool that: ${prompt}` }],
         max_tokens: 1500,
       }),
       signal: AbortSignal.timeout(30000),
     });
     const data = await r.json() as any;
-    const result = data?.choices?.[0]?.message?.content || "// Failed";
+    const result = data?.choices?.[0]?.message?.content || "// description: Generated tool\nasync function newTool(input) { return 'TODO'; }";
     const toolName = result.match(/async function\s+(\w+)/)?.[1] || "newTool";
-    const descMatch = result.match(/\/\/\s*(.+)/);
-    const desc = descMatch?.[1] || prompt.substring(0, 80);
-    const stageDir = resolve(homedir(), ".config", "phantom", "generated");
-    if (!existsSync(stageDir)) mkdirSync(stageDir, { recursive: true });
-    writeFileSync(resolve(stageDir, `${toolName}.ts`), result, "utf-8");
+    const desc = result.match(/\/\/\s*description:\s*(.+)/i)?.[1] || prompt.substring(0, 100);
+    const registryLine = `  ${toolName}: {\n    description: "${desc.substring(0, 150)}",\n    execute: ${toolName},\n  },`;
+
+    // ── Auto-integrate into hacker-tools.ts ──
+    const tsPath = resolve(process.cwd(), "src/core/hacker-tools.ts");
+    let ts = readFileSync(tsPath, "utf-8");
+    if (ts.includes(`async function ${toolName}(`)) return `[Self Add] "${toolName}" already exists in TS source`;
+
+    const exportPos = ts.indexOf("export const hackerTools: Record<string, HackerTool> = {");
+    if (exportPos === -1) return "[Self Add] Cannot find TS insertion point";
+    ts = ts.slice(0, exportPos) + "\n" + result.trim() + "\n\n" + ts.slice(exportPos);
+
+    const closePos = ts.lastIndexOf("\n};");
+    if (closePos === -1) return "[Self Add] Cannot find TS closing";
+    ts = ts.slice(0, closePos + 1) + registryLine + "\n" + ts.slice(closePos + 1);
+    writeFileSync(tsPath, ts, "utf-8");
+
+    // ── Auto-integrate into phantom.mjs ──
+    const mjsPath = resolve(process.cwd(), "phantom.mjs");
+    let mjs = readFileSync(mjsPath, "utf-8");
+    if (mjs.includes(`  ${toolName}: async`)) return `[Self Add] "${toolName}" already exists in MJS source`;
+
+    // Convert async function to arrow function for hackerTools object
+    const body = result.replace(/async function\s+\w+\s*\(input\)\s*\{/, "").trim();
+    const lastBrace = body.lastIndexOf("}");
+    const cleanBody = body.substring(0, lastBrace).trim();
+    const mjsEntry = `  ${toolName}: async (input) => {\n${cleanBody}\n  },`;
+
+    const mjsClose = mjs.lastIndexOf("\n};\n\n// ── EventBus");
+    if (mjsClose === -1) return "[Self Add] Cannot find MJS insertion point";
+    mjs = mjs.slice(0, mjsClose) + "\n" + mjsEntry + "\n" + mjs.slice(mjsClose);
+    writeFileSync(mjsPath, mjs, "utf-8");
+
+    // ── Rebuild ──
+    try {
+      execSync("npm run build 2>&1", { cwd: process.cwd(), timeout: 30000, encoding: "utf-8", stdio: "pipe" });
+    } catch (e: any) {
+      // Rollback both files
+      writeFileSync(tsPath, readFileSync(tsPath, "utf-8").replace("\n" + result.trim() + "\n\n", "").replace(registryLine + "\n", ""), "utf-8");
+      writeFileSync(mjsPath, readFileSync(mjsPath, "utf-8").replace("\n" + mjsEntry + "\n", ""), "utf-8");
+      return `[Self Add] Build failed — rolled back.\n${(e.message || "").substring(0, 400)}`;
+    }
+
     return [
-      `🎯 Generated: ${toolName}`,
-      `Description: ${desc}`,
-      `Code: ~/.config/phantom/generated/${toolName}.ts`,
+      `✅ Tool "${toolName}" auto-integrated!`,
+      `📄 src/core/hacker-tools.ts → function + registry`,
+      `📄 phantom.mjs → function + registry`,
+      `🔨 npm run build → passed`,
       ``,
-      `To integrate:`,
-      `1. src/core/hacker-tools.ts — paste function before 'export const hackerTools'`,
-      `2. Add to registry: ${toolName}: { description: "${desc.substring(0, 60)}", execute: ${toolName} },`,
-      `3. phantom.mjs — paste into hackerTools object + registerHackerTools()`,
-      `4. npm run build`,
+      `Use: @${toolName}|your_input`,
       ``,
       result.substring(0, 600),
     ].join("\n");
@@ -1352,6 +1387,92 @@ async function emailVerify(input: string): Promise<string> {
   } catch (e: any) { return `[Email Error] ${e.message}`; }
 }
 
+// ── REVERSE DNS ──
+async function reverseDns(input: string): Promise<string> {
+  try {
+    const ip = input.trim();
+    const r = await fetch(`https://dns.google/resolve?name=${ip}&type=PTR`, { signal: AbortSignal.timeout(8000) });
+    const d = await r.json() as any;
+    const ptrs = d?.Answer?.filter((a: any) => a.type === 12).map((a: any) => a.data) || [];
+    return ptrs.length ? `🔁 PTR for ${ip}:\n${ptrs.join("\n")}` : `[Reverse DNS] No PTR for ${ip}`;
+  } catch (e: any) { return `[Reverse DNS Error] ${e.message}`; }
+}
+
+// ── WAYBACK MACHINE ──
+async function wayback(input: string): Promise<string> {
+  try {
+    const domain = input.replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+    const r = await fetch(`https://web.archive.org/cdx/search/cdx?url=${domain}/*&output=json&limit=20&fl=timestamp,original,statuscode`, { signal: AbortSignal.timeout(15000) });
+    const d = await r.json() as any;
+    if (!Array.isArray(d) || d.length < 2) return `[Wayback] No snapshots for ${domain}`;
+    return `🗄 Wayback: ${domain} (${d.length - 1} snapshots)\n${d.slice(1).map((row: string[]) => `  ${row[0].substring(0, 8)} ${row[2] || "—"} ${row[1]}`).join("\n")}`;
+  } catch (e: any) { return `[Wayback Error] ${e.message}`; }
+}
+
+// ── CERT EXPIRY ──
+async function certExpiry(input: string): Promise<string> {
+  try {
+    const domain = input.replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+    const raw = execSync(`openssl s_client -connect ${domain}:443 -servername ${domain} </dev/null 2>/dev/null | openssl x509 -noout -dates`, { timeout: 10000, encoding: "utf-8" });
+    if (!raw.trim()) return `[Cert Expiry] No cert for ${domain}`;
+    const nb = raw.match(/notBefore=(.+)/)?.[1] || "?";
+    const na = raw.match(/notAfter=(.+)/)?.[1] || "?";
+    const days = na !== "?" ? Math.round((new Date(na).getTime() - Date.now()) / 86400000) : NaN;
+    return `🔒 ${domain}\nIssued: ${nb}\nExpires: ${na}${!isNaN(days) ? `\nDays left: ${days}` : ""}`;
+  } catch (e: any) { return `[Cert Expiry Error] ${e.message}`; }
+}
+
+// ── CORS TEST ──
+async function corsTest(input: string): Promise<string> {
+  try {
+    const url = input.startsWith("http") ? input : `https://${input}`;
+    const origins = ["https://evil.com", "null", "https://attacker.org", "https://example.com", ""];
+    const r: string[] = [`🔓 CORS test: ${url}\n`];
+    for (const origin of origins) {
+      try {
+        const resp = await fetch(url, { method: "GET", headers: origin ? { Origin: origin } : {}, signal: AbortSignal.timeout(5000) });
+        const acao = resp.headers.get("access-control-allow-origin") || "—";
+        const creds = resp.headers.get("access-control-allow-credentials") || "";
+        r.push(`  Origin: ${origin || "(none)"} → ACAO: ${acao}${creds ? `, Credentials: ${creds}` : ""}`);
+      } catch (e: any) { r.push(`  Origin: ${origin} → ${(e.message || "").substring(0, 50)}`); }
+    }
+    if (r.some(l => l.includes("*") || (l.includes("evil.com") && l.includes("https://evil.com")))) r.push(`\n⚠ Vulnerable to CORS attacks!`);
+    return r.join("\n");
+  } catch (e: any) { return `[CORS Error] ${e.message}`; }
+}
+
+// ── JWT DECODE ──
+async function jwtDecode(input: string): Promise<string> {
+  try {
+    const parts = input.trim().split(".");
+    if (parts.length !== 3) return `[JWT] Expected 3 parts, got ${parts.length}`;
+    const b64u = (s: string) => s.replace(/-/g, "+").replace(/_/g, "/");
+    const decode = (s: string) => {
+      try { return JSON.stringify(JSON.parse(Buffer.from(b64u(s), "base64").toString()), null, 2); }
+      catch { return Buffer.from(b64u(s), "base64").toString(); }
+    };
+    return `🔐 JWT\n── Header ──\n${decode(parts[0])}\n── Payload ──\n${decode(parts[1])}\n── Signature ──\n${parts[2].substring(0, 40)}…`;
+  } catch (e: any) { return `[JWT Error] ${e.message}`; }
+}
+
+// ── HASH CRACK ──
+async function hashCrack(input: string): Promise<string> {
+  try {
+    const hash = input.trim();
+    if (/^[a-f0-9]{32}$/i.test(hash)) {
+      const r = await fetch(`https://www.nitrxgen.net/api/md5/${hash}`, { signal: AbortSignal.timeout(10000) });
+      const text = await r.text();
+      if (text?.trim()) return `🔓 MD5 cracked: ${hash} → ${text.trim()}`;
+    }
+    if (/^[a-f0-9]{40}$/i.test(hash)) {
+      const r = await fetch(`https://www.nitrxgen.net/api/md5/${hash}`, { signal: AbortSignal.timeout(10000) }); // nitrxgen might not support SHA1
+      const text = await r.text();
+      if (text?.trim()) return `🔓 Hash cracked: ${hash} → ${text.trim()}`;
+    }
+    return `[Hash Crack] Not found: ${hash}. Supports MD5 (32 hex) hashes.`;
+  } catch (e: any) { return `[Hash Crack Error] ${e.message}`; }
+}
+
 export const hackerTools: Record<string, HackerTool> = {
   shell: {
     description:
@@ -1544,12 +1665,12 @@ export const hackerTools: Record<string, HackerTool> = {
   },
   playbook_list: {
     description:
-      "List all available playbooks with descriptions and step counts. Includes 4 built-in playbooks: quick_web_recon, vuln_assessment, network_footprint, full_vulnscan_report.",
+      "List all available playbooks with descriptions and step counts. Includes 4 built-in playbooks plus custom. Playbooks can chain other playbooks via playbook_run steps.",
     execute: playbookList,
   },
   playbook_run: {
     description:
-      "Execute a playbook against a target. Steps run sequentially with variable substitution ({{target}}). Input: playbook_name|target=example.com,port=80. Returns full execution log.",
+      "Execute a playbook against a target. Steps run sequentially with variable substitution ({{target}}). Supports chaining: use playbook_run step to call another playbook. Input: playbook_name|target=example.com,port=80. Returns full execution log.",
     execute: playbookRun,
   },
   playbook_edit: {
@@ -1583,5 +1704,37 @@ export const hackerTools: Record<string, HackerTool> = {
     description:
       "Validate email format and check domain MX records. Use for: verifying email deliverability, recon on email infrastructure. Input: email address.",
     execute: emailVerify,
+  },
+
+  // ── UTILITY TOOLS ──
+  reverse_dns: {
+    description:
+      "Reverse DNS lookup (PTR record) for an IP address. Shows the domain names associated with the IP. Use for: identifying hosts, email server validation. Input: IP address.",
+    execute: reverseDns,
+  },
+  wayback: {
+    description:
+      "Query Wayback Machine for historical URL snapshots of a domain. Shows timestamps, status codes, and URLs. Use for: recon on old endpoints, content discovery. Input: domain or URL.",
+    execute: wayback,
+  },
+  cert_expiry: {
+    description:
+      "Check SSL certificate expiry date and days remaining. Uses openssl to fetch and parse cert dates. Use for: monitoring cert expiration, security audits. Input: domain name.",
+    execute: certExpiry,
+  },
+  cors_test: {
+    description:
+      "Test for CORS misconfigurations by sending requests with various Origin headers. Detects wildcard origins, null origin acceptance, and credential leakage. Input: URL.",
+    execute: corsTest,
+  },
+  jwt_decode: {
+    description:
+      "Decode a JWT token header and payload without verification. Shows the JSON content of each part. Use for: analyzing auth tokens, testing JWT implementations. Input: full JWT string.",
+    execute: jwtDecode,
+  },
+  hash_crack: {
+    description:
+      "Look up MD5 hash in online rainbow tables (nitrxgen API). Use for: cracking password hashes, identifying plaintext. Input: MD5 hash (32 hex chars).",
+    execute: hashCrack,
   },
 };

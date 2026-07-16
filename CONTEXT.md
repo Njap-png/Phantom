@@ -41,7 +41,7 @@
 └── CONTEXT.md           ← THIS FILE
 ```
 
-## All 43 Tools
+## All 49 Tools
 
 | Tool | What it does |
 |------|-------------|
@@ -76,7 +76,7 @@
 | `session_save` | Save Phantom session state to file |
 | `session_load` | Load a saved Phantom session |
 | `code_gen` | Generate code via LLM — `prompt|language|output_path` |
-| `self_add_tool` | Generate & save a new Phantom tool via LLM |
+| `self_add_tool` | **Generate & auto-integrate new tool via LLM (patches both files, rebuilds)** |
 | `knowledge_add` | **Save knowledge entry (tagged, searchable)** |
 | `knowledge_search` | **Query Phantom's knowledge base** |
 | `playbook_create` | **Create a multi-step automation playbook (LLM or manual)** |
@@ -88,6 +88,12 @@
 | `http_methods` | **Fuzz HTTP methods (GET/POST/PUT/DELETE/etc.)** |
 | `robots_txt` | **Fetch & analyze robots.txt** |
 | `email_verify` | **Validate email format + MX records** |
+| `reverse_dns` | **Reverse DNS PTR lookup for an IP** |
+| `wayback` | **Wayback Machine historical URL snapshots** |
+| `cert_expiry` | **SSL cert expiry check (openssl)** |
+| `cors_test` | **CORS misconfiguration scanner** |
+| `jwt_decode` | **Decode JWT header + payload** |
+| `hash_crack` | **Online MD5 rainbow table lookup** |
 
 ## How to Use
 
@@ -127,15 +133,17 @@ Auto-loads from `~/.config/phantom/config.json`:
 - [ ] **Local model support** — Offline LLM via Ollama
 - [ ] **Autonomous agent chaining** — Multi-agent parallel playbook runs
 - [ ] **Distributed scanning** — Phantom runs across multiple hosts
+- [ ] **Plugin system** — Load external tool packs dynamically
 
 ### External Deps (optional)
-- `OPENAI_API_KEY` — enables code_gen, self_add_tool, playbook_create LLM generation
+- `OPENAI_API_KEY` — enables code_gen, self_add_tool (auto-integrate), playbook_create LLM generation
 - `VT_API_KEY` — enables VirusTotal hash lookups
 - `yara` CLI — enables YARA scanning (`apt install yara`)
 - `whois` CLI — enables WHOIS lookups (`apt install whois`)
 - `sshpass` CLI — enables SSH brute force (`apt install sshpass`)
 - `mysql` CLI — enables MySQL brute force (`apt install mysql-client`)
 - `searchsploit` CLI — enables exploit-db queries (`apt install exploitdb`)
+- `openssl` — enables cert_expiry tool (usually pre-installed)
 
 ## Git Config
 - User: `Njap-png`

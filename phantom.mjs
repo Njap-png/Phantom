@@ -1049,6 +1049,73 @@ const hackerTools = {
       return mxs.length ? `✅ ${email}\nDomain: ${domain}\nMX: ${mxs.join(", ")}` : `✅ Format valid, but no MX for ${domain}`;
     } catch (e) { return `[Email Error] ${e.message}`; }
   },
+
+  reverse_dns: async (ip) => {
+    try {
+      const r = await fetch(`https://dns.google/resolve?name=${ip.trim()}&type=PTR`, {signal:AbortSignal.timeout(8000)});
+      const d = await r.json();
+      const ptrs = (d?.Answer||[]).filter(a => a.type === 12).map(a => a.data);
+      return ptrs.length ? `🔁 PTR for ${ip}:\n${ptrs.join("\n")}` : `[Reverse DNS] No PTR for ${ip}`;
+    } catch (e) { return `[Reverse DNS Error] ${e.message}`; }
+  },
+  wayback: async (input) => {
+    try {
+      const domain = input.replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+      const r = await fetch(`https://web.archive.org/cdx/search/cdx?url=${domain}/*&output=json&limit=20&fl=timestamp,original,statuscode`, {signal:AbortSignal.timeout(15000)});
+      const d = await r.json();
+      if (!Array.isArray(d) || d.length < 2) return `[Wayback] No snapshots for ${domain}`;
+      return `🗄 Wayback: ${domain} (${d.length - 1} snapshots)\n${d.slice(1).map(row => `  ${row[0].substring(0,8)} ${row[2]||"—"} ${row[1]}`).join("\n")}`;
+    } catch (e) { return `[Wayback Error] ${e.message}`; }
+  },
+  cert_expiry: async (input) => {
+    try {
+      const domain = input.replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+      const {execSync} = await import("child_process");
+      const raw = execSync(`openssl s_client -connect ${domain}:443 -servername ${domain} </dev/null 2>/dev/null | openssl x509 -noout -dates`, {timeout:10000,encoding:"utf-8"});
+      if (!raw.trim()) return `[Cert Expiry] No cert for ${domain}`;
+      const nb = raw.match(/notBefore=(.+)/)?.[1] || "?";
+      const na = raw.match(/notAfter=(.+)/)?.[1] || "?";
+      const days = na !== "?" ? Math.round((new Date(na).getTime()-Date.now())/86400000) : NaN;
+      return `🔒 ${domain}\nIssued: ${nb}\nExpires: ${na}${!isNaN(days)?`\nDays left: ${days}`:""}`;
+    } catch (e) { return `[Cert Expiry Error] ${e.message}`; }
+  },
+  cors_test: async (input) => {
+    try {
+      const url = input.startsWith("http") ? input : `https://${input}`;
+      const origins = ["https://evil.com","null","https://attacker.org","https://example.com",""];
+      const r = [`🔓 CORS test: ${url}\n`];
+      for (const origin of origins) {
+        try {
+          const resp = await fetch(url, {method:"GET", headers:origin?{Origin:origin}:{}, signal:AbortSignal.timeout(5000)});
+          const acao = resp.headers.get("access-control-allow-origin") || "—";
+          const creds = resp.headers.get("access-control-allow-credentials") || "";
+          r.push(`  Origin: ${origin||"(none)"} → ACAO: ${acao}${creds?`, Credentials: ${creds}`:""}`);
+        } catch (e) { r.push(`  Origin: ${origin} → ${(e.message||"").substring(0,50)}`); }
+      }
+      if (r.some(l => l.includes("*") || (l.includes("evil.com")&&l.includes("https://evil.com")))) r.push(`\n⚠ Vulnerable to CORS attacks!`);
+      return r.join("\n");
+    } catch (e) { return `[CORS Error] ${e.message}`; }
+  },
+  jwt_decode: async (input) => {
+    try {
+      const parts = input.trim().split(".");
+      if (parts.length !== 3) return `[JWT] Expected 3 parts, got ${parts.length}`;
+      const b64u = s => s.replace(/-/g,"+").replace(/_/g,"/");
+      const decode = s => { try { return JSON.stringify(JSON.parse(Buffer.from(b64u(s),"base64").toString()),null,2); } catch { return Buffer.from(b64u(s),"base64").toString(); } };
+      return `🔐 JWT\n── Header ──\n${decode(parts[0])}\n── Payload ──\n${decode(parts[1])}\n── Signature ──\n${parts[2].substring(0,40)}…`;
+    } catch (e) { return `[JWT Error] ${e.message}`; }
+  },
+  hash_crack: async (input) => {
+    try {
+      const hash = input.trim();
+      if (/^[a-f0-9]{32}$/i.test(hash)) {
+        const r = await fetch(`https://www.nitrxgen.net/api/md5/${hash}`, {signal:AbortSignal.timeout(10000)});
+        const text = await r.text();
+        if (text?.trim()) return `🔓 MD5 cracked: ${hash} → ${text.trim()}`;
+      }
+      return `[Hash Crack] Not found: ${hash}. Supports MD5.`;
+    } catch (e) { return `[Hash Crack Error] ${e.message}`; }
+  },
 };
 
 // ── EventBus ──────────────────────────────────────────────
@@ -1205,7 +1272,7 @@ class Agent {
       session_save: "Save current Phantom session state. Input: session name (alphanumeric).",
       session_load: "Load a saved Phantom session. Input: session name.",
       code_gen: "Generate code via OpenAI LLM (requires OPENAI_API_KEY). Format: prompt|language|output_path.",
-      self_add_tool: "Generate a new Phantom tool via LLM. Requires OPENAI_API_KEY. Input: natural language tool description.",
+      self_add_tool: "Auto-generate AND auto-integrate a new tool via LLM. Modifies both TS and MJS source, rebuilds, rolls back on failure. Input: tool description.",
       knowledge_add: "Add an entry to Phantom's persistent knowledge base. Format: tag1,tag2|content.",
       knowledge_search: "Search Phantom's knowledge base by tag or keyword. Input: search query.",
       playbook_create: "Create a new multi-step automation playbook. Uses LLM if OPENAI_API_KEY set. Input: name|description.",
@@ -1217,6 +1284,12 @@ class Agent {
       http_methods: "Fuzz HTTP methods on a URL. Tests GET, POST, PUT, DELETE, etc. Input: URL.",
       robots_txt: "Fetch and analyze robots.txt. Shows rules, disallowed paths, sitemaps. Input: domain or URL.",
       email_verify: "Validate email format and check domain MX records. Input: email address.",
+      reverse_dns: "Reverse DNS lookup (PTR record) for an IP address. Input: IP.",
+      wayback: "Query Wayback Machine for historical URL snapshots. Input: domain or URL.",
+      cert_expiry: "Check SSL certificate expiry date and days remaining. Input: domain.",
+      cors_test: "Test for CORS misconfigurations with various Origin headers. Input: URL.",
+      jwt_decode: "Decode JWT token header and payload without verification. Input: JWT string.",
+      hash_crack: "Look up MD5 hash in online rainbow tables. Input: MD5 hash.",
     };
     for (const [name, desc] of Object.entries(toolList)) {
       this.tools[name] = { description: desc, execute: hackerTools[name] };
