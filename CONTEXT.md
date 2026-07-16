@@ -82,9 +82,6 @@ Agents auto-save/load conversation memory to `~/.config/phantom/memory/<agent_na
 
 ## What's Left To Do
 
-### High Priority
-- [ ] **Set up GitHub auth** — Push to remote (`git push` fails, no credentials)
-
 ### Feature Ideas
 - [ ] **More tools:** WHOIS lookup, port scanner, HTTP header inspector, SSL cert checker, subdomain enum
 - [ ] **VirusTotal API integration** — Check hashes against known malware DB
