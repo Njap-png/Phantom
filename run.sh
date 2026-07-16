@@ -69,24 +69,42 @@ fi
 NODE_VER=$(node -v 2>/dev/null)
 echo -e "${GREEN}✓${NC} Node ${NODE_VER}"
 
-# ── Download phantom.mjs ───────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PHANTOM_FILE="${SCRIPT_DIR}/phantom.mjs"
 
-if [ ! -f "$PHANTOM_FILE" ]; then
-  echo -e "${DIM}  Downloading phantom.mjs...${NC}"
-  PHANTOM_URL="https://raw.githubusercontent.com/Njap-png/Phantom/main/phantom.mjs"
-  if command -v curl &>/dev/null; then
-    curl -fsSL "$PHANTOM_URL" -o "$PHANTOM_FILE"
-  elif command -v wget &>/dev/null; then
-    wget -q "$PHANTOM_URL" -O "$PHANTOM_FILE"
-  else
-    echo -e "${RED}✕ Need curl or wget${NC}"
-    exit 1
+# ── Detect local checkout vs remote ────────────────────────
+if [ -f "${SCRIPT_DIR}/src/index.ts" ]; then
+  # Local checkout — build TS if needed, then run from dist
+  echo -e "${DIM}  Local checkout detected${NC}"
+
+  if [ ! -f "${SCRIPT_DIR}/dist/index.js" ] || [ "${SCRIPT_DIR}/src/index.ts" -nt "${SCRIPT_DIR}/dist/index.js" ]; then
+    echo -e "${DIM}  Building TypeScript...${NC}"
+    (cd "$SCRIPT_DIR" && npx tsc) || {
+      echo -e "${RED}✕ TypeScript build failed. Falling back to phantom.mjs${NC}"
+      node "${SCRIPT_DIR}/phantom.mjs" "$@"
+      exit $?
+    }
   fi
-  chmod +x "$PHANTOM_FILE"
-fi
 
-# ── Run Phantom ────────────────────────────────────────────
-echo
-node "$PHANTOM_FILE" "$@"
+  echo
+  node "${SCRIPT_DIR}/dist/index.js" "$@"
+else
+  # Remote / no checkout — download phantom.mjs
+  PHANTOM_FILE="${SCRIPT_DIR}/phantom.mjs"
+
+  if [ ! -f "$PHANTOM_FILE" ]; then
+    echo -e "${DIM}  Downloading phantom.mjs...${NC}"
+    PHANTOM_URL="https://raw.githubusercontent.com/Njap-png/Phantom/main/phantom.mjs"
+    if command -v curl &>/dev/null; then
+      curl -fsSL "$PHANTOM_URL" -o "$PHANTOM_FILE"
+    elif command -v wget &>/dev/null; then
+      wget -q "$PHANTOM_URL" -O "$PHANTOM_FILE"
+    else
+      echo -e "${RED}✕ Need curl or wget${NC}"
+      exit 1
+    fi
+    chmod +x "$PHANTOM_FILE"
+  fi
+
+  echo
+  node "$PHANTOM_FILE" "$@"
+fi

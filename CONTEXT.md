@@ -106,8 +106,10 @@ Agents auto-save/load conversation memory to `~/.config/phantom/memory/<agent_na
 # Zero-setup (downloads phantom.mjs automatically)
 bash <(curl -s https://raw.githubusercontent.com/Njap-png/Phantom/main/run.sh)
 
-# Or from local checkout
-cd /root/phantom && node phantom.mjs
+# Or from local checkout (auto-builds TypeScript):
+cd /root/phantom && npm run dev        # runs TS directly via tsx (no build)
+cd /root/phantom && bash run.sh        # auto-tsc then runs from dist
+cd /root/phantom && node phantom.mjs   # zero-dep entry, no build needed
 
 # With LLM (for AI-powered agents)
 OPENAI_API_KEY=sk-... node phantom.mjs
