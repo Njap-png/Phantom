@@ -52,7 +52,7 @@ Transform Phantom into a **Hermes-like cybersecurity AI assistant** — a termin
 
 ## What Has Been Built
 
-### Hacker Tools (added to phantom.mjs)
+### Hacker Tools (added to phantom.mjs + TypeScript src)
 Each tool is callable by the LLM agent via `@tool_name|argument` syntax:
 
 | Tool | Function | What it does |
@@ -64,7 +64,7 @@ Each tool is callable by the LLM agent via `@tool_name|argument` syntax:
 | `dns_lookup` | `dnsLookup(domain)` | DNS A/AAAA/MX/NS/TXT/CNAME/SOA records |
 | `hash` | `hash(input)` | MD5/SHA1/SHA256 of text or file |
 
-### ReAct Loop (in phantom.mjs Agent class)
+### ReAct Loop (in phantom.mjs + TypeScript agent.ts)
 The agent now has a **Reasoning + Acting loop**:
 1. System prompt lists all available tools with descriptions
 2. LLM decides whether to use a tool or respond directly
@@ -72,16 +72,18 @@ The agent now has a **Reasoning + Acting loop**:
 4. LLM can chain up to 3 tool calls before final response
 5. No API key = shows available tools and prompts user
 
-### Persistence (in phantom.mjs)
+### Persistence (in phantom.mjs + TypeScript)
 Agents auto-save/load conversation memory to `~/.config/phantom/memory/<agent_name>.json`
+
+### TypeScript Status
+- `src/core/hacker-tools.ts` — Fully implemented with proper TypeScript types
+- `src/agents/agent.ts` — Updated with ReAct loop + hacker tool registration
+- `tsc` — Compiles cleanly, output in `dist/`
 
 ## What's Left To Do
 
 ### High Priority
 - [ ] **Set up GitHub auth** — Push to remote (`git push` fails, no credentials)
-- [ ] **Sync phantom.mjs changes back to TypeScript source** — The TypeScript `src/` files need the same ReAct loop and hacker tools
-- [ ] **Compile TypeScript** — Run `tsc` and ensure `dist/` is in sync
-- [ ] **Update run.sh if needed** — Point to new capabilities
 
 ### Feature Ideas
 - [ ] **More tools:** WHOIS lookup, port scanner, HTTP header inspector, SSL cert checker, subdomain enum
@@ -96,8 +98,6 @@ Agents auto-save/load conversation memory to `~/.config/phantom/memory/<agent_na
 - [ ] **Multi-step autonomous chains** — Higher max iterations, smarter loop
 
 ### Known Issues
-- `phantom.mjs` is the **authoritative runtime** — TypeScript source lags behind
-- TypeScript has minor compilation errors in `hacker-tools.ts` (iteration + typing)
 - No LLM key configured by default — need `OPENAI_API_KEY` or `OLLAMA_HOST`
 
 ## How To Run
