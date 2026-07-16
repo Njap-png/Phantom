@@ -2,23 +2,14 @@
 
 ## What is Phantom?
 
-**Phantom** is a multi-agent terminal AI that runs **zero-dependency** on any system with Node.js 18+ (desktop, Termux on Android, CI). It spawns AI agents that can talk to each other, evolve, and use tools.
+**Phantom** is a multi-agent terminal AI turned **cybersecurity assistant** — zero-dependency on any system with Node.js 18+ (desktop, Termux on Android, CI). It spawns AI agents that use tools autonomously to perform recon, vulnerability research, scanning, and exploitation tasks.
 
-## What We're Building
+## Current State (as of latest commit)
 
-### Goal
-Transform Phantom into a **Hermes-like cybersecurity AI assistant** — a terminal-based hacking companion with real tool access. Agents should be able to:
-- Execute shell commands
-- Fetch web pages
-- Analyze files and malware
-- Decode/encode data
-- DNS reconnaissance
-- Hash files/text
-- (future) More advanced security tooling
-
-### Current State (as of commit)
-
-**Latest commit:** `93500f6` — *Add persistence layer, dynamic tools system, and Whisper transcription*
+**18 hacker tools** in dual runtime (`.mjs` zero-dep + `src/` TypeScript):
+- **6 core**: shell, web_fetch, decode, file_analyze, dns_lookup, hash
+- **8 advanced**: whois, port_scan, http_headers, ssl_check, sub_enum, crawl, vt_check, yara
+- **4 workflow**: recon, cve_search, searchsploit, bruteforce
 
 ## Project Structure
 
@@ -38,7 +29,7 @@ Transform Phantom into a **Hermes-like cybersecurity AI assistant** — a termin
 │   │   ├── eventbus.ts  ← Pub/sub event bus
 │   │   ├── persistence.ts  ← Memory/knowledge save/load
 │   │   ├── tools.ts     ← Dynamic tool system
-│   │   └── hacker-tools.ts  ← NEW: Cybersecurity tool implementations
+│   │   └── hacker-tools.ts  ← 18 cybersecurity tool implementations
 │   ├── providers/
 │   │   └── openai.ts    ← OpenAI + Ollama provider
 │   ├── ui/
@@ -50,104 +41,78 @@ Transform Phantom into a **Hermes-like cybersecurity AI assistant** — a termin
 └── CONTEXT.md           ← THIS FILE
 ```
 
-## What Has Been Built
+## All 18 Tools
 
-### Hacker Tools (added to phantom.mjs + TypeScript src)
-Each tool is callable by the LLM agent via `@tool_name|argument` syntax:
+| Tool | What it does |
+|------|-------------|
+| `shell` | Execute ANY shell command (30s timeout) |
+| `web_fetch` | Fetch URL, strip HTML, return text |
+| `decode` | Auto-detect base64/hex/URL/binary/ROT13 |
+| `file_analyze` | File type (magic bytes), hashes, entropy, strings |
+| `dns_lookup` | DNS A/AAAA/MX/NS/TXT/CNAME/SOA records |
+| `hash` | MD5/SHA1/SHA256 of text or file |
+| `whois` | WHOIS lookup — registrar, dates, contacts |
+| `port_scan` | TCP port scan — 30+ common ports or custom range |
+| `http_headers` | HTTP response headers via HEAD request |
+| `ssl_check` | SSL certificate details, expiry, cipher, SANs |
+| `sub_enum` | Subdomain enumeration via crt.sh CT logs |
+| `crawl` | Web crawler: extract links, forms, scripts |
+| `vt_check` | VirusTotal hash lookup (requires `VT_API_KEY`) |
+| `yara` | YARA malware pattern scanner (requires `yara` CLI) |
+| `recon` | **FULL AUTO RECON**: WHOIS → DNS → subdomains → headers → SSL → ports → crawl → report |
+| `cve_search` | Search NVD for CVEs by query (e.g. "apache 2.4.49") |
+| `searchsploit` | Search exploit-db/packetstorm for public exploits |
+| `bruteforce` | Multi-protocol brute force: SSH, FTP, HTTP, MySQL |
 
-| Tool | Function | What it does |
-|------|----------|-------------|
-| `shell` | `shell(cmd)` | Execute ANY shell command (30s timeout) |
-| `web_fetch` | `webFetch(url)` | Fetch URL, strip HTML, return text |
-| `decode` | `decode(input)` | Auto-detect base64/hex/URL/binary/ROT13 |
-| `file_analyze` | `fileAnalyze(path)` | File type (magic bytes), hashes (MD5/SHA1/SHA256), entropy, strings |
-| `dns_lookup` | `dnsLookup(domain)` | DNS A/AAAA/MX/NS/TXT/CNAME/SOA records |
-| `hash` | `hash(input)` | MD5/SHA1/SHA256 of text or file |
-| `whois` | `whois(domain)` | WHOIS lookup — registrar, dates, contacts |
-| `port_scan` | `portScan(target)` | TCP port scan — 30+ common ports or custom range |
-| `http_headers` | `httpHeaders(url)` | HTTP response headers via HEAD request |
-| `ssl_check` | `sslCheck(host)` | SSL certificate details, expiry, cipher, SANs |
-| `sub_enum` | `subdomainEnum(domain)` | Subdomain enumeration via crt.sh CT logs |
-| `crawl` | `webCrawl(url)` | Web crawler: extract links, forms, scripts |
-| `vt_check` | `vtCheck(hash)` | VirusTotal hash lookup (requires `VT_API_KEY`) |
-| `yara` | `yaraScan(input)` | YARA malware pattern scanner (requires `yara` CLI) |
+## How to Use
 
-### ReAct Loop (in phantom.mjs + TypeScript agent.ts)
-The agent now has a **Reasoning + Acting loop**:
-1. System prompt lists all available tools with descriptions
-2. LLM decides whether to use a tool or respond directly
-3. If LLM writes `@tool_name|args`, the tool executes and result feeds back
-4. LLM can chain up to 3 tool calls before final response
-5. No API key = shows available tools and prompts user
-
-### Persistence (in phantom.mjs + TypeScript)
-Agents auto-save/load conversation memory to `~/.config/phantom/memory/<agent_name>.json`
-
-### TypeScript Status
-- `src/core/hacker-tools.ts` — Fully implemented with proper TypeScript types
-- `src/agents/agent.ts` — Updated with ReAct loop + hacker tool registration
-- `tsc` — Compiles cleanly, output in `dist/`
-
-## What's Left To Do
-
-### Feature Ideas
-- [ ] **Agent-to-agent tool sharing** — Agents can delegate tasks to other agents
-- [ ] **Web UI / dashboard** — For monitoring agent activity
-- [ ] **Agent personality prompt tuning** — Better cybersecurity persona
-- [ ] **Local model support** — Ollama/local LLM for offline use
-- [ ] **File upload/download** — For malware sample analysis
-- [ ] **Better error recovery** — Handle tool failures gracefully
-- [ ] **Multi-step autonomous chains** — Higher max iterations, smarter loop
-
-### External Deps (optional)
-- `VT_API_KEY` env var enables VirusTotal hash lookups (get free key at virustotal.com)
-- `yara` CLI enables YARA malware pattern scanning (install: `apt install yara`)
-- `whois` CLI enables WHOIS lookups (install: `apt install whois`)
-
-## How To Run
-
+### Interactive Mode
 ```bash
-# Zero-setup (downloads phantom.mjs automatically)
-bash <(curl -s https://raw.githubusercontent.com/Njap-png/Phantom/main/run.sh)
-
-# Or from local checkout (auto-builds TypeScript):
-cd /root/phantom && npm run dev        # runs TS directly via tsx (no build)
-cd /root/phantom && bash run.sh        # auto-tsc then runs from dist
-cd /root/phantom && node phantom.mjs   # zero-dep entry, no build needed
-
-# With LLM (for AI-powered agents)
-OPENAI_API_KEY=sk-... node phantom.mjs
-
-# Or with Ollama
-OLLAMA_HOST=http://localhost:11434 node phantom.mjs
+node phantom.mjs                     # zero-dep entry
+OPENAI_API_KEY=sk-... node phantom.mjs  # with AI agents
 ```
 
-## Tool Calling Format (for LLM agents)
+### CLI One-Shot Mode
+```bash
+node phantom.mjs --recon example.com           # full recon + report
+node phantom.mjs --tool cve_search "nginx"     # run one tool
+node phantom.mjs --tool port_scan scanme.org   # port scan
+node phantom.mjs --tool bruteforce "ssh|host|root|pass1,pass2"
+node phantom.mjs --list                        # list all tools
+node phantom.mjs --help                        # show help
+```
 
-When the LLM wants to use a tool, it writes:
+### Tool Calling Format (for LLM agents)
 ```
 @tool_name|argument
 ```
 
-Example flow:
-```
-User: what's the SHA256 of /etc/passwd?
-Agent: @hash|/etc/passwd
-[Tool returns hashes]
-Agent: The SHA256 hash of /etc/passwd is: ...
+## Config System
+Auto-loads from `~/.config/phantom/config.json`:
+```json
+{
+  "VT_API_KEY": "your-key-here",
+  "report_dir": "/path/to/reports"
+}
 ```
 
-Current tools and their arguments:
-- `@shell|ls -la /tmp`
-- `@web_fetch|https://example.com`
-- `@decode|SGVsbG8=`
-- `@file_analyze|/path/to/file`
-- `@dns_lookup|example.com`
-- `@hash|hello world`
+## What's Left To Do
+
+- [ ] **Agent-to-agent tool sharing** — Delegation between agents
+- [ ] **Web UI / dashboard** — For monitoring agent activity
+- [ ] **Better error recovery** — Handle tool failures gracefully
+- [ ] **Multi-step autonomous chains** — Higher max iterations, smarter ReAct loop
+
+### External Deps (optional)
+- `VT_API_KEY` env var enables VirusTotal hash lookups
+- `yara` CLI enables YARA scanning (`apt install yara`)
+- `whois` CLI enables WHOIS lookups (`apt install whois`)
+- `sshpass` CLI enables SSH brute force (`apt install sshpass`)
+- `mysql` CLI enables MySQL brute force (`apt install mysql-client`)
+- `searchsploit` CLI enables exploit-db queries (`apt install exploitdb`)
 
 ## Git Config
-
 - User: `Njap-png`
 - Email: `teddy.njagi.w@gmail.com`
 - Remote: `https://github.com/Njap-png/phantom.git`
-- Auth: **Not configured** — need PAT or SSH key to push
+- Auth: Token in `~/.git-credentials`

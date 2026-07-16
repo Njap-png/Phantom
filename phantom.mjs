@@ -11,6 +11,15 @@ const BASE_DIR = resolve(homedir(), ".config", "phantom");
 const MEMORY_DIR = resolve(BASE_DIR, "memory");
 const KNOWLEDGE_DIR = resolve(BASE_DIR, "knowledge");
 const TOOLS_DIR = resolve(BASE_DIR, "tools");
+const REPORTS_DIR = resolve(BASE_DIR, "reports");
+
+// ── Config ─────────────────────────────────────────────────
+let _config = {};
+try {
+  const configPath = resolve(BASE_DIR, "config.json");
+  if (fs.existsSync(configPath)) _config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+} catch {}
+if (_config.VT_API_KEY && !process.env.VT_API_KEY) process.env.VT_API_KEY = _config.VT_API_KEY;
 
 function ensureDirs() {
   if (!fs.existsSync(MEMORY_DIR)) fs.mkdirSync(MEMORY_DIR, { recursive: true });
@@ -244,13 +253,13 @@ const hackerTools = {
       const dns = await import("dns/promises");
       const results = [`DNS records for ${domain}:`];
       const checks = [
-        ["A", dns.resolve4(domain)],
-        ["AAAA", dns.resolve6(domain)],
-        ["MX", dns.resolveMx(domain)],
-        ["NS", dns.resolveNs(domain)],
-        ["TXT", dns.resolveTxt(domain)],
-        ["CNAME", dns.resolveCname(domain)],
-        ["SOA", dns.resolveSoa(domain)],
+        ["A", dns.resolve4(domain).catch(() => [])],
+        ["AAAA", dns.resolve6(domain).catch(() => [])],
+        ["MX", dns.resolveMx(domain).catch(() => [])],
+        ["NS", dns.resolveNs(domain).catch(() => [])],
+        ["TXT", dns.resolveTxt(domain).catch(() => [])],
+        ["CNAME", dns.resolveCname(domain).catch(() => [])],
+        ["SOA", dns.resolveSoa(domain).catch(() => [])],
       ];
       for (const [label, promise] of checks) {
         try {
@@ -465,6 +474,139 @@ const hackerTools = {
       return `[YARA Error] ${err.substring(0,500)}`;
     }
   },
+
+  recon: async (target) => {
+    const domain = target.replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const lines = [
+      "╔══════════════════════════════════════╗",
+      "║  PHANTOM AUTOMATED RECON            ║",
+      `║  Target: ${domain.padEnd(32)}║`,
+      `║  Date:   ${ts.slice(0, 19).padEnd(27)}║`,
+      "╚══════════════════════════════════════╝", "",
+    ];
+    try { lines.push("── [1/7] WHOIS ──", await hackerTools.whois(domain)); } catch {}
+    try { lines.push("\n── [2/7] DNS ──", await hackerTools.dns_lookup(domain)); } catch {}
+    try { lines.push("\n── [3/7] SUBDOMAINS ──", await hackerTools.sub_enum(domain)); } catch {}
+    try { lines.push("\n── [4/7] HTTP HEADERS ──", await hackerTools.http_headers(`https://${domain}`)); } catch {}
+    try { lines.push("\n── [5/7] SSL ──", await hackerTools.ssl_check(domain)); } catch {}
+    try { lines.push("\n── [6/7] PORTS ──", await hackerTools.port_scan(domain)); } catch {}
+    try { lines.push("\n── [7/7] CRAWL ──", await hackerTools.crawl(`https://${domain}`)); } catch {}
+    if (!fs.existsSync(REPORTS_DIR)) fs.mkdirSync(REPORTS_DIR, { recursive: true });
+    const reportPath = resolve(REPORTS_DIR, `recon_${domain}_${ts}.md`);
+    fs.writeFileSync(reportPath, lines.join("\n"), "utf-8");
+    lines.push(`\n📄 Report saved: ${reportPath}`);
+    return lines.join("\n");
+  },
+
+  cve_search: async (query) => {
+    try {
+      const r = await fetch(
+        `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(query)}&resultsPerPage=12`,
+        { signal: AbortSignal.timeout(20000), headers: { "User-Agent": "Phantom/1.0" } }
+      );
+      if (!r.ok) return `[NVD] HTTP ${r.status}`;
+      const data = await r.json();
+      const vulns = data?.vulnerabilities || [];
+      if (!vulns.length) return `(no CVEs for "${query}")`;
+      const lines = [`🔍 CVEs for "${query}": ${vulns.length} found\n`];
+      for (const v of vulns.slice(0, 15)) {
+        const c = v.cve || {};
+        const id = c.id || "N/A";
+        const desc = c.descriptions?.find(d => d.lang === "en")?.value || "";
+        const cvss = c.metrics?.cvssMetricV31?.[0]?.cvssData || c.metrics?.cvssMetricV2?.[0]?.cvssData || {};
+        lines.push(`[${id}] ${cvss.baseSeverity || "?"} (${cvss.baseScore || "?"}) — ${(c.published||"").split("T")[0] || "?"}`);
+        if (desc) lines.push(`  ${desc.substring(0, 180)}`);
+        lines.push(`  https://nvd.nist.gov/vuln/detail/${id}\n`);
+      }
+      return lines.join("\n");
+    } catch (e) { return `[CVE Error] ${e.message}`; }
+  },
+
+  searchsploit: async (query) => {
+    try {
+      const r = (await import("child_process")).execSync(`searchsploit ${query} 2>/dev/null`, { encoding: "utf-8", timeout: 15000 });
+      if (r.trim()) return `🔧 Exploit-DB:\n${r.trim().substring(0, 4000)}`;
+    } catch {}
+    try {
+      const r = await fetch(`https://packetstormsecurity.com/search/?q=${encodeURIComponent(query)}`, { signal: AbortSignal.timeout(15000), headers: { "User-Agent": "Mozilla/5.0" } });
+      const html = await r.text();
+      const lines = [`🔧 Exploits for "${query}":`];
+      const matches = html.match(/<a[^>]+href="\/files\/[^"]+"[^>]*>[\s\S]{0,150}?<\/a>/gi) || [];
+      for (const m of matches.slice(0, 15)) {
+        const url = m.match(/href="([^"]+)"/)?.[1];
+        const text = m.replace(/<[^>]+>/g, "").trim().substring(0, 100);
+        if (url && text) lines.push(`  ${text} → https://packetstormsecurity.com${url}`);
+      }
+      return lines.length > 1 ? lines.join("\n") : `  Try: https://www.exploit-db.com/search?q=${encodeURIComponent(query)}`;
+    } catch (e) { return `[Search Error] ${e.message}`; }
+  },
+
+  bruteforce: async (input) => {
+    const parts = input.split("|").map(s => s.trim());
+    if (parts.length < 4) return `[Brute] Usage: protocol|target|user|pass1,pass2,pass3\nProtocols: ssh, ftp, http, mysql`;
+    const [protocol, target, user, passStr] = parts;
+    const passes = passStr.split(",").map(s => s.trim()).filter(Boolean);
+    const results = [`🔑 Brute: ${protocol}://${target}`, `  User: ${user}`, `  Passwords: ${passes.length}`, ""];
+    const { default: net } = await import("net");
+
+    async function tryOne(protocol, target, user, pass) {
+      switch (protocol) {
+        case "ssh": {
+          try {
+            (await import("child_process")).execSync(
+              `sshpass -p '${pass.replace(/'/g, "'\\''")}' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 ${user}@${target} 'id' 2>/dev/null`,
+              { encoding: "utf-8", timeout: 10000 }
+            );
+            return "✅ SUCCESS";
+          } catch { return "❌ failed"; }
+        }
+        case "ftp": {
+          return new Promise(resolve => {
+            const s = new net.Socket(); let buf = "";
+            s.setTimeout(5000);
+            s.on("data", d => {
+              buf += d.toString();
+              if (buf.includes("220 ") || buf.includes("ready")) s.write(`USER ${user}\r\n`);
+              else if (buf.includes("331 ") || buf.includes("User")) s.write(`PASS ${pass}\r\n`);
+              else if (buf.includes("230 ") || buf.includes("Logged")) { s.destroy(); resolve("✅ SUCCESS"); }
+              else if (buf.includes("530 ") || buf.includes("Login") || buf.includes("incorrect")) { s.destroy(); resolve("❌ failed"); }
+            });
+            s.on("error", () => resolve("❌ error"));
+            s.on("timeout", () => { s.destroy(); resolve("❌ timeout"); });
+            const [h, p] = target.includes(":") ? target.split(":") : [target, "21"];
+            s.connect(parseInt(p) || 21, h);
+          });
+        }
+        case "http": {
+          try {
+            const r = await fetch(target, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ username: user, password: pass, log: user, pwd: pass }).toString(), redirect: "manual", signal: AbortSignal.timeout(8000) });
+            if (r.status === 302 || r.status === 301) return "✅ redirect";
+            const t = await r.text().catch(() => "");
+            if (r.status === 200 && !t.includes("incorrect") && !t.includes("Invalid") && !t.includes("error")) return !t.includes("password") && !t.includes("login") ? "⚠ maybe" : "❌ failed";
+            return r.status === 401 || r.status === 403 ? "❌ denied" : "❌ failed";
+          } catch { return "❌ error"; }
+        }
+        case "mysql": {
+          try {
+            const r = (await import("child_process")).execSync(
+              `mysql -u '${user}' -p'${pass.replace(/'/g, "'\\''")}' -h '${target}' -e 'SELECT 1' --connect-timeout=5 2>/dev/null`, { encoding: "utf-8", timeout: 10000 }
+            );
+            return r.includes("1") ? "✅ SUCCESS" : "❌ failed";
+          } catch { return "❌ failed"; }
+        }
+        default: return "❌ unknown";
+      }
+    }
+
+    const pad = `${user}:`.padEnd(25);
+    for (const pass of passes) {
+      const r = await tryOne(protocol, target, user, pass);
+      results.push(`  ${pad} ${pass.padEnd(20)} → ${r}`);
+      if (r.startsWith("✅") || r.startsWith("⚠")) { results.push(`\n🎯 FOUND: ${user}:${pass}`); break; }
+    }
+    return results.join("\n");
+  },
 };
 
 // ── EventBus ──────────────────────────────────────────────
@@ -604,6 +746,10 @@ class Agent {
       crawl: "Crawl a web page: extract all links, forms, and script sources. Use for: web recon, asset discovery. Input: full URL including https://.",
       vt_check: "Check file hash against VirusTotal. Shows detection ratio and top malicious engines. Requires VT_API_KEY env var. Input: MD5/SHA1/SHA256 hash.",
       yara: "Scan file with YARA rules. Format: rules_file|target, or just target. Use for: malware pattern matching, IOC scanning. Requires yara CLI. Input: rules_and_target.",
+      recon: "FULL AUTOMATED RECON: runs WHOIS → DNS → subdomains → HTTP headers → SSL → port scan → crawl. Saves timestamped report. Use for: one-shot surface mapping. Input: domain or URL.",
+      cve_search: "Search NVD (National Vulnerability Database) for CVEs. Shows CVE ID, CVSS score, severity, description. Use for: finding known vulns for software/version. Input: search query (e.g. 'apache 2.4.49').",
+      searchsploit: "Search for public exploits. Tries local searchsploit CLI, falls back to packetstorm. Use for: finding PoC exploits. Input: search query (e.g. 'WordPress 5.8').",
+      bruteforce: "Multi-protocol brute force login. Supports SSH, FTP, HTTP POST, MySQL. Format: protocol|target|user|pass1,pass2,pass3. Use for: password testing, credential auditing.",
     };
     for (const [name, desc] of Object.entries(toolList)) {
       this.tools[name] = { description: desc, execute: hackerTools[name] };
@@ -1449,6 +1595,77 @@ function selectUI(am) {
 
 // ── Main ──────────────────────────────────────────────────
 import readline from "readline";
+
+// ── CLI One-Shot Mode ─────────────────────────────────────
+const args = process.argv.slice(2);
+if (args.length > 0 && !args[0].startsWith("--")) {
+  // No --flag: pass as interactive input to phantom
+} else if (args.length > 0) {
+  const flag = args[0].replace("--", "");
+  const input = args.slice(1).join(" ") || "";
+
+  if (flag === "help" || flag === "h") {
+    console.log(`Phantom — Cybersecurity AI Assistant
+
+Usage:
+  node phantom.mjs                          Interactive mode
+  node phantom.mjs --recon <domain>         Full recon (7 steps + report)
+  node phantom.mjs --tool <name> <input>    Run one tool directly
+  node phantom.mjs --list                   List all tools
+  node phantom.mjs --help                   This help
+
+Examples:
+  node phantom.mjs --recon example.com
+  node phantom.mjs --tool port_scan scanme.org
+  node phantom.mjs --tool cve_search "apache 2.4.49"
+  node phantom.mjs --tool bruteforce "ssh|192.168.1.1|root|admin,toor,123"`);
+    process.exit(0);
+  }
+
+  if (flag === "list" || flag === "l") {
+    const names = Object.keys(hackerTools).sort();
+    console.log(`Phantom — ${names.length} tools:\n`);
+    for (const name of names) {
+      const desc = hackerTools[name]?.constructor?.name === "AsyncFunction" || typeof hackerTools[name] === "function"
+        ? "(function)" : "—";
+      console.log(`  ${name}`);
+    }
+    process.exit(0);
+  }
+
+  if (flag === "tool" || flag === "t") {
+    const toolName = args[1];
+    const toolInput = args.slice(2).join(" ");
+    if (!toolName || !hackerTools[toolName]) {
+      console.error(`Unknown tool: "${toolName}". Available: ${Object.keys(hackerTools).sort().join(", ")}`);
+      process.exit(1);
+    }
+    console.log(`🔧 ${toolName} ${toolInput ? `— ${toolInput}` : ""}`);
+    const result = await hackerTools[toolName](toolInput || "");
+    console.log(result);
+    process.exit(0);
+  }
+
+  if (flag === "recon" || flag === "r") {
+    if (!input) { console.error("Usage: node phantom.mjs --recon <domain>"); process.exit(1); }
+    console.log(`🎯 Phantom Recon — ${input}\n`);
+    const result = await hackerTools.recon(input);
+    console.log(result);
+    process.exit(0);
+  }
+
+  // Unknown flag — run as tool name directly
+  const toolName = flag;
+  if (hackerTools[toolName]) {
+    console.log(`🔧 ${toolName} ${input ? `— ${input}` : ""}`);
+    const result = await hackerTools[toolName](input || "");
+    console.log(result);
+    process.exit(0);
+  }
+
+  console.error(`Unknown flag: --${flag}. Use --help for usage.`);
+  process.exit(1);
+}
 
 const llm = createProvider();
 const am = new AgentManager(llm);
