@@ -12,6 +12,7 @@ const MEMORY_DIR = resolve(BASE_DIR, "memory");
 const KNOWLEDGE_DIR = resolve(BASE_DIR, "knowledge");
 const TOOLS_DIR = resolve(BASE_DIR, "tools");
 const REPORTS_DIR = resolve(BASE_DIR, "reports");
+const PLAYBOOKS_DIR = resolve(BASE_DIR, "playbooks");
 
 // ── Config ─────────────────────────────────────────────────
 let _config = {};
@@ -852,6 +853,202 @@ const hackerTools = {
       return `🎯 Generated tool "${toolName}" at ${genDir}/${toolName}.ts\nIntegrate: paste function into src/core/hacker-tools.ts, add to registry, run npm run build\n\n${result.substring(0, 600)}`;
     } catch (e) { return `[Self Add Error] ${e.message}`; }
   },
+
+  // ── KNOWLEDGE BASE ──
+  knowledge_add: async (input) => {
+    try {
+      const parts = input.split("|");
+      const tags = (parts[0] || "general").split(",").map(t => t.trim()).filter(Boolean);
+      const content = parts.slice(1).join("|").trim();
+      if (!content) return "[Knowledge] Usage: tags|content";
+      if (!fs.existsSync(KNOWLEDGE_DIR)) fs.mkdirSync(KNOWLEDGE_DIR, { recursive: true });
+      const slug = tags[0].replace(/[^a-z0-9_-]/gi, "_") + "_" + Date.now();
+      fs.writeFileSync(resolve(KNOWLEDGE_DIR, `${slug}.json`), JSON.stringify({ tags, content, created: new Date().toISOString() }, null, 2), "utf-8");
+      return `📚 Knowledge saved (tags: ${tags.join(", ")})`;
+    } catch (e) { return `[Knowledge Error] ${e.message}`; }
+  },
+  knowledge_search: async (input) => {
+    try {
+      if (!fs.existsSync(KNOWLEDGE_DIR)) return "[Knowledge] Empty";
+      const q = input.toLowerCase().trim();
+      const results = fs.readdirSync(KNOWLEDGE_DIR).filter(f => f.endsWith(".json")).map(f => {
+        const d = JSON.parse(fs.readFileSync(resolve(KNOWLEDGE_DIR, f), "utf-8"));
+        return !q || d.tags.some(t => t.toLowerCase().includes(q)) || d.content.toLowerCase().includes(q) ? `[${d.tags.join(", ")}] ${d.content.substring(0, 200)}` : null;
+      }).filter(Boolean);
+      return results.length ? `📚 Knowledge (${results.length}):\n${results.join("\n")}` : `[Knowledge] No results for "${q}"`;
+    } catch (e) { return `[Knowledge Error] ${e.message}`; }
+  },
+
+  // ── PLAYBOOK SYSTEM ──
+  playbook_list: async () => {
+    try {
+      if (!fs.existsSync(PLAYBOOKS_DIR)) fs.mkdirSync(PLAYBOOKS_DIR, { recursive: true });
+      // Seed built-ins
+      const BUILTINS = [
+        { name:"quick_web_recon", description:"Full recon on a web target", variables:["target"], steps:[
+          {tool:"whois",args:"{{target}}",desc:"WHOIS"},{tool:"dns_lookup",args:"{{target}}",desc:"DNS"},{tool:"sub_enum",args:"{{target}}",desc:"Subdomains"},{tool:"port_scan",args:"{{target}}",desc:"Ports"},{tool:"http_headers",args:"https://{{target}}",desc:"Headers"},{tool:"ssl_check",args:"{{target}}",desc:"SSL"}
+        ]},
+        { name:"vuln_assessment", description:"Full vuln assessment: recon + CVE + exploits", variables:["target"], steps:[
+          {tool:"recon",args:"{{target}}",desc:"Recon sweep"},{tool:"cve_search",args:"{{target}}",desc:"CVEs"},{tool:"searchsploit",args:"{{target}}",desc:"Exploits"},{tool:"bruteforce",args:"ssh|{{target}}|root|admin,root,password",desc:"SSH brute"}
+        ]},
+        { name:"network_footprint", description:"Map network footprint: DNS, whois, geo, ports, crawl", variables:["target"], steps:[
+          {tool:"dns_lookup",args:"{{target}}",desc:"DNS"},{tool:"whois",args:"{{target}}",desc:"WHOIS"},{tool:"port_scan",args:"{{target}}",desc:"Ports"},{tool:"crawl",args:"https://{{target}}",desc:"Crawl"}
+        ]},
+        { name:"full_vulnscan_report", description:"Auto vuln_scan + save report + session", variables:["target"], steps:[
+          {tool:"vuln_scan",args:"{{target}}",desc:"Full scan"},{tool:"session_save",args:"scan_{{target}}",desc:"Save session"}
+        ]},
+      ];
+      for (const pb of BUILTINS) {
+        const fp = resolve(PLAYBOOKS_DIR, `${pb.name}.json`);
+        if (!fs.existsSync(fp)) fs.writeFileSync(fp, JSON.stringify(pb, null, 2), "utf-8");
+      }
+      const files = fs.readdirSync(PLAYBOOKS_DIR).filter(f => f.endsWith(".json"));
+      if (!files.length) return "[Playbook] No playbooks found";
+      const lines = files.map(f => {
+        const pb = JSON.parse(fs.readFileSync(resolve(PLAYBOOKS_DIR, f), "utf-8"));
+        return `📋 ${pb.name} — ${(pb.description||"").substring(0, 80)} (${(pb.steps||[]).length} steps)`;
+      });
+      return `Available playbooks (${files.length}):\n${lines.join("\n")}`;
+    } catch (e) { return `[Playbook Error] ${e.message}`; }
+  },
+  playbook_create: async (input) => {
+    try {
+      const parts = input.split("|");
+      const name = (parts[0] || `pb_${Date.now()}`).replace(/[^a-z0-9_-]/gi, "_");
+      const desc = parts[1] || "Auto-generated";
+      const stepsRaw = parts.slice(2).join("|") || "";
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (apiKey && !stepsRaw) {
+        try {
+          const r = await fetch("https://api.openai.com/v1/chat/completions", {
+            method:"POST", headers:{"Content-Type":"application/json",Authorization:`Bearer ${apiKey}`},
+            body:JSON.stringify({model:"gpt-4o-mini",messages:[{role:"system",content:"Generate a JSON playbook. Format: {name,description,variables:[\"target\"],steps:[{tool,args,desc}]}. Only valid JSON."},{role:"user",content:`Create playbook: ${desc}`}],max_tokens:1000}),
+            signal:AbortSignal.timeout(30000),
+          });
+          const d = await r.json();
+          const pb = JSON.parse(d?.choices?.[0]?.message?.content || "{}");
+          if (pb.steps) { pb.name = name; pb.description = desc; fs.writeFileSync(resolve(PLAYBOOKS_DIR, `${name}.json`), JSON.stringify(pb, null, 2), "utf-8"); return `✅ LLM-created playbook: ${name} (${pb.steps.length} steps)`; }
+        } catch {}
+      }
+      const steps = stepsRaw ? stepsRaw.split(",").map(s => ({tool:"shell",args:s.trim(),desc:s.trim()})) : [{tool:"shell",args:"echo hello",desc:"Default step"}];
+      fs.writeFileSync(resolve(PLAYBOOKS_DIR, `${name}.json`), JSON.stringify({name,description:desc,variables:["target"],steps}, null, 2), "utf-8");
+      return `📋 Playbook created: ${name} (${steps.length} steps)`;
+    } catch (e) { return `[Playbook Error] ${e.message}`; }
+  },
+  playbook_run: async (input) => {
+    try {
+      const parts = input.split("|");
+      const name = parts[0]?.trim();
+      if (!name) return "[Playbook] Usage: playbook_run|name|target=example.com";
+      const fp = resolve(PLAYBOOKS_DIR, `${name.replace(/[^a-z0-9_-]/gi, "_")}.json`);
+      if (!fs.existsSync(fp)) return `[Playbook] Not found: ${name}`;
+      const pb = JSON.parse(fs.readFileSync(fp, "utf-8"));
+      const vars = {};
+      if (parts[1]) parts[1].split(",").forEach(p => { const [k,v] = p.split("="); if (k && v) vars[k.trim()] = v.trim(); });
+      const log = [`Executing: ${pb.name}`, `Description: ${pb.description}`, `---`, ``];
+      for (let i = 0; i < pb.steps.length; i++) {
+        const s = pb.steps[i];
+        let args = s.args;
+        for (const [k, v] of Object.entries(vars)) args = args.replace(new RegExp(`\\{\\{${k}\\}\\}`, "g"), v);
+        log.push(`Step ${i+1}/${pb.steps.length}: @${s.tool}|${args} — ${s.desc}`);
+        try {
+          if (!hackerTools[s.tool]) { log.push(`  ⚠ Unknown tool: ${s.tool}`); continue; }
+          const r = await hackerTools[s.tool](args);
+          log.push(`  ${r.substring(0, 1000)}`);
+          if (r.length > 1000) log.push(`  … (${r.length} total)`);
+        } catch (e) { log.push(`  ⚠ Error: ${e.message}`); }
+        log.push(``);
+      }
+      log.push(`---\n✅ "${pb.name}" complete (${pb.steps.length} steps)`);
+      return log.join("\n");
+    } catch (e) { return `[Playbook Error] ${e.message}`; }
+  },
+  playbook_edit: async (input) => {
+    try {
+      const parts = input.split("|");
+      const name = parts[0]?.trim();
+      if (!name) return "[Playbook] Usage: playbook_edit|name|step|tool|args|desc";
+      const fp = resolve(PLAYBOOKS_DIR, `${name.replace(/[^a-z0-9_-]/gi, "_")}.json`);
+      if (!fs.existsSync(fp)) return `[Playbook] Not found: ${name}`;
+      const pb = JSON.parse(fs.readFileSync(fp, "utf-8"));
+      if (parts[1] === "desc" && parts[2]) { pb.description = parts[2]; fs.writeFileSync(fp, JSON.stringify(pb, null, 2), "utf-8"); return `✅ Description updated`; }
+      if (parts[1] === "add" && parts[2]) { pb.steps.push({tool:parts[2],args:parts[3]||"",desc:parts[4]||parts[2]}); fs.writeFileSync(fp, JSON.stringify(pb, null, 2), "utf-8"); return `✅ Step added`; }
+      const idx = parseInt(parts[1]) - 1;
+      if (isNaN(idx) || idx < 0 || idx >= pb.steps.length) return `[Playbook] Invalid step. Steps: 1-${pb.steps.length}`;
+      if (parts[2]) pb.steps[idx].tool = parts[2];
+      if (parts[3]) pb.steps[idx].args = parts[3];
+      if (parts[4]) pb.steps[idx].desc = parts[4];
+      fs.writeFileSync(fp, JSON.stringify(pb, null, 2), "utf-8");
+      return `✅ Step ${idx+1} updated: @${pb.steps[idx].tool}|${pb.steps[idx].args}`;
+    } catch (e) { return `[Playbook Error] ${e.message}`; }
+  },
+
+  // ── RECON TOOLS ──
+  geoip: async (ip) => {
+    try {
+      const r = await fetch(`http://ip-api.com/json/${ip.trim()}?fields=status,country,regionName,city,zip,lat,lon,isp,org,as,query`, {signal:AbortSignal.timeout(8000)});
+      const d = await r.json();
+      if (d.status === "fail") return `[GeoIP] ${d.message || "Unknown"}`;
+      return `🌍 GeoIP: ${d.query}\nCountry: ${d.country}\nRegion: ${d.regionName}\nCity: ${d.city}\nZIP: ${d.zip}\nCoordinates: ${d.lat}, ${d.lon}\nISP: ${d.isp}\nOrg: ${d.org}\nASN: ${d.as}`;
+    } catch (e) { return `[GeoIP Error] ${e.message}`; }
+  },
+  dns_zone: async (input) => {
+    try {
+      const domain = input.replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+      const nsResp = await fetch(`https://dns.google/resolve?name=${domain}&type=NS`, {signal:AbortSignal.timeout(8000)});
+      const nsData = await nsResp.json();
+      const nsList = (nsData?.Answer||[]).map(a => a.data.replace(/\.$/, ""));
+      if (!nsList.length) return "[DNS Zone] No NS records found";
+      const results = [`Testing ${nsList.length} NS for zone transfer on ${domain}:`,``];
+      for (const ns of nsList) {
+        try {
+          const r = await fetch(`https://dns.google/resolve?name=${domain}&type=AXFR&nameserver=${ns}`, {signal:AbortSignal.timeout(10000)});
+          const d = await r.json();
+          if (d?.Answer?.length > 0) { results.push(`⚠ VULNERABLE: ${ns} returned ${d.Answer.length} records!`); d.Answer.forEach(a => results.push(`  ${a.name} ${a.type} ${a.data}`)); }
+          else results.push(`✅ ${ns} — zone transfer denied`);
+        } catch { results.push(`⏰ ${ns} — timeout/error`); }
+      }
+      return results.join("\n");
+    } catch (e) { return `[DNS Zone Error] ${e.message}`; }
+  },
+  http_methods: async (input) => {
+    try {
+      const url = input.startsWith("http") ? input : `https://${input}`;
+      const methods = ["GET","POST","PUT","DELETE","OPTIONS","PATCH","HEAD","TRACE","CONNECT"];
+      const results = [`Testing HTTP methods on ${url}:`,``];
+      for (const method of methods) {
+        try {
+          const r = await fetch(url, {method, signal:AbortSignal.timeout(5000)});
+          const allow = r.headers.get("allow") || r.headers.get("access-control-allow-methods") || "";
+          results.push(`  ${method} → ${r.status}${allow ? ` (Allow: ${allow})` : ""}`);
+        } catch (e) { results.push(`  ${method} → Error: ${(e.message||"").substring(0,60)}`); }
+      }
+      return results.join("\n");
+    } catch (e) { return `[HTTP Methods Error] ${e.message}`; }
+  },
+  robots_txt: async (input) => {
+    try {
+      const base = input.startsWith("http") ? input : `https://${input}`;
+      const url = `${base.replace(/\/+$/, "")}/robots.txt`;
+      const r = await fetch(url, {signal:AbortSignal.timeout(8000)});
+      if (r.status === 404) return `[robots.txt] Not found at ${url}`;
+      const text = await r.text();
+      const disallowed = text.match(/Disallow:\s*(.+)/gi) || [];
+      const sitemaps = text.match(/Sitemap:\s*(.+)/gi) || [];
+      return `🤖 robots.txt from ${url}:\n---\n${text.substring(0,2000)}${disallowed.length ? `\n\n🚫 Disallowed (${disallowed.length}):\n${disallowed.join("\n")}` : ""}${sitemaps.length ? `\n\n🗺 Sitemaps (${sitemaps.length}):\n${sitemaps.join("\n")}` : ""}`;
+    } catch (e) { return `[robots.txt Error] ${e.message}`; }
+  },
+  email_verify: async (input) => {
+    try {
+      const email = input.trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return `[Email] Invalid: ${email}`;
+      const domain = email.split("@")[1];
+      const r = await fetch(`https://dns.google/resolve?name=${domain}&type=MX`, {signal:AbortSignal.timeout(8000)});
+      const d = await r.json();
+      const mxs = (d?.Answer||[]).filter(a => a.type === 15).map(a => a.data.replace(/\.$/, ""));
+      return mxs.length ? `✅ ${email}\nDomain: ${domain}\nMX: ${mxs.join(", ")}` : `✅ Format valid, but no MX for ${domain}`;
+    } catch (e) { return `[Email Error] ${e.message}`; }
+  },
 };
 
 // ── EventBus ──────────────────────────────────────────────
@@ -1009,6 +1206,17 @@ class Agent {
       session_load: "Load a saved Phantom session. Input: session name.",
       code_gen: "Generate code via OpenAI LLM (requires OPENAI_API_KEY). Format: prompt|language|output_path.",
       self_add_tool: "Generate a new Phantom tool via LLM. Requires OPENAI_API_KEY. Input: natural language tool description.",
+      knowledge_add: "Add an entry to Phantom's persistent knowledge base. Format: tag1,tag2|content.",
+      knowledge_search: "Search Phantom's knowledge base by tag or keyword. Input: search query.",
+      playbook_create: "Create a new multi-step automation playbook. Uses LLM if OPENAI_API_KEY set. Input: name|description.",
+      playbook_list: "List all available playbooks (built-in + custom).",
+      playbook_run: "Execute a playbook against a target. Input: name|target=example.com.",
+      playbook_edit: "Edit a playbook: edit steps, update description, or append steps.",
+      geoip: "IP geolocation lookup. Shows country, region, city, ISP, ASN. Input: IP or domain.",
+      dns_zone: "Test DNS zone transfer (AXFR) on all name servers. Input: domain.",
+      http_methods: "Fuzz HTTP methods on a URL. Tests GET, POST, PUT, DELETE, etc. Input: URL.",
+      robots_txt: "Fetch and analyze robots.txt. Shows rules, disallowed paths, sitemaps. Input: domain or URL.",
+      email_verify: "Validate email format and check domain MX records. Input: email address.",
     };
     for (const [name, desc] of Object.entries(toolList)) {
       this.tools[name] = { description: desc, execute: hackerTools[name] };

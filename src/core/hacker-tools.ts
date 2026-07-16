@@ -1082,6 +1082,276 @@ async function selfAddTool(prompt: string): Promise<string> {
   } catch (e: any) { return `[Self Add Error] ${e.message}`; }
 }
 
+// ── KNOWLEDGE BASE ───────────────────────────────────────
+const KNOWLEDGE_DIR = resolve(homedir(), ".config", "phantom", "knowledge");
+
+async function knowledgeAdd(input: string): Promise<string> {
+  try {
+    const parts = input.split("|");
+    const tags = (parts[0] || "general").split(",").map(t => t.trim()).filter(Boolean);
+    const content = parts.slice(1).join("|").trim();
+    if (!content) return "[Knowledge] Usage: tags|content";
+    if (!existsSync(KNOWLEDGE_DIR)) mkdirSync(KNOWLEDGE_DIR, { recursive: true });
+    const slug = tags[0].replace(/[^a-z0-9_-]/gi, "_") + "_" + Date.now();
+    const entry = { tags, content, created: new Date().toISOString() };
+    writeFileSync(resolve(KNOWLEDGE_DIR, `${slug}.json`), JSON.stringify(entry, null, 2), "utf-8");
+    return `📚 Knowledge saved (tags: ${tags.join(", ")})`;
+  } catch (e: any) { return `[Knowledge Error] ${e.message}`; }
+}
+
+async function knowledgeSearch(input: string): Promise<string> {
+  try {
+    if (!existsSync(KNOWLEDGE_DIR)) return "[Knowledge] Empty — add entries with knowledge_add";
+    const q = input.toLowerCase().trim();
+    const files = readdirSync(KNOWLEDGE_DIR).filter(f => f.endsWith(".json"));
+    const results: string[] = [];
+    for (const f of files) {
+      const data = JSON.parse(readFileSync(resolve(KNOWLEDGE_DIR, f), "utf-8"));
+      if (!q || data.tags.some((t: string) => t.toLowerCase().includes(q)) || data.content.toLowerCase().includes(q)) {
+        results.push(`[${data.tags.join(", ")}] ${data.content.substring(0, 200)}`);
+      }
+    }
+    if (results.length === 0) return `[Knowledge] No results for "${q}"`;
+    return `📚 Knowledge (${results.length}):\n${results.join("\n")}`;
+  } catch (e: any) { return `[Knowledge Error] ${e.message}`; }
+}
+
+// ── PLAYBOOKS ────────────────────────────────────────────
+const PLAYBOOKS_DIR = resolve(homedir(), ".config", "phantom", "playbooks");
+
+type PlaybookStep = { tool: string; args: string; desc: string };
+type Playbook = { name: string; description: string; variables: string[]; steps: PlaybookStep[] };
+
+const BUILTIN_PLAYBOOKS: Playbook[] = [
+  { name: "quick_web_recon", description: "Full recon on a web target: WHOIS, DNS, subdomains, ports, headers, SSL", variables: ["target"], steps: [
+    { tool: "whois", args: "{{target}}", desc: "WHOIS lookup for registration details" },
+    { tool: "dns_lookup", args: "{{target}}", desc: "DNS records (A, MX, NS, TXT, etc.)" },
+    { tool: "sub_enum", args: "{{target}}", desc: "Subdomain enumeration via crt.sh" },
+    { tool: "port_scan", args: "{{target}}", desc: "TCP port scan of common ports" },
+    { tool: "http_headers", args: "https://{{target}}", desc: "HTTP response headers" },
+    { tool: "ssl_check", args: "{{target}}", desc: "SSL certificate analysis" },
+  ]},
+  { name: "vuln_assessment", description: "Full vulnerability assessment: recon + CVE + exploit search", variables: ["target"], steps: [
+    { tool: "recon", args: "{{target}}", desc: "Full recon sweep" },
+    { tool: "cve_search", args: "{{target}}", desc: "Search known CVEs" },
+    { tool: "searchsploit", args: "{{target}}", desc: "Search public exploits" },
+    { tool: "bruteforce", args: "ssh|{{target}}|root|admin,root,password", desc: "SSH brute force test" },
+  ]},
+  { name: "network_footprint", description: "Map a target's network footprint: DNS, whois, geo, ports", variables: ["target"], steps: [
+    { tool: "dns_lookup", args: "{{target}}", desc: "DNS records" },
+    { tool: "whois", args: "{{target}}", desc: "WHOIS registration" },
+    { tool: "geoip", args: "{{target}}", desc: "GeoIP location" },
+    { tool: "port_scan", args: "{{target}}", desc: "Open port discovery" },
+    { tool: "crawl", args: "https://{{target}}", desc: "Web crawling" },
+  ]},
+  { name: "full_vulnscan_report", description: "Auto vuln_scan + save report + save session", variables: ["target"], steps: [
+    { tool: "vuln_scan", args: "{{target}}", desc: "Full 4-phase vulnerability scan" },
+    { tool: "session_save", args: "scan_{{target}}", desc: "Save session state" },
+  ]},
+];
+
+async function ensureBuiltinPlaybooks(): Promise<void> {
+  if (!existsSync(PLAYBOOKS_DIR)) mkdirSync(PLAYBOOKS_DIR, { recursive: true });
+  for (const pb of BUILTIN_PLAYBOOKS) {
+    const fp = resolve(PLAYBOOKS_DIR, `${pb.name}.json`);
+    if (!existsSync(fp)) writeFileSync(fp, JSON.stringify(pb, null, 2), "utf-8");
+  }
+}
+
+async function playbookCreate(input: string): Promise<string> {
+  try {
+    await ensureBuiltinPlaybooks();
+    const parts = input.split("|");
+    const name = (parts[0] || `pb_${Date.now()}`).replace(/[^a-z0-9_-]/gi, "_");
+    const desc = parts[1] || "Auto-generated playbook";
+    const stepsRaw = parts.slice(2).join("|") || `shell|echo "step 1"`;
+    // Try LLM-powered generation
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (apiKey && !stepsRaw.startsWith("shell")) {
+      try {
+        const r = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify({ model: "gpt-4o-mini", messages: [
+            { role: "system", content: "Generate a JSON playbook. Format: {name, description, variables: [\"target\"], steps: [{tool, args, desc}]}. Only reply with valid JSON." },
+            { role: "user", content: `Create a playbook: ${desc}` }
+          ], max_tokens: 1000 }),
+          signal: AbortSignal.timeout(30000),
+        });
+        const data = await r.json() as any;
+        try { const pb = JSON.parse(data?.choices?.[0]?.message?.content || "{}"); if (pb.steps) { pb.name = name; pb.description = desc; writeFileSync(resolve(PLAYBOOKS_DIR, `${name}.json`), JSON.stringify(pb, null, 2), "utf-8"); return `✅ LLM-created playbook: ${name} (${pb.steps.length} steps)`; } } catch {}
+      } catch {}
+    }
+    // Manual stub
+    const steps = stepsRaw.split(",").map(s => ({ tool: "shell", args: s.trim(), desc: s.trim() }));
+    const pb: Playbook = { name, description: desc, variables: ["target"], steps };
+    writeFileSync(resolve(PLAYBOOKS_DIR, `${name}.json`), JSON.stringify(pb, null, 2), "utf-8");
+    return `📋 Playbook created: ${name} (${steps.length} steps)`;
+  } catch (e: any) { return `[Playbook Error] ${e.message}`; }
+}
+
+async function playbookList(): Promise<string> {
+  try {
+    await ensureBuiltinPlaybooks();
+    const files = readdirSync(PLAYBOOKS_DIR).filter(f => f.endsWith(".json"));
+    if (files.length === 0) return "[Playbook] No playbooks found";
+    const lines = files.map(f => {
+      const pb = JSON.parse(readFileSync(resolve(PLAYBOOKS_DIR, f), "utf-8"));
+      return `📋 ${pb.name} — ${pb.description?.substring(0, 80)} (${pb.steps?.length || 0} steps)`;
+    });
+    return `Available playbooks (${files.length}):\n${lines.join("\n")}`;
+  } catch (e: any) { return `[Playbook Error] ${e.message}`; }
+}
+
+async function playbookRun(input: string): Promise<string> {
+  try {
+    await ensureBuiltinPlaybooks();
+    const parts = input.split("|");
+    const name = parts[0]?.trim();
+    if (!name) return "[Playbook] Usage: playbook_run|name|var1=val1,var2=val2";
+    const fp = resolve(PLAYBOOKS_DIR, `${name.replace(/[^a-z0-9_-]/gi, "_")}.json`);
+    if (!existsSync(fp)) return `[Playbook] Not found: ${name}`;
+    const pb: Playbook = JSON.parse(readFileSync(fp, "utf-8"));
+    // Parse variable assignments
+    const vars: Record<string, string> = {};
+    if (parts[1]) {
+      parts[1].split(",").forEach(p => { const [k, v] = p.split("="); if (k && v) vars[k.trim()] = v.trim(); });
+    }
+    const log: string[] = [`Executing playbook: ${pb.name}`, `Description: ${pb.description}`, `---`, ``];
+    for (let i = 0; i < pb.steps.length; i++) {
+      const step = pb.steps[i];
+      let args = step.args;
+      for (const [k, v] of Object.entries(vars)) args = args.replace(new RegExp(`\\{\\{${k}\\}\\}`, "g"), v);
+      log.push(`Step ${i + 1}/${pb.steps.length}: @${step.tool}|${args} — ${step.desc}`);
+      try {
+        const tool = hackerTools[step.tool];
+        if (!tool) { log.push(`  ⚠ Unknown tool: ${step.tool}`); continue; }
+        const result = await tool.execute(args);
+        log.push(`  ${result.substring(0, 1000)}`);
+        if (result.length > 1000) log.push(`  … (${result.length} total chars)`);
+      } catch (e: any) { log.push(`  ⚠ Error: ${e.message}`); }
+      log.push(``);
+    }
+    log.push(`---\n✅ Playbook "${pb.name}" complete (${pb.steps.length} steps)`);
+    return log.join("\n");
+  } catch (e: any) { return `[Playbook Error] ${e.message}`; }
+}
+
+async function playbookEdit(input: string): Promise<string> {
+  try {
+    const parts = input.split("|");
+    const name = parts[0]?.trim();
+    if (!name) return "[Playbook] Usage: playbook_edit|name|step_index|new_tool|new_args|new_desc";
+    const fp = resolve(PLAYBOOKS_DIR, `${name.replace(/[^a-z0-9_-]/gi, "_")}.json`);
+    if (!existsSync(fp)) return `[Playbook] Not found: ${name}`;
+    const pb: Playbook = JSON.parse(readFileSync(fp, "utf-8"));
+    if (parts[1] === "desc" && parts[2]) { pb.description = parts[2]; writeFileSync(fp, JSON.stringify(pb, null, 2), "utf-8"); return `✅ Description updated`; }
+    if (parts[1] === "add" && parts[2]) { pb.steps.push({ tool: parts[2], args: parts[3] || "", desc: parts[4] || parts[2] }); writeFileSync(fp, JSON.stringify(pb, null, 2), "utf-8"); return `✅ Step added`; }
+    const idx = parseInt(parts[1]) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= pb.steps.length) return `[Playbook] Invalid step index. Steps: 1-${pb.steps.length}`;
+    if (parts[2]) pb.steps[idx].tool = parts[2];
+    if (parts[3]) pb.steps[idx].args = parts[3];
+    if (parts[4]) pb.steps[idx].desc = parts[4];
+    writeFileSync(fp, JSON.stringify(pb, null, 2), "utf-8");
+    return `✅ Playbook "${name}" step ${idx+1} updated: @${pb.steps[idx].tool}|${pb.steps[idx].args}`;
+  } catch (e: any) { return `[Playbook Error] ${e.message}`; }
+}
+
+// ── NEW RECON TOOLS ──────────────────────────────────────
+async function geoip(input: string): Promise<string> {
+  try {
+    const ip = input.trim();
+    // Try ip-api.com free tier
+    const r = await fetch(`http://ip-api.com/json/${ip}?fields=status,message,country,regionName,city,zip,lat,lon,isp,org,as,query`, { signal: AbortSignal.timeout(8000) });
+    const d = await r.json() as any;
+    if (d.status === "fail") return `[GeoIP] ${d.message || "Unknown"}`;
+    return [
+      `🌍 GeoIP: ${d.query}`,
+      `Country: ${d.country}`,
+      `Region: ${d.regionName}`,
+      `City: ${d.city}`,
+      `ZIP: ${d.zip}`,
+      `Coordinates: ${d.lat}, ${d.lon}`,
+      `ISP: ${d.isp}`,
+      `Org: ${d.org}`,
+      `ASN: ${d.as}`,
+    ].join("\n");
+  } catch (e: any) { return `[GeoIP Error] ${e.message}`; }
+}
+
+async function dnsZoneTransfer(input: string): Promise<string> {
+  try {
+    const domain = input.replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+    // Get NS records
+    const nsResp = await fetch(`https://dns.google/resolve?name=${domain}&type=NS`, { signal: AbortSignal.timeout(8000) });
+    const nsData = await nsResp.json() as any;
+    const nsList = nsData?.Answer?.map((a: any) => a.data.replace(/\.$/, "")) || [];
+    if (nsList.length === 0) return "[DNS Zone] No NS records found";
+    const results: string[] = [`Testing ${nsList.length} name servers for zone transfer on ${domain}:`, ``];
+    for (const ns of nsList) {
+      try {
+        const r = await fetch(`https://dns.google/resolve?name=${domain}&type=AXFR&nameserver=${ns}`, { signal: AbortSignal.timeout(10000) });
+        const data = await r.json() as any;
+        if (data?.Answer?.length > 0) { results.push(`⚠ VULNERABLE: ${ns} returned ${data.Answer.length} records!`); data.Answer.forEach((a: any) => results.push(`  ${a.name} ${a.type} ${a.data}`)); }
+        else results.push(`✅ ${ns} — zone transfer denied`);
+      } catch { results.push(`⏰ ${ns} — timeout/error`); }
+    }
+    return results.join("\n");
+  } catch (e: any) { return `[DNS Zone Error] ${e.message}`; }
+}
+
+async function httpMethods(input: string): Promise<string> {
+  try {
+    const url = input.startsWith("http") ? input : `https://${input}`;
+    const methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD", "TRACE", "CONNECT"];
+    const results: string[] = [`Testing HTTP methods on ${url}:`, ``];
+    for (const method of methods) {
+      try {
+        const r = await fetch(url, { method, signal: AbortSignal.timeout(5000) });
+        const allow = r.headers.get("allow") || r.headers.get("access-control-allow-methods") || "";
+        results.push(`  ${method} → ${r.status}${allow ? ` (Allow: ${allow})` : ""}`);
+      } catch (e: any) { results.push(`  ${method} → Error: ${e.message.substring(0, 60)}`); }
+    }
+    return results.join("\n");
+  } catch (e: any) { return `[HTTP Methods Error] ${e.message}`; }
+}
+
+async function robotsTxt(input: string): Promise<string> {
+  try {
+    const baseUrl = input.startsWith("http") ? input : `https://${input}`;
+    const url = `${baseUrl.replace(/\/+$/, "")}/robots.txt`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (r.status === 404) return `[robots.txt] Not found at ${url}`;
+    const text = await r.text();
+    // Parse interesting entries
+    const disallowed = text.match(/Disallow:\s*(.+)/gi) || [];
+    const sitemaps = text.match(/Sitemap:\s*(.+)/gi) || [];
+    const comments = text.match(/#.*/g) || [];
+    return [
+      `🤖 robots.txt from ${url}:`,
+      `---`,
+      text.substring(0, 2000),
+      ...(disallowed.length > 0 ? [`\n🚫 Disallowed paths (${disallowed.length}):`, ...disallowed] : []),
+      ...(sitemaps.length > 0 ? [`\n🗺 Sitemaps (${sitemaps.length}):`, ...sitemaps] : []),
+    ].join("\n");
+  } catch (e: any) { return `[robots.txt Error] ${e.message}`; }
+}
+
+async function emailVerify(input: string): Promise<string> {
+  try {
+    const email = input.trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) return `[Email] Invalid format: ${email}`;
+    const domain = email.split("@")[1];
+    // Check MX records via DNS Google
+    const r = await fetch(`https://dns.google/resolve?name=${domain}&type=MX`, { signal: AbortSignal.timeout(8000) });
+    const data = await r.json() as any;
+    const mxRecords = data?.Answer?.filter((a: any) => a.type === 15) || [];
+    if (mxRecords.length === 0) return `[Email] ✅ Format valid, but no MX records for ${domain} — domain may not accept mail`;
+    const mxList = mxRecords.map((a: any) => a.data.replace(/\.$/, "")).join(", ");
+    return `✅ ${email}\nDomain: ${domain}\nMX servers: ${mxList}\nMail delivery likely: YES`;
+  } catch (e: any) { return `[Email Error] ${e.message}`; }
+}
+
 export const hackerTools: Record<string, HackerTool> = {
   shell: {
     description:
@@ -1252,5 +1522,66 @@ export const hackerTools: Record<string, HackerTool> = {
     description:
       "Generate a new Phantom tool using LLM and save it for integration. Requires OPENAI_API_KEY. Input: natural language description of the tool (e.g. 'check if a site uses HSTS header'). Saves generated code to ~/.config/phantom/generated/.",
     execute: selfAddTool,
+  },
+
+  // ── KNOWLEDGE BASE ──
+  knowledge_add: {
+    description:
+      "Add an entry to Phantom's persistent knowledge base. Use for: saving findings, techniques, commands for future reference. Format: tag1,tag2|content. Searchable with knowledge_search.",
+    execute: knowledgeAdd,
+  },
+  knowledge_search: {
+    description:
+      "Search Phantom's knowledge base by keyword or tag. Use for: retrieving past findings, techniques, learned information. Input: search query.",
+    execute: knowledgeSearch,
+  },
+
+  // ── PLAYBOOK SYSTEM ──
+  playbook_create: {
+    description:
+      "Create a new executable playbook (multi-step automation script). Uses LLM if OPENAI_API_KEY set. Format: name|description|step1,step2,... or just name|description for LLM generation.",
+    execute: playbookCreate,
+  },
+  playbook_list: {
+    description:
+      "List all available playbooks with descriptions and step counts. Includes 4 built-in playbooks: quick_web_recon, vuln_assessment, network_footprint, full_vulnscan_report.",
+    execute: playbookList,
+  },
+  playbook_run: {
+    description:
+      "Execute a playbook against a target. Steps run sequentially with variable substitution ({{target}}). Input: playbook_name|target=example.com,port=80. Returns full execution log.",
+    execute: playbookRun,
+  },
+  playbook_edit: {
+    description:
+      "Modify a playbook: edit steps, change description, or append new steps. Format: name|step_num|tool|args|desc or name|desc|new_description or name|add|tool|args|desc.",
+    execute: playbookEdit,
+  },
+
+  // ── RECON TOOLS ──
+  geoip: {
+    description:
+      "IP geolocation lookup via ip-api.com (free, no key). Shows country, region, city, coordinates, ISP, ASN. Use for: locating target servers, tracing attack origins. Input: IP address or domain.",
+    execute: geoip,
+  },
+  dns_zone: {
+    description:
+      "Test DNS zone transfer (AXFR) on all authoritative name servers. Use for: finding DNS misconfigurations that leak internal network structure. Input: domain name.",
+    execute: dnsZoneTransfer,
+  },
+  http_methods: {
+    description:
+      "Fuzz HTTP methods on a target URL. Tests GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD, TRACE, CONNECT. Shows status codes and Allow headers. Input: URL.",
+    execute: httpMethods,
+  },
+  robots_txt: {
+    description:
+      "Fetch and analyze robots.txt from a target. Shows all rules, disallowed paths, sitemaps, and comments. Use for: discovering hidden/disallowed endpoints. Input: domain or URL.",
+    execute: robotsTxt,
+  },
+  email_verify: {
+    description:
+      "Validate email format and check domain MX records. Use for: verifying email deliverability, recon on email infrastructure. Input: email address.",
+    execute: emailVerify,
   },
 };

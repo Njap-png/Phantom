@@ -41,7 +41,7 @@
 └── CONTEXT.md           ← THIS FILE
 ```
 
-## All 32 Tools
+## All 43 Tools
 
 | Tool | What it does |
 |------|-------------|
@@ -64,19 +64,30 @@
 | `searchsploit` | Search exploit-db/packetstorm for public exploits |
 | `bruteforce` | Multi-protocol brute force: SSH, FTP, HTTP, MySQL |
 | `file_read` | Read any file (max 100KB) |
-| `file_write` | Write content to any file (creates dirs) — `path|content` |
-| `file_edit` | Find/replace text in a file — `path|old|new` |
-| `file_search` | Search file contents by pattern — `[dir|]pattern` |
+| `file_write` | Write content to any file (creates dirs) |
+| `file_edit` | Find/replace text in a file |
+| `file_search` | Search file contents by pattern |
 | `file_list` | List directory contents with sizes |
 | `self_info` | Show Phantom version, tools, runtime, LLM status |
 | `self_read` | Read Phantom's own source (project-locked) |
 | `self_edit` | Edit Phantom's own source (project-locked) |
-| `vuln_scan` | **FULL VULNERABILITY SCAN**: recon → CVE search → exploit search → brute force → markdown report |
+| `vuln_scan` | 4-phase vuln scan → report: recon + CVEs + exploits + brute force |
 | `report_save` | Save text as timestamped markdown report |
 | `session_save` | Save Phantom session state to file |
 | `session_load` | Load a saved Phantom session |
 | `code_gen` | Generate code via LLM — `prompt|language|output_path` |
 | `self_add_tool` | Generate & save a new Phantom tool via LLM |
+| `knowledge_add` | **Save knowledge entry (tagged, searchable)** |
+| `knowledge_search` | **Query Phantom's knowledge base** |
+| `playbook_create` | **Create a multi-step automation playbook (LLM or manual)** |
+| `playbook_list` | **List all playbooks (4 built-in + custom)** |
+| `playbook_run` | **Execute a playbook against a target** |
+| `playbook_edit` | **Edit playbook steps, description, or add steps** |
+| `geoip` | **IP geolocation — country, city, ISP, ASN** |
+| `dns_zone` | **DNS zone transfer vulnerability test** |
+| `http_methods` | **Fuzz HTTP methods (GET/POST/PUT/DELETE/etc.)** |
+| `robots_txt` | **Fetch & analyze robots.txt** |
+| `email_verify` | **Validate email format + MX records** |
 
 ## How to Use
 
@@ -114,11 +125,11 @@ Auto-loads from `~/.config/phantom/config.json`:
 
 - [ ] **Web UI / dashboard** — For monitoring agent activity
 - [ ] **Local model support** — Offline LLM via Ollama
-- [ ] **Autonomous agent chaining** — Full vuln_scan → report → session flow in one command
-- [ ] **Distributed scanning** — Multi-agent parallel recon across targets
+- [ ] **Autonomous agent chaining** — Multi-agent parallel playbook runs
+- [ ] **Distributed scanning** — Phantom runs across multiple hosts
 
 ### External Deps (optional)
-- `OPENAI_API_KEY` — enables code_gen, self_add_tool, and LLM-powered ReAct loop
+- `OPENAI_API_KEY` — enables code_gen, self_add_tool, playbook_create LLM generation
 - `VT_API_KEY` — enables VirusTotal hash lookups
 - `yara` CLI — enables YARA scanning (`apt install yara`)
 - `whois` CLI — enables WHOIS lookups (`apt install whois`)
