@@ -60,9 +60,17 @@ Each tool is callable by the LLM agent via `@tool_name|argument` syntax:
 | `shell` | `shell(cmd)` | Execute ANY shell command (30s timeout) |
 | `web_fetch` | `webFetch(url)` | Fetch URL, strip HTML, return text |
 | `decode` | `decode(input)` | Auto-detect base64/hex/URL/binary/ROT13 |
-| `file_analyze` | `fileAnalyze(path)` | File type (magic bytes), hashes (MD5/SHA1/SHA256), entropy (packing detection), strings extraction |
+| `file_analyze` | `fileAnalyze(path)` | File type (magic bytes), hashes (MD5/SHA1/SHA256), entropy, strings |
 | `dns_lookup` | `dnsLookup(domain)` | DNS A/AAAA/MX/NS/TXT/CNAME/SOA records |
 | `hash` | `hash(input)` | MD5/SHA1/SHA256 of text or file |
+| `whois` | `whois(domain)` | WHOIS lookup — registrar, dates, contacts |
+| `port_scan` | `portScan(target)` | TCP port scan — 30+ common ports or custom range |
+| `http_headers` | `httpHeaders(url)` | HTTP response headers via HEAD request |
+| `ssl_check` | `sslCheck(host)` | SSL certificate details, expiry, cipher, SANs |
+| `sub_enum` | `subdomainEnum(domain)` | Subdomain enumeration via crt.sh CT logs |
+| `crawl` | `webCrawl(url)` | Web crawler: extract links, forms, scripts |
+| `vt_check` | `vtCheck(hash)` | VirusTotal hash lookup (requires `VT_API_KEY`) |
+| `yara` | `yaraScan(input)` | YARA malware pattern scanner (requires `yara` CLI) |
 
 ### ReAct Loop (in phantom.mjs + TypeScript agent.ts)
 The agent now has a **Reasoning + Acting loop**:
@@ -83,10 +91,7 @@ Agents auto-save/load conversation memory to `~/.config/phantom/memory/<agent_na
 ## What's Left To Do
 
 ### Feature Ideas
-- [ ] **More tools:** WHOIS lookup, port scanner, HTTP header inspector, SSL cert checker, subdomain enum
-- [ ] **VirusTotal API integration** — Check hashes against known malware DB
-- [ ] **YARA scanner** — Rule-based malware pattern matching
-- [ ] **Agent-to-agent tool sharing** — Agents can delegate tasks
+- [ ] **Agent-to-agent tool sharing** — Agents can delegate tasks to other agents
 - [ ] **Web UI / dashboard** — For monitoring agent activity
 - [ ] **Agent personality prompt tuning** — Better cybersecurity persona
 - [ ] **Local model support** — Ollama/local LLM for offline use
@@ -94,8 +99,10 @@ Agents auto-save/load conversation memory to `~/.config/phantom/memory/<agent_na
 - [ ] **Better error recovery** — Handle tool failures gracefully
 - [ ] **Multi-step autonomous chains** — Higher max iterations, smarter loop
 
-### Known Issues
-- No LLM key configured by default — need `OPENAI_API_KEY` or `OLLAMA_HOST`
+### External Deps (optional)
+- `VT_API_KEY` env var enables VirusTotal hash lookups (get free key at virustotal.com)
+- `yara` CLI enables YARA malware pattern scanning (install: `apt install yara`)
+- `whois` CLI enables WHOIS lookups (install: `apt install whois`)
 
 ## How To Run
 

@@ -2,6 +2,8 @@ import { execSync } from "child_process";
 import { createHash } from "crypto";
 import { existsSync, readFileSync } from "fs";
 import * as dns from "dns/promises";
+import tls from "tls";
+import net from "net";
 
 export interface HackerTool {
   description: string;
@@ -218,6 +220,279 @@ async function hash(input: string): Promise<string> {
   }
 }
 
+// ── NEW TOOLS ─────────────────────────────────────────────
+
+async function whois(domain: string): Promise<string> {
+  try {
+    const r = execSync(`whois ${domain}`, { encoding: "utf-8", timeout: 15000, maxBuffer: 1024 * 1024 });
+    const out = r.trim();
+    if (!out) return "(empty whois result)";
+    // Trim to most useful sections
+    const lines = out.split("\n").filter(l => !l.startsWith("%") && !l.startsWith("#"));
+    return lines.slice(0, 60).join("\n").substring(0, 4000);
+  } catch (e: any) {
+    return `[WHOIS Error] ${e.stderr?.substring(0, 500) || e.message}`;
+  }
+}
+
+async function portScan(target: string): Promise<string> {
+  const COMMON_PORTS: Record<number, string> = {
+    21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS",
+    80: "HTTP", 110: "POP3", 111: "RPC", 135: "MSRPC", 139: "NetBIOS",
+    143: "IMAP", 443: "HTTPS", 445: "SMB", 993: "IMAPS", 995: "POP3S",
+    1433: "MSSQL", 1521: "Oracle", 2049: "NFS", 3306: "MySQL",
+    3389: "RDP", 5432: "PostgreSQL", 5900: "VNC", 5985: "WinRM HTTP",
+    5986: "WinRM HTTPS", 6379: "Redis", 8080: "HTTP-Proxy", 8443: "HTTPS-Alt",
+    9000: "PHP-FPM", 27017: "MongoDB",
+  };
+
+  const parts = target.split(":");
+  const host = parts[0];
+  let ports: number[] = [];
+
+  if (parts.length > 1 && parts[1]) {
+    if (parts[1].includes("-")) {
+      const [s, e] = parts[1].split("-").map(Number);
+      if (!isNaN(s) && !isNaN(e)) for (let i = s; i <= e; i++) ports.push(i);
+    } else {
+      ports = parts[1].split(",").map(Number).filter(n => !isNaN(n));
+    }
+  }
+  if (ports.length === 0) ports = Object.keys(COMMON_PORTS).map(Number);
+
+  const results = [`Port scan: ${host} (${ports.length} ports)`];
+  const concurrency = 20;
+
+  for (let i = 0; i < ports.length; i += concurrency) {
+    const batch = ports.slice(i, i + concurrency);
+    const scans = batch.map(port =>
+      new Promise<void>(resolve => {
+        const sock = new net.Socket();
+        sock.setTimeout(2000);
+        sock.on("connect", () => {
+          const svc = COMMON_PORTS[port] || "unknown";
+          results.push(`  ${port}/tcp  open  ${svc}`);
+          sock.destroy();
+          resolve();
+        });
+        sock.on("error", () => resolve());
+        sock.on("timeout", () => { sock.destroy(); resolve(); });
+        sock.connect(port, host);
+      })
+    );
+    await Promise.all(scans);
+  }
+
+  if (results.length === 1) results.push("  (all filtered/closed)");
+  return results.join("\n");
+}
+
+async function httpHeaders(url: string): Promise<string> {
+  try {
+    const r = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(10000), redirect: "manual" });
+    const headers: string[] = [];
+    r.headers.forEach((v, k) => headers.push(`  ${k}: ${v}`));
+    return `URL: ${url}\nStatus: ${r.status} ${r.statusText}\n── Response Headers ──\n${headers.join("\n")}`;
+  } catch (e: any) {
+    return `[HTTP Header Error] ${e.message}`;
+  }
+}
+
+async function sslCheck(host: string): Promise<string> {
+  const [hostname, portStr] = host.includes(":") ? host.split(":") : [host, "443"];
+  const port = parseInt(portStr, 10) || 443;
+
+  return new Promise(resolve => {
+    const socket = tls.connect(port, hostname, { servername: hostname, rejectUnauthorized: false }, () => {
+      const cert = socket.getPeerCertificate();
+      const lines: string[] = [
+        `SSL Certificate for ${hostname}:${port}`,
+        `Subject: ${cert.subject ? Object.entries(cert.subject).map(([k, v]) => `${k}=${v}`).join(", ") : "N/A"}`,
+        `Issuer: ${cert.issuer ? Object.entries(cert.issuer).map(([k, v]) => `${k}=${v}`).join(", ") : "N/A"}`,
+        `Valid From: ${cert.valid_from || "N/A"}`,
+        `Valid To: ${cert.valid_to || "N/A"}`,
+        `Serial: ${cert.serialNumber || "N/A"}`,
+        `Fingerprint (SHA256): ${cert.fingerprint256 || "N/A"}`,
+        `Subject Alt Names: ${(cert.subjectaltname || "").replace(/DNS:/g, "").split(", ").join(", ")}`,
+        `Bits: ${cert.bits || "N/A"}`,
+      ];
+
+      const daysLeft = cert.valid_to ? Math.floor((new Date(cert.valid_to).getTime() - Date.now()) / 86400000) : null;
+      if (daysLeft !== null) {
+        const warn = daysLeft < 0 ? "EXPIRED" : daysLeft < 30 ? "⚠ EXPIRING SOON" : "OK";
+        lines.push(`Days Remaining: ${daysLeft} (${warn})`);
+      }
+
+      const cipher = socket.getCipher();
+      if (cipher) {
+        lines.push(`Cipher: ${cipher.name} (${cipher.version})`);
+      }
+
+      socket.end();
+      resolve(lines.join("\n"));
+    });
+
+    socket.on("error", (e: Error) => resolve(`[SSL Error] ${e.message}`));
+    socket.setTimeout(10000, () => { socket.destroy(); resolve("[SSL Error] Timeout"); });
+  });
+}
+
+async function subdomainEnum(domain: string): Promise<string> {
+  try {
+    const clean = domain.replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+    const r = await fetch(`https://crt.sh/?q=%25.${clean}&output=json`, {
+      signal: AbortSignal.timeout(20000),
+      headers: { "User-Agent": "Phantom/1.0" },
+    });
+    if (!r.ok) return `[crt.sh Error] HTTP ${r.status}`;
+    const data = await r.json() as any[];
+    if (!Array.isArray(data) || data.length === 0) return `(no subdomains found for ${clean})`;
+
+    const subs = [...new Set(data.flatMap(d => (d.name_value || "").split("\n")))]
+      .filter(s => s.endsWith(`.${clean}`) || s === clean)
+      .sort();
+    return subs.length ? subs.join("\n") : `(no subdomains found for ${clean})`;
+  } catch (e: any) {
+    return `[Subdomain Error] ${e.message}`;
+  }
+}
+
+async function webCrawl(url: string): Promise<string> {
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    const html = await r.text();
+    const base = url.replace(/\/[^/]*$/, "");
+
+    // Extract links
+    const links = new Set<string>();
+    const linkRe = /<a[^>]+href\s*=\s*["']([^"']+)["']/gi;
+    let m: RegExpExecArray | null;
+    while ((m = linkRe.exec(html)) !== null) {
+      let href = m[1].split("#")[0].split("?")[0]; // strip hash and query
+      if (!href || href.startsWith("javascript:") || href.startsWith("mailto:")) continue;
+      if (href.startsWith("//")) href = `https:${href}`;
+      else if (href.startsWith("/")) href = new URL(href, url).href;
+      else if (!href.startsWith("http")) href = `${base}/${href}`;
+      try { links.add(new URL(href).href); } catch {}
+    }
+
+    // Extract forms
+    const forms: string[] = [];
+    const formRe = /<form[^>]+action\s*=\s*["']([^"']*)["'][^>]*>/gi;
+    while ((m = formRe.exec(html)) !== null) {
+      forms.push(m[1]);
+    }
+
+    // Extract scripts
+    const scripts: string[] = [];
+    const scriptRe = /<script[^>]+src\s*=\s*["']([^"']+)["']/gi;
+    while ((m = scriptRe.exec(html)) !== null) {
+      scripts.push(m[1]);
+    }
+
+    const lines = [
+      `🌐 Crawl: ${url}`,
+      `Status: ${r.status}`,
+      `Content-Type: ${r.headers.get("content-type") || "N/A"}`,
+      `Content-Length: ${r.headers.get("content-length") || "N/A"}`,
+      `Links found: ${links.size}`,
+      ...Array.from(links).slice(0, 30).map(l => `  ${l}`),
+    ];
+    if (forms.length) {
+      lines.push(`Forms: ${forms.length}`);
+      forms.slice(0, 5).forEach(f => lines.push(`  action="${f}"`));
+    }
+    if (scripts.length) {
+      lines.push(`Scripts: ${scripts.length}`);
+      scripts.slice(0, 10).forEach(s => lines.push(`  ${s}`));
+    }
+    return lines.join("\n");
+  } catch (e: any) {
+    return `[Crawl Error] ${e.message}`;
+  }
+}
+
+async function vtCheck(hash: string): Promise<string> {
+  const key = process.env.VT_API_KEY || "";
+  if (!key) return "[VT] Set VT_API_KEY env var (free: https://virustotal.com)";
+  try {
+    const r = await fetch(`https://www.virustotal.com/api/v3/files/${hash.trim()}`, {
+      headers: { "x-apikey": key, "Accept": "application/json" },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (r.status === 404) return `[VT] Hash "${hash}" not found in VirusTotal database`;
+    if (!r.ok) return `[VT Error] HTTP ${r.status}`;
+    const data = (await r.json()) as any;
+    const attrs = data?.data?.attributes || {};
+    const stats = attrs.last_analysis_stats || {};
+    const results = attrs.last_analysis_results || {};
+    const malicious = stats.malicious || 0;
+    const suspicious = stats.suspicious || 0;
+    const harmless = stats.harmless || 0;
+    const undetected = stats.undetected || 0;
+
+    const lines = [
+      `🔬 VirusTotal Report for ${hash}`,
+      `File: ${attrs.meaningful_name || "N/A"}`,
+      `Type: ${attrs.type_description || attrs.type || "N/A"}`,
+      `Size: ${attrs.size || "N/A"} bytes`,
+      `First Seen: ${attrs.first_submission_date ? new Date(attrs.first_submission_date * 1000).toISOString().split("T")[0] : "N/A"}`,
+      `Last Seen: ${attrs.last_analysis_date ? new Date(attrs.last_analysis_date * 1000).toISOString().split("T")[0] : "N/A"}`,
+      `Times Submitted: ${attrs.times_submitted || "N/A"}`,
+      "",
+      `Detection: ${malicious} malicious / ${suspicious} suspicious / ${harmless} harmless / ${undetected} undetected`,
+      `Total engines: ${malicious + suspicious + harmless + undetected}`,
+      "",
+      `── Top Malicious Detections ──`,
+    ];
+
+    for (const [engine, res] of Object.entries(results)) {
+      const r = res as any;
+      if (r.category === "malicious") {
+        lines.push(`  ${engine}: ${r.result}`);
+      }
+    }
+
+    if (attrs.names) {
+      lines.push(`\n── Known As ──`);
+      (attrs.names as string[]).slice(0, 10).forEach(n => lines.push(`  ${n}`));
+    }
+
+    return lines.join("\n");
+  } catch (e: any) {
+    return `[VT Error] ${e.message}`;
+  }
+}
+
+async function yaraScan(input: string): Promise<string> {
+  // input format: "rules_file|target_path" or "target_path" (uses default rules)
+  const parts = input.split("|").map(s => s.trim());
+  let rules: string, target: string;
+  if (parts.length >= 2) {
+    [rules, target] = parts;
+  } else {
+    target = parts[0];
+    rules = "";
+  }
+
+  try {
+    const cmd = rules ? `yara ${rules} ${target}` : `yara ${target}`;
+    const r = execSync(cmd, { encoding: "utf-8", timeout: 30000, maxBuffer: 1024 * 1024 });
+    const out = r.trim();
+    if (!out) return "(no YARA matches)";
+    return `YARA scan: ${target}\n${out}`;
+  } catch (e: any) {
+    const stderr = e.stderr?.toString() || "";
+    if (stderr.includes("command not found") || e.message.includes("command not found")) {
+      return "[YARA] Not installed. Install with: apt install yara or brew install yara";
+    }
+    if (e.status === 0) return "(no YARA matches)";
+    return `[YARA Error] ${stderr.substring(0, 500) || e.message}`;
+  }
+}
+
+// ── Tool Registry ─────────────────────────────────────────
+
 export const hackerTools: Record<string, HackerTool> = {
   shell: {
     description:
@@ -248,5 +523,47 @@ export const hackerTools: Record<string, HackerTool> = {
     description:
       "Compute MD5, SHA1, SHA256 hash of text or a file. Use for: integrity checks, verifying downloads, fingerprinting. Input: text string or file path.",
     execute: hash,
+  },
+
+  // ── NEW TOOLS ──
+  whois: {
+    description:
+      "WHOIS lookup for a domain. Returns registrar, dates, name servers, and contact info. Use for: OSINT, domain investigation, ownership discovery. Input: domain name (no http://).",
+    execute: whois,
+  },
+  port_scan: {
+    description:
+      "TCP port scan a host. Scans common ports (FTP, SSH, HTTP, etc.) by default. Custom: host:port1,port2 or host:start-end. Use for: network recon, vulnerability assessment. Input: hostname or IP, optionally with port range.",
+    execute: portScan,
+  },
+  http_headers: {
+    description:
+      "Fetch HTTP response headers from a URL using HEAD request. Shows status, security headers, server info, content-type. Use for: web recon, security header audit. Input: full URL including https://.",
+    execute: httpHeaders,
+  },
+  ssl_check: {
+    description:
+      "Check SSL/TLS certificate details for a host. Shows issuer, validity, cipher, SANs, days remaining. Use for: certificate expiry monitoring, TLS security audit. Input: hostname (optionally :port, default 443).",
+    execute: sslCheck,
+  },
+  sub_enum: {
+    description:
+      "Enumerate subdomains via certificate transparency logs (crt.sh). Use for: OSINT, attack surface mapping, discovering hidden assets. Input: domain name (no http://).",
+    execute: subdomainEnum,
+  },
+  crawl: {
+    description:
+      "Crawl a web page: fetch HTML, extract all links, forms, and script sources. Use for: web recon, asset discovery, spidering. Input: full URL including https://.",
+    execute: webCrawl,
+  },
+  vt_check: {
+    description:
+      "Check a file hash against VirusTotal. Shows detection ratio, file type, names, and top malicious engine results. Requires VT_API_KEY env var. Input: MD5/SHA1/SHA256 hash.",
+    execute: vtCheck,
+  },
+  yara: {
+    description:
+      "Scan a file with YARA rules. Format: rules_file|target_path, or just target_path. Use for: malware pattern matching, IOC scanning. Requires yara CLI installed. Input: rules_and_target.",
+    execute: yaraScan,
   },
 };
