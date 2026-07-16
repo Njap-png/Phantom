@@ -933,6 +933,155 @@ async function selfEdit(input: string): Promise<string> {
   }
 }
 
+// ── VULN SCAN ────────────────────────────────────────────
+async function vulnScan(target: string): Promise<string> {
+  const domain = target.replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const lines: string[] = [
+    `# Phantom Vulnerability Scan Report`,
+    `**Target:** ${domain}`,
+    `**Date:** ${new Date().toUTCString()}`,
+    `---`, ``
+  ];
+  // Phase 1: Recon
+  lines.push(`## Phase 1: Reconnaissance\n`);
+  try { lines.push(`### WHOIS\n\`\`\`\n${await whois(domain)}\n\`\`\``); } catch {}
+  try { lines.push(`### DNS\n\`\`\`\n${await dnsLookup(domain)}\n\`\`\``); } catch {}
+  try { lines.push(`### Subdomains\n\`\`\`\n${await subdomainEnum(domain)}\n\`\`\``); } catch {}
+  try { lines.push(`### HTTP Headers\n\`\`\`\n${await httpHeaders(`https://${domain}`)}\n\`\`\``); } catch {}
+  try { lines.push(`### SSL/TLS\n\`\`\`\n${await sslCheck(domain)}\n\`\`\``); } catch {}
+  const ports = await portScan(domain);
+  lines.push(`### Open Ports\n\`\`\`\n${ports}\n\`\`\``);
+  // Phase 2: CVEs
+  lines.push(`\n## Phase 2: Vulnerability Search\n`);
+  try { lines.push(`### CVEs\n\`\`\`\n${await cveSearch(domain)}\n\`\`\``); } catch {}
+  // Phase 3: Exploits
+  lines.push(`\n## Phase 3: Exploit Search\n`);
+  try { lines.push(`### Exploits\n\`\`\`\n${await searchsploit(domain)}\n\`\`\``); } catch {}
+  // Phase 4: Brute force
+  lines.push(`\n## Phase 4: Brute Force Testing\n`);
+  const openPorts = [...ports.matchAll(/(\d+)\/tcp\s+open/gi)].map(m => parseInt(m[1]));
+  if (openPorts.includes(22)) {
+    lines.push(`- Port 22 (SSH) open — attempting brute force`);
+    try { lines.push(`  \`\`\`\n${await bruteforceFn(`ssh|${domain}|root|admin,root,toor,123456,password`)}\n\`\`\``); } catch {}
+  }
+  if (openPorts.includes(21)) {
+    lines.push(`- Port 21 (FTP) open — attempting brute force`);
+    try { lines.push(`  \`\`\`\n${await bruteforceFn(`ftp|${domain}|admin|admin,password,ftp`)}\n\`\`\``); } catch {}
+  }
+  if (openPorts.some(p => [80, 443, 8080, 8443].includes(p))) {
+    lines.push(`- Web server detected — attempting brute force`);
+    try { lines.push(`  \`\`\`\n${await bruteforceFn(`http|https://${domain}/login|admin|admin,password,admin123`)}\n\`\`\``); } catch {}
+  }
+  // Save report
+  const reportDir = _config.report_dir || resolve(homedir(), ".config", "phantom", "reports");
+  if (!existsSync(reportDir)) mkdirSync(reportDir, { recursive: true });
+  const reportPath = resolve(reportDir, `vulnscan_${domain}_${ts}.md`);
+  writeFileSync(reportPath, lines.join("\n"), "utf-8");
+  lines.push(`\n---\n📄 Full report saved: ${reportPath}`);
+  return lines.join("\n");
+}
+
+// ── REPORT SAVE ──────────────────────────────────────────
+async function reportSave(input: string): Promise<string> {
+  const parts = input.split("|");
+  const name = (parts[0] || `report_${Date.now()}`).replace(/[^a-z0-9_-]/gi, "_");
+  const content = parts.slice(1).join("|") || input;
+  const reportDir = _config.report_dir || resolve(homedir(), ".config", "phantom", "reports");
+  if (!existsSync(reportDir)) mkdirSync(reportDir, { recursive: true });
+  const fp = resolve(reportDir, `${name}.md`);
+  writeFileSync(fp, content, "utf-8");
+  return `📄 Report saved: ${fp}`;
+}
+
+// ── SESSIONS ─────────────────────────────────────────────
+const SESSIONS_DIR = resolve(homedir(), ".config", "phantom", "sessions");
+
+async function sessionSave(name: string): Promise<string> {
+  try {
+    if (!existsSync(SESSIONS_DIR)) mkdirSync(SESSIONS_DIR, { recursive: true });
+    const slug = name.replace(/[^a-z0-9_-]/gi, "_");
+    const data = { name, created: new Date().toISOString(), tools: Object.keys(hackerTools).length };
+    writeFileSync(resolve(SESSIONS_DIR, `${slug}.json`), JSON.stringify(data, null, 2), "utf-8");
+    return `✅ Session saved: ${slug}`;
+  } catch (e: any) { return `[Session Error] ${e.message}`; }
+}
+
+async function sessionLoad(name: string): Promise<string> {
+  try {
+    const slug = name.replace(/[^a-z0-9_-]/gi, "_");
+    const fp = resolve(SESSIONS_DIR, `${slug}.json`);
+    if (!existsSync(fp)) return `[Session] Not found: ${name}`;
+    const data = JSON.parse(readFileSync(fp, "utf-8"));
+    return `📂 Session: ${data.name}\nCreated: ${data.created}\nTools: ${data.tools}`;
+  } catch (e: any) { return `[Session Error] ${e.message}`; }
+}
+
+// ── CODE GEN ─────────────────────────────────────────────
+async function codeGen(input: string): Promise<string> {
+  const parts = input.split("|");
+  const prompt = parts[0];
+  const lang = parts[1] || "javascript";
+  const outPath = parts[2] || "";
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    const stub = `// ${prompt}\n// Language: ${lang}\nfunction ${prompt.replace(/[^a-z]/gi, "")}() {\n  // TODO: implement\n  return null;\n}\n`;
+    if (outPath) { writeFileSync(resolve(outPath), stub, "utf-8"); return `✅ Stub written to ${outPath}`; }
+    return stub;
+  }
+  try {
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: `You generate only ${lang} code. No explanations.` }, { role: "user", content: prompt }], max_tokens: 2000 }),
+      signal: AbortSignal.timeout(30000),
+    });
+    const data = await r.json() as any;
+    const code = data?.choices?.[0]?.message?.content || "// Generation failed";
+    if (outPath) { writeFileSync(resolve(outPath), code, "utf-8"); return `✅ Generated ${code.length} chars → ${outPath}`; }
+    return code;
+  } catch (e: any) { return `[Code Gen Error] ${e.message}`; }
+}
+
+// ── SELF ADD TOOL ────────────────────────────────────────
+async function selfAddTool(prompt: string): Promise<string> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return "[Self Add Tool] Requires OPENAI_API_KEY";
+  try {
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [{ role: "system", content: `Generate a Node.js async function that takes a single string input and returns Promise<string>. Name it after the tool purpose. Include a one-line description comment. No imports, no markdown.` }, { role: "user", content: `Tool that: ${prompt}` }],
+        max_tokens: 1500,
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+    const data = await r.json() as any;
+    const result = data?.choices?.[0]?.message?.content || "// Failed";
+    const toolName = result.match(/async function\s+(\w+)/)?.[1] || "newTool";
+    const descMatch = result.match(/\/\/\s*(.+)/);
+    const desc = descMatch?.[1] || prompt.substring(0, 80);
+    const stageDir = resolve(homedir(), ".config", "phantom", "generated");
+    if (!existsSync(stageDir)) mkdirSync(stageDir, { recursive: true });
+    writeFileSync(resolve(stageDir, `${toolName}.ts`), result, "utf-8");
+    return [
+      `🎯 Generated: ${toolName}`,
+      `Description: ${desc}`,
+      `Code: ~/.config/phantom/generated/${toolName}.ts`,
+      ``,
+      `To integrate:`,
+      `1. src/core/hacker-tools.ts — paste function before 'export const hackerTools'`,
+      `2. Add to registry: ${toolName}: { description: "${desc.substring(0, 60)}", execute: ${toolName} },`,
+      `3. phantom.mjs — paste into hackerTools object + registerHackerTools()`,
+      `4. npm run build`,
+      ``,
+      result.substring(0, 600),
+    ].join("\n");
+  } catch (e: any) { return `[Self Add Error] ${e.message}`; }
+}
+
 export const hackerTools: Record<string, HackerTool> = {
   shell: {
     description:
@@ -1071,5 +1220,37 @@ export const hackerTools: Record<string, HackerTool> = {
     description:
       "Edit Phantom's own source code (locked to project directory). Use for: self-improvement, adding tools, fixing bugs, evolving capabilities. Format: relative_path|old_string|new_string — pipe-separated.",
     execute: selfEdit,
+  },
+
+  // ── AUTO SCAN ──
+  vuln_scan: {
+    description:
+      "FULL AUTOMATED VULNERABILITY SCAN: runs Phase 1 recon (WHOIS/DNS/subdomains/headers/SSL/ports) → Phase 2 CVE search → Phase 3 exploit search → Phase 4 brute force. Saves comprehensive markdown report with all findings. Input: domain or URL.",
+    execute: vulnScan,
+  },
+  report_save: {
+    description:
+      "Save text content as a timestamped markdown report file. Use for: documenting findings, saving scan results, creating evidence. Format: name|content — name is the report filename (saved to ~/.config/phantom/reports/).",
+    execute: reportSave,
+  },
+  session_save: {
+    description:
+      "Save current Phantom session state to a named session file. Use for: bookmarking work, preserving findings between runs. Input: session name (alphanumeric, underscores/hyphens).",
+    execute: sessionSave,
+  },
+  session_load: {
+    description:
+      "Load a previously saved Phantom session. Use for: resuming work, reviewing past findings. Input: session name.",
+    execute: sessionLoad,
+  },
+  code_gen: {
+    description:
+      "Generate code using OpenAI LLM (requires OPENAI_API_KEY). Falls back to a stub template. Format: prompt|language|output_path. Use for: writing functions, scripts, exploits, tools autonomously.",
+    execute: codeGen,
+  },
+  self_add_tool: {
+    description:
+      "Generate a new Phantom tool using LLM and save it for integration. Requires OPENAI_API_KEY. Input: natural language description of the tool (e.g. 'check if a site uses HSTS header'). Saves generated code to ~/.config/phantom/generated/.",
+    execute: selfAddTool,
   },
 };

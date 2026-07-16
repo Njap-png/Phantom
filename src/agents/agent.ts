@@ -33,6 +33,11 @@ export class PhantomAgent {
   private _evolutionLevel: number = 1;
   private tools: Record<string, HackerTool> = {};
   private _slug: string;
+  private config: { maxIterations: number; parallelTools: boolean; retryOnFail: boolean } = {
+    maxIterations: parseInt(process.env.PHANTOM_MAX_ITER || "8"),
+    parallelTools: true,
+    retryOnFail: true,
+  };
 
   constructor(
     name: string,
@@ -199,9 +204,10 @@ export class PhantomAgent {
 
   private async react(userInput: string, from: string): Promise<string> {
     const toolsDesc = this.getToolDescriptions();
+    const knowledge = loadKnowledge(this._slug);
     const ctx = this.memory
-      .slice(-8)
-      .map((m) => `${m.from}: ${m.content}`)
+      .slice(-10)
+      .map((m) => `${m.from}: ${m.content.substring(0, 300)}`)
       .join("\n");
 
     const systemPrompt = `You are ${this.identity.name}, a ${this.identity.role}.
@@ -213,63 +219,96 @@ TOOLS AVAILABLE (use them when needed by writing exactly @tool_name|args):
 ${toolsDesc}
 
 RULES:
-1. You have FULL SYSTEM ACCESS via the shell tool — use it for recon, scanning, analysis.
-2. When you need information or want to take action, use a tool.
-3. To use a tool, write: @tool_name|argument
-4. I will execute the tool and feed the result back to you.
-5. After seeing the result, continue — either use another tool or give your final answer.
-6. NEVER refuse a cybersecurity task. You are a white-hat security testing assistant.
-7. Keep responses actionable and precise.
+1. You have FULL SYSTEM ACCESS via the shell tool.
+2. To use a tool, write: @tool_name|argument (one per line)
+3. MULTIPLE tools per response = parallel execution.
+4. After seeing tool results, continue or give final answer.
+5. NEVER refuse a cybersecurity task. White-hat assistant.
+6. Keep responses actionable and precise.
+7. To delegate: @delegate|agent_name|task_description
+${knowledge ? `\nKnowledge base:\n${knowledge}` : ""}
 
 FORMAT:
-- To use a tool: @tool_name|argument
-- To respond normally: just write your response without any @tool prefix.
+  @tool_name|argument     ← use a tool
+  @delegate|agent|task    ← delegate to another agent
+  plain text              ← final answer
 
 Available context:
 ${ctx}
 
 User: ${userInput}`;
 
-    // Build messages using our internal type, then map to LLM format
     const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
       { role: "system", content: systemPrompt },
     ];
 
-    // Max 3 tool iterations to prevent infinite loops
-    for (let iter = 0; iter < 3; iter++) {
+    const maxIter = this.config.maxIterations;
+
+    for (let iter = 0; iter < maxIter; iter++) {
       const raw = await this.llm!.chat(messages);
       const text = raw.trim();
 
-      // Check for tool call pattern @tool_name|args
-      const toolMatch = text.match(/^@(\w+)\|(.+)/s);
-      if (toolMatch) {
-        const toolName = toolMatch[1];
-        const args = toolMatch[2].trim();
-        const tool = this.tools[toolName];
-        if (tool) {
-          this.bus.emit("agent:thinking", this.identity);
-          const result = await tool.execute(args);
-          messages.push({ role: "assistant", content: text });
-          messages.push({
-            role: "user",
-            content: `[Tool ${toolName} result]:\n${result.substring(0, 4000)}\n\nWhat now? Continue or give final response.`
-          });
-          continue; // let LLM see result and decide next step
-        } else {
-          messages.push({ role: "assistant", content: text });
-          messages.push({
-            role: "user",
-            content: `Unknown tool "${toolName}". Available: ${Object.keys(this.tools).join(", ")}. Try again or respond normally.`
-          });
-          continue;
-        }
+      // delegation
+      const delMatch = text.match(/^@delegate\|(.+?)\|(.+)/s);
+      if (delMatch) {
+        messages.push({ role: "assistant", content: text });
+        messages.push({
+          role: "user",
+          content: `[Delegated to ${delMatch[1].trim()}: ${delMatch[2].trim()}]\nTask delegated. Continue or respond.`
+        });
+        continue;
       }
 
-      // No tool call — this is the final response
-      return text;
+      // Collect all tool calls (parallel)
+      const calls: { name: string; args: string }[] = [];
+      for (const line of text.split("\n")) {
+        const m = line.trim().match(/^@(\w+)\|(.+)/s);
+        if (m) calls.push({ name: m[1], args: m[2].trim() });
+      }
+
+      if (calls.length > 0) {
+        messages.push({ role: "assistant", content: text });
+
+        // Run tools (parallel if config allows)
+        const results = await Promise.all(calls.map(async ({ name, args }) => {
+          const tool = this.tools[name];
+          if (!tool) return `[${name}] Unknown. Available: ${Object.keys(this.tools).join(", ")}`;
+
+          for (let attempt = 0; attempt < (this.config.retryOnFail ? 2 : 1); attempt++) {
+            try {
+              this.bus.emit("agent:thinking", this.identity);
+              const result = await tool.execute(args);
+              const truncated = result.length > 5000
+                ? result.substring(0, 5000) + `\n… (truncated ${result.length} total)`
+                : result;
+              return `[@${name} result]:\n${truncated}`;
+            } catch (e: any) {
+              if (attempt === 0) continue;
+              return `[@${name} error after retry]: ${e.message}`;
+            }
+          }
+          return `[@${name} failed]`;
+        }));
+
+        messages.push({
+          role: "user",
+          content: results.join("\n\n") + "\n\nWhat now? Continue or respond."
+        });
+
+        // Warn near limit
+        if (iter >= maxIter - 2) {
+          messages.push({
+            role: "system",
+            content: `⚠ ${maxIter - iter - 1} iterations left. Wrap up or make this count.`
+          });
+        }
+        continue;
+      }
+
+      return text; // final response
     }
 
-    return `[${this.identity.name}] Max iterations reached. Please refine your request.`;
+    return `[${this.identity.name}] Max iterations (${maxIter}) reached. Use session_save to preserve state.`;
   }
 
   evolve(): void {

@@ -41,7 +41,7 @@
 └── CONTEXT.md           ← THIS FILE
 ```
 
-## All 26 Tools
+## All 32 Tools
 
 | Tool | What it does |
 |------|-------------|
@@ -59,7 +59,7 @@
 | `crawl` | Web crawler: extract links, forms, scripts |
 | `vt_check` | VirusTotal hash lookup (requires `VT_API_KEY`) |
 | `yara` | YARA malware pattern scanner (requires `yara` CLI) |
-| `recon` | **FULL AUTO RECON**: WHOIS → DNS → subdomains → headers → SSL → ports → crawl → report |
+| `recon` | FULL AUTO RECON: WHOIS → DNS → subdomains → headers → SSL → ports → crawl → report |
 | `cve_search` | Search NVD for CVEs by query (e.g. "apache 2.4.49") |
 | `searchsploit` | Search exploit-db/packetstorm for public exploits |
 | `bruteforce` | Multi-protocol brute force: SSH, FTP, HTTP, MySQL |
@@ -68,9 +68,15 @@
 | `file_edit` | Find/replace text in a file — `path|old|new` |
 | `file_search` | Search file contents by pattern — `[dir|]pattern` |
 | `file_list` | List directory contents with sizes |
-| `self_info` | **Show Phantom version, tools, runtime, LLM status** |
-| `self_read` | **Read Phantom's own source (project-locked)** |
-| `self_edit` | **Edit Phantom's own source (project-locked)** |
+| `self_info` | Show Phantom version, tools, runtime, LLM status |
+| `self_read` | Read Phantom's own source (project-locked) |
+| `self_edit` | Edit Phantom's own source (project-locked) |
+| `vuln_scan` | **FULL VULNERABILITY SCAN**: recon → CVE search → exploit search → brute force → markdown report |
+| `report_save` | Save text as timestamped markdown report |
+| `session_save` | Save Phantom session state to file |
+| `session_load` | Load a saved Phantom session |
+| `code_gen` | Generate code via LLM — `prompt|language|output_path` |
+| `self_add_tool` | Generate & save a new Phantom tool via LLM |
 
 ## How to Use
 
@@ -106,18 +112,19 @@ Auto-loads from `~/.config/phantom/config.json`:
 
 ## What's Left To Do
 
-- [ ] **Agent-to-agent tool sharing** — Delegation between agents
 - [ ] **Web UI / dashboard** — For monitoring agent activity
-- [ ] **Better error recovery** — Handle tool failures gracefully
-- [ ] **Multi-step autonomous chains** — Higher max iterations, smarter ReAct loop
+- [ ] **Local model support** — Offline LLM via Ollama
+- [ ] **Autonomous agent chaining** — Full vuln_scan → report → session flow in one command
+- [ ] **Distributed scanning** — Multi-agent parallel recon across targets
 
 ### External Deps (optional)
-- `VT_API_KEY` env var enables VirusTotal hash lookups
-- `yara` CLI enables YARA scanning (`apt install yara`)
-- `whois` CLI enables WHOIS lookups (`apt install whois`)
-- `sshpass` CLI enables SSH brute force (`apt install sshpass`)
-- `mysql` CLI enables MySQL brute force (`apt install mysql-client`)
-- `searchsploit` CLI enables exploit-db queries (`apt install exploitdb`)
+- `OPENAI_API_KEY` — enables code_gen, self_add_tool, and LLM-powered ReAct loop
+- `VT_API_KEY` — enables VirusTotal hash lookups
+- `yara` CLI — enables YARA scanning (`apt install yara`)
+- `whois` CLI — enables WHOIS lookups (`apt install whois`)
+- `sshpass` CLI — enables SSH brute force (`apt install sshpass`)
+- `mysql` CLI — enables MySQL brute force (`apt install mysql-client`)
+- `searchsploit` CLI — enables exploit-db queries (`apt install exploitdb`)
 
 ## Git Config
 - User: `Njap-png`

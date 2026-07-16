@@ -741,6 +741,117 @@ const hackerTools = {
       return `✅ Self-edited ${relPath}`;
     } catch (e) { return `[Self Edit Error] ${e.message}`; }
   },
+
+  // ── VULN SCAN ──
+  vuln_scan: async (target) => {
+    const domain = target.replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const lines = [`# Phantom Vulnerability Scan Report`, `**Target:** ${domain}`, `**Date:** ${new Date().toUTCString()}`, `---`, ``];
+    // Phase 1
+    lines.push(`## Phase 1: Reconnaissance\n`);
+    try { const r = await hackerTools.whois(domain); lines.push(`### WHOIS\n\`\`\`\n${r}\n\`\`\``); } catch {}
+    try { const r = await hackerTools.dns_lookup(domain); lines.push(`### DNS\n\`\`\`\n${r}\n\`\`\``); } catch {}
+    try { const r = await hackerTools.sub_enum(domain); lines.push(`### Subdomains\n\`\`\`\n${r}\n\`\`\``); } catch {}
+    try { const r = await hackerTools.http_headers(`https://${domain}`); lines.push(`### HTTP Headers\n\`\`\`\n${r}\n\`\`\``); } catch {}
+    try { const r = await hackerTools.ssl_check(domain); lines.push(`### SSL/TLS\n\`\`\`\n${r}\n\`\`\``); } catch {}
+    const ports = await hackerTools.port_scan(domain);
+    lines.push(`### Open Ports\n\`\`\`\n${ports}\n\`\`\``);
+    // Phase 2
+    lines.push(`\n## Phase 2: Vulnerability Search\n`);
+    try { lines.push(`### CVEs\n\`\`\`\n${await hackerTools.cve_search(domain)}\n\`\`\``); } catch {}
+    // Phase 3
+    lines.push(`\n## Phase 3: Exploit Search\n`);
+    try { lines.push(`### Exploits\n\`\`\`\n${await hackerTools.searchsploit(domain)}\n\`\`\``); } catch {}
+    // Phase 4
+    lines.push(`\n## Phase 4: Brute Force Testing\n`);
+    const openPorts = [...ports.matchAll(/(\d+)\/tcp\s+open/gi)].map(m => parseInt(m[1]));
+    if (openPorts.includes(22)) { lines.push(`- Port 22 (SSH) open`); try { lines.push(`  \`\`\`\n${await hackerTools.bruteforce(`ssh|${domain}|root|admin,root,toor,123456,password`)}\n\`\`\``); } catch {} }
+    if (openPorts.includes(21)) { lines.push(`- Port 21 (FTP) open`); try { lines.push(`  \`\`\`\n${await hackerTools.bruteforce(`ftp|${domain}|admin|admin,password,ftp`)}\n\`\`\``); } catch {} }
+    if (openPorts.some(p => [80, 443, 8080, 8443].includes(p))) { lines.push(`- Web server detected`); try { lines.push(`  \`\`\`\n${await hackerTools.bruteforce(`http|https://${domain}/login|admin|admin,password,admin123`)}\n\`\`\``); } catch {} }
+    // Save
+    if (!fs.existsSync(REPORTS_DIR)) fs.mkdirSync(REPORTS_DIR, { recursive: true });
+    const reportPath = resolve(REPORTS_DIR, `vulnscan_${domain}_${ts}.md`);
+    fs.writeFileSync(reportPath, lines.join("\n"), "utf-8");
+    lines.push(`\n---\n📄 Full report: ${reportPath}`);
+    return lines.join("\n");
+  },
+
+  report_save: async (input) => {
+    const parts = input.split("|");
+    const name = (parts[0] || `report_${Date.now()}`).replace(/[^a-z0-9_-]/gi, "_");
+    const content = parts.slice(1).join("|") || input;
+    if (!fs.existsSync(REPORTS_DIR)) fs.mkdirSync(REPORTS_DIR, { recursive: true });
+    const fp = resolve(REPORTS_DIR, `${name}.md`);
+    fs.writeFileSync(fp, content, "utf-8");
+    return `📄 Report saved: ${fp}`;
+  },
+
+  session_save: async (name) => {
+    const sessionsDir = resolve(BASE_DIR, "sessions");
+    try {
+      if (!fs.existsSync(sessionsDir)) fs.mkdirSync(sessionsDir, { recursive: true });
+      const slug = name.replace(/[^a-z0-9_-]/gi, "_");
+      const data = { name, created: new Date().toISOString(), tools: Object.keys(hackerTools).length };
+      fs.writeFileSync(resolve(sessionsDir, `${slug}.json`), JSON.stringify(data, null, 2), "utf-8");
+      return `✅ Session saved: ${slug}`;
+    } catch (e) { return `[Session Error] ${e.message}`; }
+  },
+
+  session_load: async (name) => {
+    const sessionsDir = resolve(BASE_DIR, "sessions");
+    try {
+      const slug = name.replace(/[^a-z0-9_-]/gi, "_");
+      const fp = resolve(sessionsDir, `${slug}.json`);
+      if (!fs.existsSync(fp)) return `[Session] Not found: ${name}`;
+      const data = JSON.parse(fs.readFileSync(fp, "utf-8"));
+      return `📂 Session: ${data.name}\nCreated: ${data.created}\nTools: ${data.tools}`;
+    } catch (e) { return `[Session Error] ${e.message}`; }
+  },
+
+  code_gen: async (input) => {
+    const parts = input.split("|");
+    const [prompt, lang = "javascript", outPath = ""] = parts;
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      const stub = `// ${prompt}\n// Language: ${lang}\nfunction ${(prompt||"").replace(/[^a-z]/gi, "")}() {\n  // TODO\n}\n`;
+      if (outPath) { fs.writeFileSync(resolve(outPath), stub, "utf-8"); return `✅ Stub written to ${outPath}`; }
+      return stub;
+    }
+    try {
+      const r = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: `Generate only ${lang} code. No explanations.` }, { role: "user", content: prompt }], max_tokens: 2000 }),
+        signal: AbortSignal.timeout(30000),
+      });
+      const data = await r.json();
+      const code = data?.choices?.[0]?.message?.content || "// Failed";
+      if (outPath) { fs.writeFileSync(resolve(outPath), code, "utf-8"); return `✅ Generated ${code.length} chars → ${outPath}`; }
+      return code;
+    } catch (e) { return `[Code Gen Error] ${e.message}`; }
+  },
+
+  self_add_tool: async (prompt) => {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) return "[Self Add] Requires OPENAI_API_KEY";
+    try {
+      const r = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [{ role: "system", content: `Generate a Node.js async function taking a string input and returning Promise<string>. Name it after the tool purpose. No markdown.` }, { role: "user", content: `Tool that: ${prompt}` }],
+          max_tokens: 1500,
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
+      const data = await r.json();
+      const result = data?.choices?.[0]?.message?.content || "// Failed";
+      const toolName = result.match(/async function\s+(\w+)/)?.[1] || "newTool";
+      const genDir = resolve(BASE_DIR, "generated");
+      if (!fs.existsSync(genDir)) fs.mkdirSync(genDir, { recursive: true });
+      fs.writeFileSync(resolve(genDir, `${toolName}.ts`), result, "utf-8");
+      return `🎯 Generated tool "${toolName}" at ${genDir}/${toolName}.ts\nIntegrate: paste function into src/core/hacker-tools.ts, add to registry, run npm run build\n\n${result.substring(0, 600)}`;
+    } catch (e) { return `[Self Add Error] ${e.message}`; }
+  },
 };
 
 // ── EventBus ──────────────────────────────────────────────
@@ -892,6 +1003,12 @@ class Agent {
       self_info: "Show Phantom's version, all tools, runtime, platform, LLM status. Use for: self-awareness, debugging.",
       self_read: "Read Phantom's own source files (project-locked). Input: relative path like 'phantom.mjs' or 'src/core/hacker-tools.ts'.",
       self_edit: "Edit Phantom's own source code (project-locked). Format: relative_path|old_string|new_string.",
+      vuln_scan: "FULL VULNERABILITY SCAN: recon → CVE search → exploit search → brute force → comprehensive markdown report. Input: domain or URL.",
+      report_save: "Save text as a timestamped markdown report. Format: name|content. Saves to ~/.config/phantom/reports/.",
+      session_save: "Save current Phantom session state. Input: session name (alphanumeric).",
+      session_load: "Load a saved Phantom session. Input: session name.",
+      code_gen: "Generate code via OpenAI LLM (requires OPENAI_API_KEY). Format: prompt|language|output_path.",
+      self_add_tool: "Generate a new Phantom tool via LLM. Requires OPENAI_API_KEY. Input: natural language tool description.",
     };
     for (const [name, desc] of Object.entries(toolList)) {
       this.tools[name] = { description: desc, execute: hackerTools[name] };
