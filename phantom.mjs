@@ -2319,6 +2319,408 @@ class MinimalUI {
   }
 }
 
+// ── UI: Conversational REPL (Claude Code / Hermes style) ──
+class ConversationalUI {
+  constructor(am) {
+    this.am = am;
+    this.bus = EventBus.i;
+    this.llm = am.llm;
+    this.running = true;
+    this.agent = null;
+    this.conversation = [];
+    this.logLines = [];
+    this.inputBuf = "";
+    this.inputHistory = [];
+    this.historyIdx = 0;
+    this.cursorPos = 0;
+    this.inputLines = [];
+    this.inputHandler = null;
+  }
+
+  log(msg) { this.logLines.push(msg); if (this.logLines.length > 1000) this.logLines.shift(); }
+
+  formatToolResult(name, result) {
+    const lines = (result || "").split("\n").filter(l => l.trim());
+    if (lines.length <= 4) return lines.map(l => `  ${c("dim")}→ ${l}${R}`).join("\n");
+    return lines.slice(0, 4).map(l => `  ${c("dim")}→ ${l.substring(0, 120)}${R}`).join("\n") +
+      `\n  ${c("dim")}… +${lines.length - 4} more lines${R}`;
+  }
+
+  renderResponse(response) {
+    if (!response) return;
+    const lines = response.split("\n");
+    let inCode = false;
+    let codeLang = "";
+
+    for (const line of lines) {
+      const trimmed = line.trimEnd();
+      const codeFence = trimmed.match(/^```(\w*)/);
+      if (codeFence) {
+        if (inCode) {
+          this.log(`${c("dim")}└─${R}`);
+          inCode = false;
+        } else {
+          codeLang = codeFence[1] || "code";
+          this.log(`${c("dim")}┌─ ${c("yellow")}${codeLang}${R}`);
+          inCode = true;
+        }
+        continue;
+      }
+      if (inCode) {
+        this.log(`${c("dim")}│ ${R}${trimmed}`);
+        continue;
+      }
+      // Tool calls
+      if (trimmed.startsWith("@") && trimmed.length < 80) {
+        this.log(`${c("magenta")}⚡ ${trimmed}${R}`);
+        continue;
+      }
+      // Empty lines
+      if (trimmed === "") {
+        this.log("");
+        continue;
+      }
+      this.log(`${c("fg")}${trimmed}${R}`);
+    }
+    if (inCode) this.log(`${c("dim")}└─${R}`);
+  }
+
+  async start() {
+    process.stdout.write(cls + home);
+    console.log(`\n${B}${c("green")}  ◈  P H A N T O M${R}  ${D}conversational AI${R}\n`);
+
+    // Spawn single agent
+    if (this.am.count === 0) {
+      this.am.spawn("Phantom", "Cybersecurity AI",
+        "You are Phantom, an elite cybersecurity AI assistant with full system access via 43+ integrated tools. " +
+        "You operate in a conversational REPL — the user types natural language and you respond with analysis, " +
+        "commands, code, and results. Use the @tool|args syntax to run any tool when needed. Be concise, " +
+        "actionable, and thorough. Always explain your reasoning before running tools. " +
+        "You can read, write, and edit files, run commands, scan networks, and perform security assessments."
+      );
+    }
+    this.agent = this.am.list[0];
+
+    if (this.llm?.hasLLM) {
+      const providerName = typeof this.llm.provider === "string" ? this.llm.provider : "connected";
+      this.log(`${c("green")}✓${R} ${B}${this.agent.name}${R} ${D}— ${providerName}${R}`);
+    } else {
+      this.log(`${c("yellow")}⚠${R} No LLM configured. Set OPENAI_API_KEY or edit ~/.config/phantom/config.json`);
+      this.log(`  ${D}43 tools available · tools-only mode (no AI reasoning)${R}`);
+    }
+    this.log(`  ${D}43 tools · type /help for commands · \\ for multi-line${R}`);
+    this.log("");
+
+    this.prompt();
+  }
+
+  prompt() {
+    if (!this.running) return;
+    this.inputBuf = "";
+    this.historyIdx = this.inputHistory.length;
+    this.cursorPos = 0;
+    this.inputLines = [];
+
+    process.stdout.write(`\n${c("green")}❯${R} `);
+
+    raw(true);
+    this.inputHandler = (buf) => this.onKey(buf);
+    process.stdin.on("data", this.inputHandler);
+  }
+
+  onKey(buf) {
+    if (!this.running) return;
+    const str = buf.toString();
+
+    // Up / Down arrows — history navigation
+    if (str === "\x1b[A") {
+      if (this.historyIdx > 0) {
+        this.historyIdx--;
+        this.inputBuf = this.inputHistory[this.historyIdx] || "";
+        this.cursorPos = this.inputBuf.length;
+      }
+      this.redrawLine();
+      return;
+    }
+    if (str === "\x1b[B") {
+      if (this.historyIdx < this.inputHistory.length - 1) {
+        this.historyIdx++;
+        this.inputBuf = this.inputHistory[this.historyIdx] || "";
+      } else {
+        this.historyIdx = this.inputHistory.length;
+        this.inputBuf = "";
+      }
+      this.cursorPos = this.inputBuf.length;
+      this.redrawLine();
+      return;
+    }
+
+    // Left / Right
+    if (str === "\x1b[D") { this.cursorPos = Math.max(0, this.cursorPos - 1); this.redrawLine(); return; }
+    if (str === "\x1b[C") { this.cursorPos = Math.min(this.inputBuf.length, this.cursorPos + 1); this.redrawLine(); return; }
+
+    // Home / End
+    if (str === "\x1b[H" || str === "\x01") { this.cursorPos = 0; this.redrawLine(); return; }
+    if (str === "\x1b[F" || str === "\x05") { this.cursorPos = this.inputBuf.length; this.redrawLine(); return; }
+
+    // Delete
+    if (str === "\x1b[3~") {
+      if (this.cursorPos < this.inputBuf.length) {
+        this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + this.inputBuf.slice(this.cursorPos + 1);
+        this.redrawLine();
+      }
+      return;
+    }
+
+    // Ctrl+C / Ctrl+D
+    if (str === "\x03") { raw(false); process.stdin.removeListener("data", this.inputHandler); this.stop(); return; }
+    if (str === "\x04") {
+      if (this.inputBuf.length === 0) { raw(false); process.stdin.removeListener("data", this.inputHandler); this.stop(); return; }
+      return;
+    }
+
+    // Backspace
+    if (str === "\x7f" || str === "\b") {
+      if (this.cursorPos > 0) {
+        this.inputBuf = this.inputBuf.slice(0, this.cursorPos - 1) + this.inputBuf.slice(this.cursorPos);
+        this.cursorPos--;
+        this.redrawLine();
+      }
+      return;
+    }
+
+    // Enter
+    if (str === "\r" || str === "\n") {
+      // Multi-line continuation
+      if (this.inputBuf.endsWith("\\")) {
+        this.inputLines.push(this.inputBuf.slice(0, -1));
+        this.inputBuf = "";
+        this.cursorPos = 0;
+        process.stdout.write(`\n${c("green")}│${R} `);
+        return;
+      }
+
+      const fullInput = this.inputLines.concat([this.inputBuf]).join("\n").trim();
+      this.inputLines = [];
+      this.inputBuf = "";
+      this.cursorPos = 0;
+
+      raw(false);
+      process.stdin.removeListener("data", this.inputHandler);
+      process.stdout.write("\n");
+
+      if (fullInput) {
+        if (this.inputHistory.length === 0 || this.inputHistory[this.inputHistory.length - 1] !== fullInput) {
+          this.inputHistory.push(fullInput);
+        }
+        this.handleInput(fullInput);
+      } else {
+        this.prompt();
+      }
+      return;
+    }
+
+    // Regular character
+    if (str.length === 1 && str.charCodeAt(0) >= 32) {
+      this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + str + this.inputBuf.slice(this.cursorPos);
+      this.cursorPos++;
+      this.redrawLine();
+    }
+  }
+
+  redrawLine() {
+    const prompt = this.inputLines.length > 0 ? `${c("green")}│${R} ` : `${c("green")}❯${R} `;
+    const strippedPrompt = prompt.replace(/\x1b\[[0-9;]*m/g, "");
+    const display = strippedPrompt + this.inputBuf;
+
+    // Clear line and rewrite
+    process.stdout.write(`\r\x1b[K${prompt}${this.inputBuf}`);
+
+    // Move cursor to correct position
+    const curX = strippedPrompt.length + this.cursorPos;
+    const move = display.length - curX;
+    if (move > 0) process.stdout.write(`\r\x1b[${display.length}D` + "\x1b[" + (curX + 1) + "C");
+    // Simpler: use absolute positioning from right
+    // Just rewrite and position cursor
+    const { cols } = getSize();
+    const cursorVisualCol = (strippedPrompt.length + this.cursorPos) % cols;
+    process.stdout.write(`\r\x1b[K${prompt}${this.inputBuf}`);
+    if (this.cursorPos < this.inputBuf.length) {
+      const offset = this.inputBuf.length - this.cursorPos + strippedPrompt.length;
+      // Need to account for cursor not at end
+      // Actually simpler: carriage return + move to right column
+      const totalLen = (prompt.replace(/\x1b\[[0-9;]*m/g, "") + this.inputBuf).length;
+      const targetCol = cursorVisualCol;
+      process.stdout.write(`\r\x1b[${targetCol + 1}C`);
+    }
+  }
+
+  async handleInput(input) {
+    // Commands
+    if (input.startsWith("/")) {
+      this.handleCommand(input.slice(1).trim().split(/\s+/));
+      return;
+    }
+
+    // Show user input in log
+    this.sayLine(`┃ ${input}`, "green");
+
+    if (!this.agent) {
+      this.sayLine("✕ No agent available.", "red");
+      this.prompt();
+      return;
+    }
+
+    // Thinking indicator
+    process.stdout.write(`${c("yellow")}🧠 thinking${R}\r`);
+
+    try {
+      const response = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          try { this.bus.off("agent:msg", handler); } catch {}
+          reject(new Error("LLM response timeout"));
+        }, 90000);
+
+        const handler = ({ agent: a, text }) => {
+          if (a && a.id === this.agent.id) {
+            clearTimeout(timeout);
+            try { this.bus.off("agent:msg", handler); } catch {}
+            resolve(text);
+          }
+        };
+        this.bus.on("agent:msg", handler);
+
+        // If no LLM, just list tools and return
+        if (!this.llm?.hasLLM) {
+          clearTimeout(timeout);
+          const tools = Object.keys(this.agent.tools).sort();
+          resolve(`No LLM connected — tools-only mode.\nAvailable tools: ${tools.join(", ")}\nUse @tool_name|args to run a tool.`);
+          return;
+        }
+
+        this.agent.receive("user", input).catch(err => {
+          clearTimeout(timeout);
+          try { this.bus.off("agent:msg", handler); } catch {}
+          reject(err);
+        });
+      });
+
+      // Clear thinking
+      process.stdout.write(`\r\x1b[K`);
+
+      // Render the response with formatting
+      this.renderResponse(response);
+
+    } catch (err) {
+      process.stdout.write(`\r\x1b[K`);
+      this.sayLine(`✕ Error: ${err.message}`, "red");
+    }
+
+    this.prompt();
+  }
+
+  sayLine(text, color = "fg") {
+    this.log(`${c(color)}${text}${R}`);
+  }
+
+  handleCommand(args) {
+    const op = args[0]?.toLowerCase();
+    const rest = args.slice(1);
+
+    switch (op) {
+      case "help":
+      case "h":
+        console.log(`\n${B}${c("green")}PHANTOM COMMANDS${R}`);
+        console.log(`  ${c("green")}/help${R}               — show this help`);
+        console.log(`  ${c("green")}/tools${R}               — list 43 tools`);
+        console.log(`  ${c("green")}/model${R} [provider]    — show/switch LLM`);
+        console.log(`  ${c("green")}/clear${R}                — clear screen`);
+        console.log(`  ${c("green")}/save${R} <name>          — save session`);
+        console.log(`  ${c("green")}/load${R} <name>          — load session`);
+        console.log(`  ${c("green")}/quit${R}                 — exit\n`);
+        console.log(`${D}Type anything to chat. Use \\ for multi-line.${R}`);
+        console.log(`${D}The AI auto-uses tools via @tool_name|args syntax.${R}\n`);
+        this.prompt();
+        return;
+
+      case "tools": {
+        const names = Object.keys(hackerTools).sort();
+        console.log(`\n${B}${c("green")}PHANTOM TOOLS (${names.length})${R}`);
+        const cols = 4;
+        for (let i = 0; i < names.length; i += cols) {
+          const row = names.slice(i, i + cols);
+          console.log(`  ${row.map(n => `${c("cyan")}${n.padEnd(20)}${R}`).join("")}`);
+        }
+        console.log("");
+        this.prompt();
+        return;
+      }
+
+      case "model":
+        if (rest.length === 0) {
+          console.log(`\n${B}Current:${R} ${this.llm?.provider || "none"}`);
+          console.log(`Providers: ${this.llm?.providers?.join(", ") || "none"}`);
+          console.log(`${D}/model <provider> to switch${R}\n`);
+        } else if (this.llm?.providers?.includes(rest[0])) {
+          this.llm.provider = rest[0];
+          console.log(`\n${c("green")}✓${R} Switched to ${B}${rest[0]}${R}\n`);
+        } else {
+          console.log(`\n${c("red")}✕${R} Unknown: ${rest[0]}. Available: ${this.llm?.providers?.join(", ") || "none"}\n`);
+        }
+        this.prompt();
+        return;
+
+      case "clear":
+      case "c":
+        this.logLines = [];
+        process.stdout.write(cls + home);
+        console.log(`\n${B}${c("green")}  ◈  P H A N T O M${R}  ${D}cleared${R}\n`);
+        this.prompt();
+        return;
+
+      case "save":
+        if (rest[0]) {
+          saveMemory(`session_${rest[0]}`, this.conversation);
+          console.log(`\n${c("green")}✓${R} Saved: ${B}${rest[0]}${R}\n`);
+        }
+        this.prompt();
+        return;
+
+      case "load":
+        if (rest[0]) {
+          const m = loadMemory(`session_${rest[0]}`);
+          if (m?.length) {
+            this.conversation = m;
+            console.log(`\n${c("green")}✓${R} Loaded: ${B}${rest[0]}${R} (${m.length} messages)\n`);
+          } else {
+            console.log(`\n${c("red")}✕${R} Not found: ${rest[0]}\n`);
+          }
+        }
+        this.prompt();
+        return;
+
+      case "quit":
+      case "q":
+      case "exit":
+        this.stop();
+        return;
+
+      default:
+        console.log(`\n${c("red")}✕${R} Unknown: /${op}. Type ${c("green")}/help${R}\n`);
+        this.prompt();
+    }
+  }
+
+  stop() {
+    this.running = false;
+    raw(false);
+    try { if (this.inputHandler) process.stdin.removeListener("data", this.inputHandler); } catch {}
+    process.stdout.write(show);
+    console.log(`\n${c("green")}Phantom terminated.${R}`);
+    process.exit(0);
+  }
+}
+
 // ── UI Selector ───────────────────────────────────────────
 function selectUI(am) {
   const e = ENV;
@@ -2329,30 +2731,21 @@ function selectUI(am) {
   if (e.isTmux) info.push("tmux");
   if (e.isWSL) info.push("WSL");
   if (e.isWindows) info.push("Windows");
+  if (e.isProot) info.push("PRoot");
   if (info.length) console.error(`${D}${info.join("/")} mode${R}`);
 
-  // Non-interactive (CI, pipe): minimal output
+  // Non-interactive: minimal
   if (!e.interactive) {
     console.error(`${D}Non-interactive mode${R}`);
     return new MinimalUI(am);
   }
 
-  // Termux: use readline-based UI
-  if (e.isTermux) return new TermuxUI(am);
-
-  // Tiny/small screens: minimal UI
-  if (e.screenSize === "tiny") return new MinimalUI(am);
-  if (e.screenSize === "small") return new TermuxUI(am);
-
-  // Windows console (cmd.exe): Termux UI (no ANSI box drawing support)
-  if (e.isWindows && e.terminal === "windows-console") return new TermuxUI(am);
-
-  // Desktop with full terminal: multi-panel
+  // Default: Conversational REPL (works everywhere)
+  // This gives a Claude Code / Hermes CLI experience
   try {
-    const ui = new DesktopUI(am);
-    return ui;
+    return new ConversationalUI(am);
   } catch (err) {
-    console.error(`${D}Full UI unavailable, falling back: ${err.message}${R}`);
+    console.error(`${D}Conversational UI unavailable, falling back: ${err.message}${R}`);
     return new TermuxUI(am);
   }
 }
@@ -2534,6 +2927,8 @@ loadTools();
 import readline from "readline";
 
 // ── CLI One-Shot Mode ─────────────────────────────────────
+const llm = createProvider();
+llmInstance = llm;
 const args = process.argv.slice(2);
 if (args.length > 0 && !args[0].startsWith("--")) {
   // No --flag: pass as interactive input to phantom
@@ -2545,9 +2940,10 @@ if (args.length > 0 && !args[0].startsWith("--")) {
     console.log(`Phantom — Cybersecurity AI Assistant
 
 Usage:
-  node phantom.mjs                          Interactive mode
+  node phantom.mjs                          Conversational REPL (default)
   node phantom.mjs --recon <domain>         Full recon (7 steps + report)
   node phantom.mjs --tool <name> <input>    Run one tool directly
+  node phantom.mjs --repl                   Force conversational REPL mode
   node phantom.mjs --list                   List all tools
   node phantom.mjs --gui                    Start web dashboard
   node phantom.mjs --api                    Start REST API server (port 9090)
@@ -2570,6 +2966,16 @@ Examples:
       console.log(`  ${name}`);
     }
     process.exit(0);
+  }
+
+  if (flag === "repl") {
+    // Force conversational REPL mode
+    const llm = createProvider();
+    llmInstance = llm;
+    const am = new AgentManager(llm);
+    const ui = new ConversationalUI(am);
+    ui.start();
+    await new Promise(() => {}); // keep alive
   }
 
   if (flag === "gui" || flag === "dashboard" || flag === "g") {
@@ -2619,8 +3025,6 @@ Examples:
   process.exit(1);
 }
 
-const llm = createProvider();
-llmInstance = llm;
 const am = new AgentManager(llm);
 
 const ui = selectUI(am);
