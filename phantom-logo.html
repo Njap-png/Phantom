@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>PHANTOM — Logo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #050510;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .container { text-align: center; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- ===== MAIN LOGO VERSION ===== -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 520" width="600" height="780">
+
+  <defs>
+    <!-- Gradients -->
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#020208"/>
+      <stop offset="50%" stop-color="#080820"/>
+      <stop offset="100%" stop-color="#020208"/>
+    </linearGradient>
+
+    <linearGradient id="hoodGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a1040" stop-opacity="0.3"/>
+      <stop offset="50%" stop-color="#0d0d2b" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#060620" stop-opacity="0.8"/>
+    </linearGradient>
+
+    <linearGradient id="hoodEdge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="30%" stop-color="#6c3cf0"/>
+      <stop offset="70%" stop-color="#4c1d95"/>
+      <stop offset="100%" stop-color="#2e1065"/>
+    </linearGradient>
+
+    <linearGradient id="eyeGradLeft" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#c084fc" stop-opacity="0.3"/>
+      <stop offset="40%" stop-color="#d946ef"/>
+      <stop offset="100%" stop-color="#a855f7" stop-opacity="0.8"/>
+    </linearGradient>
+
+    <linearGradient id="eyeGradRight" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#a855f7" stop-opacity="0.8"/>
+      <stop offset="60%" stop-color="#d946ef"/>
+      <stop offset="100%" stop-color="#c084fc" stop-opacity="0.3"/>
+    </linearGradient>
+
+    <linearGradient id="voidGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#050518"/>
+      <stop offset="100%" stop-color="#020210"/>
+    </linearGradient>
+
+    <linearGradient id="textGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#c084fc"/>
+      <stop offset="30%" stop-color="#a855f7"/>
+      <stop offset="70%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#6c3cf0"/>
+    </linearGradient>
+
+    <!-- Glow filters -->
+    <filter id="eyeGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="eyeGlowStrong" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="circuitGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="shieldGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3"/>
+    </filter>
+
+    <filter id="hexGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Hexagon pattern -->
+    <pattern id="hexPattern" x="0" y="0" width="60" height="103.92" patternUnits="userSpaceOnUse">
+      <path d="M30 0 L60 17.32 L60 51.96 L30 69.28 L0 51.96 L0 17.32 Z" 
+            fill="none" stroke="#8b5cf6" stroke-width="0.5" stroke-opacity="0.08"/>
+      <path d="M30 103.92 L60 86.6 L60 51.96 L30 69.28 L0 51.96 L0 86.6 Z" 
+            fill="none" stroke="#8b5cf6" stroke-width="0.5" stroke-opacity="0.08"/>
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="400" height="520" fill="url(#bgGrad)"/>
+
+  <!-- Hexagonal grid overlay -->
+  <rect width="400" height="420" fill="url(#hexPattern)" opacity="0.5"/>
+
+  <!-- Shield wireframe behind hood -->
+  <path d="M200 50 L340 130 L340 260 Q340 320 200 380 Q60 320 60 260 L60 130 Z" 
+        fill="none" stroke="#6c3cf0" stroke-width="0.7" stroke-opacity="0.12"/>
+  <path d="M200 70 L320 140 L320 250 Q320 300 200 350 Q80 300 80 250 L80 140 Z" 
+        fill="none" stroke="#8b5cf6" stroke-width="0.5" stroke-opacity="0.08"/>
+
+  <!-- Data stream particles -->
+  <g opacity="0.3">
+    <circle cx="85" cy="180" r="1.5" fill="#c084fc">
+      <animate attributeName="opacity" values="0;1;0" dur="3s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="315" cy="200" r="1.5" fill="#c084fc">
+      <animate attributeName="opacity" values="0;1;0" dur="2.5s" repeatCount="indefinite" begin="1s"/>
+    </circle>
+    <circle cx="100" cy="260" r="1" fill="#a855f7">
+      <animate attributeName="opacity" values="0;1;0" dur="4s" repeatCount="indefinite" begin="0.5s"/>
+    </circle>
+    <circle cx="300" cy="280" r="1" fill="#a855f7">
+      <animate attributeName="opacity" values="0;1;0" dur="3.5s" repeatCount="indefinite" begin="2s"/>
+    </circle>
+    <circle cx="60" cy="130" r="1.2" fill="#d946ef">
+      <animate attributeName="opacity" values="0;1;0" dur="2.8s" repeatCount="indefinite" begin="1.5s"/>
+    </circle>
+    <circle cx="340" cy="150" r="1.2" fill="#d946ef">
+      <animate attributeName="opacity" values="0;1;0" dur="3.2s" repeatCount="indefinite" begin="0.8s"/>
+    </circle>
+  </g>
+
+  <!-- Circuit traces - left side -->
+  <g stroke="#8b5cf6" stroke-width="1" fill="none" stroke-opacity="0.35" filter="url(#circuitGlow)">
+    <path d="M40 170 L70 170 L80 180 L105 180"/>
+    <path d="M45 200 L65 200 L75 210 L100 210"/>
+    <path d="M50 230 L60 230 L70 220 L90 220"/>
+    <path d="M35 150 L55 150 L65 160 L95 160"/>
+    <!-- Vertical traces -->
+    <path d="M52 170 L52 150 L58 150"/>
+    <path d="M65 200 L65 185 L72 185"/>
+    <!-- Neural nodes left -->
+    <circle cx="40" cy="170" r="2" fill="#c084fc" stroke="none"/>
+    <circle cx="45" cy="200" r="2" fill="#c084fc" stroke="none"/>
+    <circle cx="50" cy="230" r="2" fill="#c084fc" stroke="none"/>
+    <circle cx="35" cy="150" r="2" fill="#c084fc" stroke="none"/>
+  </g>
+
+  <!-- Circuit traces - right side -->
+  <g stroke="#8b5cf6" stroke-width="1" fill="none" stroke-opacity="0.35" filter="url(#circuitGlow)">
+    <path d="M360 170 L330 170 L320 180 L295 180"/>
+    <path d="M355 200 L335 200 L325 210 L300 210"/>
+    <path d="M350 230 L340 230 L330 220 L310 220"/>
+    <path d="M365 150 L345 150 L335 160 L305 160"/>
+    <path d="M348 170 L348 150 L342 150"/>
+    <path d="M335 200 L335 185 L328 185"/>
+    <circle cx="360" cy="170" r="2" fill="#c084fc" stroke="none"/>
+    <circle cx="355" cy="200" r="2" fill="#c084fc" stroke="none"/>
+    <circle cx="350" cy="230" r="2" fill="#c084fc" stroke="none"/>
+    <circle cx="365" cy="150" r="2" fill="#c084fc" stroke="none"/>
+  </g>
+
+  <!-- Quantum-inspired curved lines behind hood -->
+  <g stroke="#6c3cf0" stroke-width="0.6" fill="none" stroke-opacity="0.15">
+    <path d="M100 280 Q150 250 200 270 Q250 250 300 280"/>
+    <path d="M110 300 Q155 270 200 290 Q245 270 290 300"/>
+    <path d="M120 320 Q160 290 200 310 Q240 290 280 320"/>
+  </g>
+
+  <!-- ===== HOOD SILHOUETTE ===== -->
+  <!-- Outer hood glow -->
+  <path d="M200 18 C120 25 70 50 45 95 L25 150 C15 190 30 240 55 260 
+           L105 220 L130 210 L155 215 L170 225 
+           L200 365 L230 225 L245 215 L270 210 L295 220 
+           L345 260 C370 240 385 190 375 150 L355 95 
+           C330 50 280 25 200 18 Z" 
+        fill="none" stroke="#8b5cf6" stroke-width="0.5" stroke-opacity="0.15"
+        filter="url(#shieldGlow)"/>
+
+  <!-- Main hood shape -->
+  <path d="M200 18 C120 25 70 50 45 95 L25 150 C15 190 30 240 55 260 
+           L105 220 L130 210 L155 215 L170 225 
+           L200 365 L230 225 L245 215 L270 210 L295 220 
+           L345 260 C370 240 385 190 375 150 L355 95 
+           C330 50 280 25 200 18 Z" 
+        fill="url(#hoodGrad)" stroke="url(#hoodEdge)" stroke-width="2" 
+        stroke-linejoin="round"/>
+
+  <!-- Inner face void (dark emptiness) -->
+  <path d="M115 190 C115 190 130 205 155 210 
+           L170 228 L200 310 L230 228 L245 210 
+           C270 205 285 190 285 190 
+           C275 175 260 165 240 165 
+           L225 170 L215 178 L200 182 L185 178 L175 170 L160 165 
+           C140 165 125 175 115 190 Z" 
+        fill="url(#voidGrad)" stroke="#6c3cf0" stroke-width="0.8" stroke-opacity="0.3"/>
+
+  <!-- Neural network pattern inside face -->
+  <g stroke="#8b5cf6" stroke-width="0.5" stroke-opacity="0.12" fill="none">
+    <line x1="160" y1="185" x2="200" y2="195"/>
+    <line x1="240" y1="185" x2="200" y2="195"/>
+    <line x1="160" y1="185" x2="185" y2="175"/>
+    <line x1="240" y1="185" x2="215" y2="175"/>
+    <line x1="185" y1="175" x2="200" y2="195"/>
+    <line x1="215" y1="175" x2="200" y2="195"/>
+    <line x1="160" y1="185" x2="200" y2="220"/>
+    <line x1="240" y1="185" x2="200" y2="220"/>
+    <circle cx="160" cy="185" r="1.5" fill="#8b5cf6" stroke="none"/>
+    <circle cx="240" cy="185" r="1.5" fill="#8b5cf6" stroke="none"/>
+    <circle cx="200" cy="195" r="1.5" fill="#8b5cf6" stroke="none"/>
+    <circle cx="200" cy="220" r="1.5" fill="#8b5cf6" stroke="none"/>
+    <circle cx="185" cy="175" r="1.5" fill="#8b5cf6" stroke="none"/>
+    <circle cx="215" cy="175" r="1.5" fill="#8b5cf6" stroke="none"/>
+  </g>
+
+  <!-- Internal circuit traces from eyes -->
+  <g stroke="#a855f7" stroke-width="0.7" fill="none" stroke-opacity="0.25" filter="url(#circuitGlow)">
+    <!-- From left eye downward -->
+    <path d="M155 200 L150 220 L140 225 L135 240"/>
+    <path d="M155 200 L155 215 L160 220 L160 235"/>
+    <!-- From right eye downward -->
+    <path d="M245 200 L250 220 L260 225 L265 240"/>
+    <path d="M245 200 L245 215 L240 220 L240 235"/>
+    <!-- Cross connections -->
+    <path d="M160 235 L200 245 L240 235" stroke-opacity="0.15"/>
+  </g>
+
+  <!-- ===== GLOWING EYES ===== -->
+
+  <!-- Left eye glow aura -->
+  <ellipse cx="155" cy="192" rx="20" ry="5" fill="#d946ef" opacity="0.15" filter="url(#eyeGlowStrong)"/>
+  
+  <!-- Left eye -->
+  <g filter="url(#eyeGlow)">
+    <path d="M138 190 L148 185 L162 188 L168 192 L162 196 L148 198 Z" 
+          fill="url(#eyeGradLeft)" stroke="#e879f9" stroke-width="0.5"/>
+    <!-- Left eye core highlight -->
+    <path d="M145 188 L158 190 L163 192 L158 194 L145 193 Z" 
+          fill="#f0e6ff" opacity="0.6"/>
+    <!-- Left eye outer glow line -->
+    <path d="M135 190 L145 186 L160 188 L168 192" 
+          fill="none" stroke="#d946ef" stroke-width="1.5" stroke-opacity="0.5"/>
+  </g>
+
+  <!-- Right eye glow aura -->
+  <ellipse cx="245" cy="192" rx="20" ry="5" fill="#d946ef" opacity="0.15" filter="url(#eyeGlowStrong)"/>
+
+  <!-- Right eye -->
+  <g filter="url(#eyeGlow)">
+    <path d="M232 192 L238 188 L252 185 L262 190 L252 196 L238 198 Z" 
+          fill="url(#eyeGradRight)" stroke="#e879f9" stroke-width="0.5"/>
+    <!-- Right eye core highlight -->
+    <path d="M237 190 L252 188 L255 192 L252 194 L237 193 Z" 
+          fill="#f0e6ff" opacity="0.6"/>
+    <!-- Right eye outer glow line -->
+    <path d="M232 192 L240 188 L255 186 L265 190" 
+          fill="none" stroke="#d946ef" stroke-width="1.5" stroke-opacity="0.5"/>
+  </g>
+
+  <!-- Central forehead cyber diamond -->
+  <g opacity="0.4" filter="url(#hexGlow)">
+    <path d="M200 138 L208 148 L204 155 L196 155 L192 148 Z" 
+          fill="none" stroke="#8b5cf6" stroke-width="1.2"/>
+    <path d="M200 142 L205 148 L202 153 L198 153 L195 148 Z" 
+          fill="#6c3cf0" opacity="0.3"/>
+    <circle cx="200" cy="148" r="1.5" fill="#c084fc"/>
+  </g>
+
+  <!-- Shoulder cyber accents -->
+  <g stroke="#8b5cf6" stroke-width="0.8" fill="none" stroke-opacity="0.3">
+    <!-- Left shoulder -->
+    <line x1="45" y1="150" x2="70" y2="150"/>
+    <line x1="50" y1="140" x2="65" y2="140"/>
+    <line x1="55" y1="130" x2="60" y2="130"/>
+    <!-- Right shoulder -->
+    <line x1="355" y1="150" x2="330" y2="150"/>
+    <line x1="350" y1="140" x2="335" y2="140"/>
+    <line x1="345" y1="130" x2="340" y2="130"/>
+  </g>
+
+  <!-- Hood tip cyber node at pointed bottom -->
+  <g opacity="0.4">
+    <circle cx="200" cy="365" r="3" fill="#c084fc" filter="url(#eyeGlow)"/>
+    <circle cx="200" cy="365" r="1.5" fill="#f0e6ff"/>
+    <line x1="200" y1="370" x2="200" y2="385" stroke="#8b5cf6" stroke-width="0.5" opacity="0.3"/>
+  </g>
+
+  <!-- Hood side glowing vents -->
+  <g stroke="#a855f7" stroke-width="0.5" opacity="0.2">
+    <line x1="60" y1="120" x2="60" y2="180"/>
+    <line x1="340" y1="120" x2="340" y2="180"/>
+  </g>
+
+  <!-- Cyber float lines around hood -->
+  <g stroke="#6c3cf0" stroke-width="0.5" fill="none" opacity="0.2">
+    <!-- Left side float lines -->
+    <line x1="25" y1="100" x2="25" y2="140"/>
+    <line x1="20" y1="105" x2="30" y2="105"/>
+    <line x1="20" y1="135" x2="30" y2="135"/>
+    <!-- Right side float lines -->
+    <line x1="375" y1="100" x2="375" y2="140"/>
+    <line x1="370" y1="105" x2="380" y2="105"/>
+    <line x1="370" y1="135" x2="380" y2="135"/>
+  </g>
+
+  <!-- Encrypted data flow lines -->
+  <g stroke="#8b5cf6" stroke-width="0.4" opacity="0.12">
+    <path d="M80 280 L85 290 L80 300" fill="none"/>
+    <path d="M320 280 L315 290 L320 300" fill="none"/>
+    <path d="M90 310 L92 318 L90 326" fill="none"/>
+    <path d="M310 310 L308 318 L310 326" fill="none"/>
+  </g>
+
+  <!-- ===== TYPOGRAPHY ===== -->
+
+  <!-- Subtitle line -->
+  <text x="200" y="430" text-anchor="middle" 
+        fill="#6c3cf0" font-family="'Courier New', monospace" font-size="11" 
+        letter-spacing="8" opacity="0.5">CYBERSECURITY · AI</text>
+
+  <!-- PHANTOM wordmark -->
+  <text x="200" y="460" text-anchor="middle" 
+        fill="url(#textGrad)" font-family="'Arial Black', 'Helvetica Neue', Arial, sans-serif" 
+        font-size="42" font-weight="900" letter-spacing="14">
+    PHANTOM
+  </text>
+
+  <!-- Subtle underline glow -->
+  <line x1="80" y1="475" x2="320" y2="475" 
+        stroke="url(#textGrad)" stroke-width="1" opacity="0.3"
+        filter="url(#circuitGlow)"/>
+
+  <!-- Version / tagline -->
+  <text x="200" y="495" text-anchor="middle" 
+        fill="#94a3b8" font-family="'Courier New', monospace" font-size="10" 
+        letter-spacing="6" opacity="0.35">v0.2.0 /* autonomous cyber AI */</text>
+
+</svg>
+
+</div>
+</body>
+</html>
