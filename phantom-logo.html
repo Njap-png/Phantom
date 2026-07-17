@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>PHANTOM — Logo</title>
+<title>PHANTOM — Hoodie Hacker Logo</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -19,7 +19,7 @@
 <body>
 <div class="container">
 
-<!-- ===== MAIN LOGO VERSION ===== -->
+<!-- ===== PHANTOM HOODIE HACKER LOGO ===== -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 520" width="600" height="780">
 
   <defs>
@@ -30,34 +30,29 @@
       <stop offset="100%" stop-color="#020208"/>
     </linearGradient>
 
-    <linearGradient id="hoodGrad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#1a1040" stop-opacity="0.3"/>
-      <stop offset="50%" stop-color="#0d0d2b" stop-opacity="0.6"/>
-      <stop offset="100%" stop-color="#060620" stop-opacity="0.8"/>
+    <linearGradient id="hoodieGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a1040" stop-opacity="0.4"/>
+      <stop offset="50%" stop-color="#0d0d2b" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#060620" stop-opacity="0.9"/>
     </linearGradient>
 
-    <linearGradient id="hoodEdge" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="hoodieEdge" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#8b5cf6"/>
       <stop offset="30%" stop-color="#6c3cf0"/>
       <stop offset="70%" stop-color="#4c1d95"/>
       <stop offset="100%" stop-color="#2e1065"/>
     </linearGradient>
 
-    <linearGradient id="eyeGradLeft" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#c084fc" stop-opacity="0.3"/>
-      <stop offset="40%" stop-color="#d946ef"/>
+    <linearGradient id="eyeGradL" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#c084fc" stop-opacity="0.2"/>
+      <stop offset="50%" stop-color="#d946ef"/>
       <stop offset="100%" stop-color="#a855f7" stop-opacity="0.8"/>
     </linearGradient>
 
-    <linearGradient id="eyeGradRight" x1="0" y1="0" x2="1" y2="0">
+    <linearGradient id="eyeGradR" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0%" stop-color="#a855f7" stop-opacity="0.8"/>
-      <stop offset="60%" stop-color="#d946ef"/>
-      <stop offset="100%" stop-color="#c084fc" stop-opacity="0.3"/>
-    </linearGradient>
-
-    <linearGradient id="voidGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#050518"/>
-      <stop offset="100%" stop-color="#020210"/>
+      <stop offset="50%" stop-color="#d946ef"/>
+      <stop offset="100%" stop-color="#c084fc" stop-opacity="0.2"/>
     </linearGradient>
 
     <linearGradient id="textGrad" x1="0" y1="0" x2="1" y2="1">
@@ -67,9 +62,16 @@
       <stop offset="100%" stop-color="#6c3cf0"/>
     </linearGradient>
 
+    <linearGradient id="zipGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0"/>
+      <stop offset="30%" stop-color="#6c3cf0" stop-opacity="0.3"/>
+      <stop offset="70%" stop-color="#6c3cf0" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0"/>
+    </linearGradient>
+
     <!-- Glow filters -->
     <filter id="eyeGlow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feGaussianBlur stdDeviation="5" result="blur"/>
       <feMerge>
         <feMergeNode in="blur"/>
         <feMergeNode in="SourceGraphic"/>
@@ -93,265 +95,197 @@
       </feMerge>
     </filter>
 
-    <filter id="shieldGlow" x="-20%" y="-20%" width="140%" height="140%">
+    <filter id="hoodGlow" x="-20%" y="-20%" width="140%" height="140%">
       <feGaussianBlur stdDeviation="3"/>
     </filter>
 
-    <filter id="hexGlow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="1.5" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-
-    <!-- Hexagon pattern -->
-    <pattern id="hexPattern" x="0" y="0" width="60" height="103.92" patternUnits="userSpaceOnUse">
+    <!-- Hexagon grid pattern -->
+    <pattern id="hexGrid" x="0" y="0" width="60" height="103.92" patternUnits="userSpaceOnUse">
       <path d="M30 0 L60 17.32 L60 51.96 L30 69.28 L0 51.96 L0 17.32 Z" 
-            fill="none" stroke="#8b5cf6" stroke-width="0.5" stroke-opacity="0.08"/>
+            fill="none" stroke="#8b5cf6" stroke-width="0.5" stroke-opacity="0.06"/>
       <path d="M30 103.92 L60 86.6 L60 51.96 L30 69.28 L0 51.96 L0 86.6 Z" 
-            fill="none" stroke="#8b5cf6" stroke-width="0.5" stroke-opacity="0.08"/>
+            fill="none" stroke="#8b5cf6" stroke-width="0.5" stroke-opacity="0.06"/>
     </pattern>
   </defs>
 
   <!-- Background -->
   <rect width="400" height="520" fill="url(#bgGrad)"/>
 
-  <!-- Hexagonal grid overlay -->
-  <rect width="400" height="420" fill="url(#hexPattern)" opacity="0.5"/>
+  <!-- Hex grid overlay -->
+  <rect width="400" height="420" fill="url(#hexGrid)" opacity="0.4"/>
 
-  <!-- Shield wireframe behind hood -->
-  <path d="M200 50 L340 130 L340 260 Q340 320 200 380 Q60 320 60 260 L60 130 Z" 
-        fill="none" stroke="#6c3cf0" stroke-width="0.7" stroke-opacity="0.12"/>
-  <path d="M200 70 L320 140 L320 250 Q320 300 200 350 Q80 300 80 250 L80 140 Z" 
-        fill="none" stroke="#8b5cf6" stroke-width="0.5" stroke-opacity="0.08"/>
-
-  <!-- Data stream particles -->
-  <g opacity="0.3">
-    <circle cx="85" cy="180" r="1.5" fill="#c084fc">
-      <animate attributeName="opacity" values="0;1;0" dur="3s" repeatCount="indefinite"/>
-    </circle>
-    <circle cx="315" cy="200" r="1.5" fill="#c084fc">
-      <animate attributeName="opacity" values="0;1;0" dur="2.5s" repeatCount="indefinite" begin="1s"/>
-    </circle>
-    <circle cx="100" cy="260" r="1" fill="#a855f7">
-      <animate attributeName="opacity" values="0;1;0" dur="4s" repeatCount="indefinite" begin="0.5s"/>
-    </circle>
-    <circle cx="300" cy="280" r="1" fill="#a855f7">
-      <animate attributeName="opacity" values="0;1;0" dur="3.5s" repeatCount="indefinite" begin="2s"/>
-    </circle>
-    <circle cx="60" cy="130" r="1.2" fill="#d946ef">
-      <animate attributeName="opacity" values="0;1;0" dur="2.8s" repeatCount="indefinite" begin="1.5s"/>
-    </circle>
-    <circle cx="340" cy="150" r="1.2" fill="#d946ef">
-      <animate attributeName="opacity" values="0;1;0" dur="3.2s" repeatCount="indefinite" begin="0.8s"/>
-    </circle>
+  <!-- Scanning line effect -->
+  <g opacity="0.04">
+    <line x1="0" y1="0" x2="400" y2="0" stroke="#d946ef" stroke-width="1.5">
+      <animate attributeName="y1" values="0;520;0" dur="8s" repeatCount="indefinite"/>
+      <animate attributeName="y2" values="0;520;0" dur="8s" repeatCount="indefinite"/>
+    </line>
   </g>
 
-  <!-- Circuit traces - left side -->
-  <g stroke="#8b5cf6" stroke-width="1" fill="none" stroke-opacity="0.35" filter="url(#circuitGlow)">
-    <path d="M40 170 L70 170 L80 180 L105 180"/>
-    <path d="M45 200 L65 200 L75 210 L100 210"/>
-    <path d="M50 230 L60 230 L70 220 L90 220"/>
-    <path d="M35 150 L55 150 L65 160 L95 160"/>
-    <!-- Vertical traces -->
-    <path d="M52 170 L52 150 L58 150"/>
-    <path d="M65 200 L65 185 L72 185"/>
-    <!-- Neural nodes left -->
-    <circle cx="40" cy="170" r="2" fill="#c084fc" stroke="none"/>
-    <circle cx="45" cy="200" r="2" fill="#c084fc" stroke="none"/>
-    <circle cx="50" cy="230" r="2" fill="#c084fc" stroke="none"/>
-    <circle cx="35" cy="150" r="2" fill="#c084fc" stroke="none"/>
+  <!-- ===== DATA STREAMS ===== -->
+  <g opacity="0.15">
+    <line x1="30" y1="120" x2="30" y2="380" stroke="#8b5cf6" stroke-width="0.5" stroke-dasharray="4 8">
+      <animate attributeName="stroke-dashoffset" values="0;-24" dur="2s" repeatCount="indefinite"/>
+    </line>
+    <line x1="370" y1="100" x2="370" y2="360" stroke="#8b5cf6" stroke-width="0.5" stroke-dasharray="4 8">
+      <animate attributeName="stroke-dashoffset" values="0;-24" dur="2.5s" repeatCount="indefinite"/>
+    </line>
+    <line x1="20" y1="200" x2="380" y2="200" stroke="#6c3cf0" stroke-width="0.3" stroke-dasharray="2 6" opacity="0.3">
+      <animate attributeName="stroke-dashoffset" values="0;-16" dur="3s" repeatCount="indefinite"/>
+    </line>
   </g>
 
-  <!-- Circuit traces - right side -->
-  <g stroke="#8b5cf6" stroke-width="1" fill="none" stroke-opacity="0.35" filter="url(#circuitGlow)">
-    <path d="M360 170 L330 170 L320 180 L295 180"/>
-    <path d="M355 200 L335 200 L325 210 L300 210"/>
-    <path d="M350 230 L340 230 L330 220 L310 220"/>
-    <path d="M365 150 L345 150 L335 160 L305 160"/>
-    <path d="M348 170 L348 150 L342 150"/>
-    <path d="M335 200 L335 185 L328 185"/>
-    <circle cx="360" cy="170" r="2" fill="#c084fc" stroke="none"/>
-    <circle cx="355" cy="200" r="2" fill="#c084fc" stroke="none"/>
-    <circle cx="350" cy="230" r="2" fill="#c084fc" stroke="none"/>
-    <circle cx="365" cy="150" r="2" fill="#c084fc" stroke="none"/>
+  <!-- ===== HOODIE OUTER GLOW ===== -->
+  <path d="M200 28 C110 28 60 65 40 130 C25 180 30 220 45 250 L55 270 
+           C65 275 75 280 80 295 L70 350 L30 380 L30 400 
+           L370 400 L370 380 L330 350 L320 295 
+           C325 280 335 275 345 270 L355 250 
+           C370 220 375 180 360 130 C340 65 290 28 200 28 Z" 
+        fill="none" stroke="#8b5cf6" stroke-width="1" stroke-opacity="0.08" 
+        filter="url(#hoodGlow)"/>
+
+  <!-- ===== HOODIE SILHOUETTE ===== -->
+  <g>
+    <!-- Hoodie body (torso) -->
+    <path d="M30 380 L30 400 L370 400 L370 380 L330 350 L320 295 
+             C325 280 335 275 345 270 L355 250 L340 240 L330 255 L315 260 
+             L290 265 L270 270 L260 275 L250 280 L240 282 L200 285 L160 282 
+             L150 280 L140 275 L130 270 L110 265 L85 260 L70 255 L60 240 
+             L45 250 L55 270 C65 275 75 280 80 295 L70 350 Z" 
+          fill="url(#hoodieGrad)" stroke="url(#hoodieEdge)" stroke-width="1.5" 
+          stroke-linejoin="round" opacity="0.9"/>
+
+    <!-- Hood/cowl framing the face -->
+    <path d="M200 28 C110 28 60 65 40 130 C25 180 30 220 45 250 
+             L60 240 L70 255 L85 260 L105 265 L115 260 L130 250 L145 245 
+             L160 242 L175 240 L200 238 L225 240 L240 242 L255 245 
+             L270 250 L285 260 L295 265 L315 260 L330 255 L340 240 
+             L355 250 C370 220 375 180 360 130 C340 65 290 28 200 28 Z" 
+          fill="none" stroke="url(#hoodieEdge)" stroke-width="2" 
+          stroke-linejoin="round" opacity="0.6"/>
+
+    <!-- Hood fill (translucent) -->
+    <path d="M200 30 C120 30 70 65 50 125 C38 165 38 200 48 240 
+             L60 238 L65 248 L78 255 L95 258 L110 253 L125 245 L140 240 
+             L160 236 L180 233 L200 231 L220 233 L240 236 L260 240 
+             L275 245 L290 253 L305 258 L322 255 L335 248 L340 238 
+             L352 240 C362 200 362 165 350 125 C330 65 280 30 200 30 Z" 
+          fill="#1a1040" fill-opacity="0.5" stroke="none"/>
+
+    <!-- Hood fold lines -->
+    <g stroke="#8b5cf6" stroke-width="0.5" stroke-opacity="0.08" fill="none">
+      <path d="M200 40 Q180 55 170 80"/>
+      <path d="M200 40 Q220 55 230 80"/>
+      <path d="M160 60 Q140 80 135 110"/>
+      <path d="M240 60 Q260 80 265 110"/>
+    </g>
   </g>
 
-  <!-- Quantum-inspired curved lines behind hood -->
-  <g stroke="#6c3cf0" stroke-width="0.6" fill="none" stroke-opacity="0.15">
-    <path d="M100 280 Q150 250 200 270 Q250 250 300 280"/>
-    <path d="M110 300 Q155 270 200 290 Q245 270 290 300"/>
-    <path d="M120 320 Q160 290 200 310 Q240 290 280 320"/>
-  </g>
+  <!-- ===== INNER FACE VOID ===== -->
+  <path d="M130 150 C120 170 115 200 125 225 
+           C135 250 155 265 175 268 L200 272 L225 268 
+           C245 265 265 250 275 225 C285 200 280 170 270 150 
+           C255 138 230 132 200 130 C170 132 145 138 130 150 Z" 
+        fill="#040412" stroke="#6c3cf0" stroke-width="0.6" stroke-opacity="0.25"/>
 
-  <!-- ===== HOOD SILHOUETTE ===== -->
-  <!-- Outer hood glow -->
-  <path d="M200 18 C120 25 70 50 45 95 L25 150 C15 190 30 240 55 260 
-           L105 220 L130 210 L155 215 L170 225 
-           L200 365 L230 225 L245 215 L270 210 L295 220 
-           L345 260 C370 240 385 190 375 150 L355 95 
-           C330 50 280 25 200 18 Z" 
-        fill="none" stroke="#8b5cf6" stroke-width="0.5" stroke-opacity="0.15"
-        filter="url(#shieldGlow)"/>
-
-  <!-- Main hood shape -->
-  <path d="M200 18 C120 25 70 50 45 95 L25 150 C15 190 30 240 55 260 
-           L105 220 L130 210 L155 215 L170 225 
-           L200 365 L230 225 L245 215 L270 210 L295 220 
-           L345 260 C370 240 385 190 375 150 L355 95 
-           C330 50 280 25 200 18 Z" 
-        fill="url(#hoodGrad)" stroke="url(#hoodEdge)" stroke-width="2" 
-        stroke-linejoin="round"/>
-
-  <!-- Inner face void (dark emptiness) -->
-  <path d="M115 190 C115 190 130 205 155 210 
-           L170 228 L200 310 L230 228 L245 210 
-           C270 205 285 190 285 190 
-           C275 175 260 165 240 165 
-           L225 170 L215 178 L200 182 L185 178 L175 170 L160 165 
-           C140 165 125 175 115 190 Z" 
-        fill="url(#voidGrad)" stroke="#6c3cf0" stroke-width="0.8" stroke-opacity="0.3"/>
-
-  <!-- Neural network pattern inside face -->
-  <g stroke="#8b5cf6" stroke-width="0.5" stroke-opacity="0.12" fill="none">
-    <line x1="160" y1="185" x2="200" y2="195"/>
-    <line x1="240" y1="185" x2="200" y2="195"/>
-    <line x1="160" y1="185" x2="185" y2="175"/>
-    <line x1="240" y1="185" x2="215" y2="175"/>
-    <line x1="185" y1="175" x2="200" y2="195"/>
-    <line x1="215" y1="175" x2="200" y2="195"/>
-    <line x1="160" y1="185" x2="200" y2="220"/>
-    <line x1="240" y1="185" x2="200" y2="220"/>
-    <circle cx="160" cy="185" r="1.5" fill="#8b5cf6" stroke="none"/>
-    <circle cx="240" cy="185" r="1.5" fill="#8b5cf6" stroke="none"/>
-    <circle cx="200" cy="195" r="1.5" fill="#8b5cf6" stroke="none"/>
-    <circle cx="200" cy="220" r="1.5" fill="#8b5cf6" stroke="none"/>
-    <circle cx="185" cy="175" r="1.5" fill="#8b5cf6" stroke="none"/>
-    <circle cx="215" cy="175" r="1.5" fill="#8b5cf6" stroke="none"/>
-  </g>
-
-  <!-- Internal circuit traces from eyes -->
-  <g stroke="#a855f7" stroke-width="0.7" fill="none" stroke-opacity="0.25" filter="url(#circuitGlow)">
-    <!-- From left eye downward -->
-    <path d="M155 200 L150 220 L140 225 L135 240"/>
-    <path d="M155 200 L155 215 L160 220 L160 235"/>
-    <!-- From right eye downward -->
-    <path d="M245 200 L250 220 L260 225 L265 240"/>
-    <path d="M245 200 L245 215 L240 220 L240 235"/>
-    <!-- Cross connections -->
-    <path d="M160 235 L200 245 L240 235" stroke-opacity="0.15"/>
+  <!-- Trace lines on face -->
+  <g stroke="#6c3cf0" stroke-width="0.4" stroke-opacity="0.1" fill="none">
+    <line x1="140" y1="155" x2="155" y2="170"/>
+    <line x1="260" y1="155" x2="245" y2="170"/>
+    <line x1="155" y1="175" x2="200" y2="185"/>
+    <line x1="245" y1="175" x2="200" y2="185"/>
+    <circle cx="200" cy="185" r="1.5" fill="#6c3cf0" stroke="none"/>
   </g>
 
   <!-- ===== GLOWING EYES ===== -->
 
-  <!-- Left eye glow aura -->
-  <ellipse cx="155" cy="192" rx="20" ry="5" fill="#d946ef" opacity="0.15" filter="url(#eyeGlowStrong)"/>
-  
   <!-- Left eye -->
   <g filter="url(#eyeGlow)">
-    <path d="M138 190 L148 185 L162 188 L168 192 L162 196 L148 198 Z" 
-          fill="url(#eyeGradLeft)" stroke="#e879f9" stroke-width="0.5"/>
-    <!-- Left eye core highlight -->
-    <path d="M145 188 L158 190 L163 192 L158 194 L145 193 Z" 
-          fill="#f0e6ff" opacity="0.6"/>
-    <!-- Left eye outer glow line -->
-    <path d="M135 190 L145 186 L160 188 L168 192" 
-          fill="none" stroke="#d946ef" stroke-width="1.5" stroke-opacity="0.5"/>
+    <ellipse cx="155" cy="180" rx="15" ry="4" fill="#d946ef" opacity="0.1" filter="url(#eyeGlowStrong)"/>
+    <path d="M138 180 L145 176 L158 176 L165 180 L158 184 L145 184 Z" 
+          fill="url(#eyeGradL)" stroke="#e879f9" stroke-width="0.4"/>
+    <path d="M143 179 L157 179 L160 180 L157 181 L143 181 Z" 
+          fill="#f0e6ff" opacity="0.5"/>
   </g>
-
-  <!-- Right eye glow aura -->
-  <ellipse cx="245" cy="192" rx="20" ry="5" fill="#d946ef" opacity="0.15" filter="url(#eyeGlowStrong)"/>
 
   <!-- Right eye -->
   <g filter="url(#eyeGlow)">
-    <path d="M232 192 L238 188 L252 185 L262 190 L252 196 L238 198 Z" 
-          fill="url(#eyeGradRight)" stroke="#e879f9" stroke-width="0.5"/>
-    <!-- Right eye core highlight -->
-    <path d="M237 190 L252 188 L255 192 L252 194 L237 193 Z" 
-          fill="#f0e6ff" opacity="0.6"/>
-    <!-- Right eye outer glow line -->
-    <path d="M232 192 L240 188 L255 186 L265 190" 
-          fill="none" stroke="#d946ef" stroke-width="1.5" stroke-opacity="0.5"/>
+    <ellipse cx="245" cy="180" rx="15" ry="4" fill="#d946ef" opacity="0.1" filter="url(#eyeGlowStrong)"/>
+    <path d="M235 180 L242 176 L255 176 L262 180 L255 184 L242 184 Z" 
+          fill="url(#eyeGradR)" stroke="#e879f9" stroke-width="0.4"/>
+    <path d="M240 179 L255 179 L257 180 L255 181 L240 181 Z" 
+          fill="#f0e6ff" opacity="0.5"/>
   </g>
 
-  <!-- Central forehead cyber diamond -->
-  <g opacity="0.4" filter="url(#hexGlow)">
-    <path d="M200 138 L208 148 L204 155 L196 155 L192 148 Z" 
-          fill="none" stroke="#8b5cf6" stroke-width="1.2"/>
-    <path d="M200 142 L205 148 L202 153 L198 153 L195 148 Z" 
-          fill="#6c3cf0" opacity="0.3"/>
-    <circle cx="200" cy="148" r="1.5" fill="#c084fc"/>
+  <!-- Eye-to-eye neural bridge -->
+  <g stroke="#a855f7" stroke-width="0.4" stroke-opacity="0.12" fill="none">
+    <path d="M165 182 Q180 175 200 178 Q220 175 235 182"/>
+    <path d="M165 178 Q180 185 200 182 Q220 185 235 178"/>
+    <circle cx="200" cy="178" r="1" fill="#c084fc" stroke="none"/>
+    <circle cx="200" cy="182" r="0.8" fill="#c084fc" stroke="none"/>
   </g>
 
-  <!-- Shoulder cyber accents -->
-  <g stroke="#8b5cf6" stroke-width="0.8" fill="none" stroke-opacity="0.3">
-    <!-- Left shoulder -->
-    <line x1="45" y1="150" x2="70" y2="150"/>
-    <line x1="50" y1="140" x2="65" y2="140"/>
-    <line x1="55" y1="130" x2="60" y2="130"/>
-    <!-- Right shoulder -->
-    <line x1="355" y1="150" x2="330" y2="150"/>
-    <line x1="350" y1="140" x2="335" y2="140"/>
-    <line x1="345" y1="130" x2="340" y2="130"/>
+  <!-- ===== HOODIE CYBER DETAILS ===== -->
+
+  <!-- Zipper line -->
+  <line x1="200" y1="260" x2="200" y2="395" stroke="url(#zipGrad)" stroke-width="1.2"/>
+
+  <!-- Chest pocket / terminal screen -->
+  <rect x="165" y="300" width="70" height="28" rx="3" ry="3" 
+        fill="#060620" fill-opacity="0.5" stroke="#6c3cf0" stroke-width="0.5" stroke-opacity="0.2"/>
+  <text x="170" y="318" fill="#d946ef" font-family="'Courier New', monospace" font-size="8" 
+        letter-spacing="2" opacity="0.4">~ $ whoami</text>
+
+  <!-- Hoodie pocket stripe -->
+  <path d="M120 350 Q200 340 280 350" fill="none" stroke="#6c3cf0" stroke-width="0.4" stroke-opacity="0.12"/>
+
+  <!-- Circuit traces running down hoodie body -->
+  <g stroke="#8b5cf6" stroke-width="0.6" fill="none" stroke-opacity="0.2" filter="url(#circuitGlow)">
+    <path d="M80 295 L80 310 L85 320 L85 340"/>
+    <path d="M75 315 L90 315"/>
+    <path d="M320 295 L320 310 L315 320 L315 340"/>
+    <path d="M325 315 L310 315"/>
+    <circle cx="80" cy="295" r="1.5" fill="#c084fc" stroke="none"/>
+    <circle cx="320" cy="295" r="1.5" fill="#c084fc" stroke="none"/>
   </g>
 
-  <!-- Hood tip cyber node at pointed bottom -->
-  <g opacity="0.4">
-    <circle cx="200" cy="365" r="3" fill="#c084fc" filter="url(#eyeGlow)"/>
-    <circle cx="200" cy="365" r="1.5" fill="#f0e6ff"/>
-    <line x1="200" y1="370" x2="200" y2="385" stroke="#8b5cf6" stroke-width="0.5" opacity="0.3"/>
+  <!-- Side hoodie drawstrings -->
+  <g stroke="#8b5cf6" stroke-width="0.4" stroke-opacity="0.12">
+    <path d="M145 245 Q140 255 142 270" fill="none"/>
+    <path d="M255 245 Q260 255 258 270" fill="none"/>
+    <circle cx="142" cy="270" r="1" fill="#a855f7" stroke="none"/>
+    <circle cx="258" cy="270" r="1" fill="#a855f7" stroke="none"/>
   </g>
 
-  <!-- Hood side glowing vents -->
-  <g stroke="#a855f7" stroke-width="0.5" opacity="0.2">
-    <line x1="60" y1="120" x2="60" y2="180"/>
-    <line x1="340" y1="120" x2="340" y2="180"/>
-  </g>
-
-  <!-- Cyber float lines around hood -->
-  <g stroke="#6c3cf0" stroke-width="0.5" fill="none" opacity="0.2">
-    <!-- Left side float lines -->
-    <line x1="25" y1="100" x2="25" y2="140"/>
-    <line x1="20" y1="105" x2="30" y2="105"/>
-    <line x1="20" y1="135" x2="30" y2="135"/>
-    <!-- Right side float lines -->
-    <line x1="375" y1="100" x2="375" y2="140"/>
-    <line x1="370" y1="105" x2="380" y2="105"/>
-    <line x1="370" y1="135" x2="380" y2="135"/>
-  </g>
-
-  <!-- Encrypted data flow lines -->
-  <g stroke="#8b5cf6" stroke-width="0.4" opacity="0.12">
-    <path d="M80 280 L85 290 L80 300" fill="none"/>
-    <path d="M320 280 L315 290 L320 300" fill="none"/>
-    <path d="M90 310 L92 318 L90 326" fill="none"/>
-    <path d="M310 310 L308 318 L310 326" fill="none"/>
+  <!-- Neural shoulder nodes -->
+  <g opacity="0.15">
+    <circle cx="65" cy="265" r="2" fill="#a855f7"/>
+    <circle cx="335" cy="265" r="2" fill="#a855f7"/>
   </g>
 
   <!-- ===== TYPOGRAPHY ===== -->
 
-  <!-- Subtitle line -->
-  <text x="200" y="430" text-anchor="middle" 
+  <!-- Subtitle -->
+  <text x="200" y="440" text-anchor="middle" 
         fill="#6c3cf0" font-family="'Courier New', monospace" font-size="11" 
-        letter-spacing="8" opacity="0.5">CYBERSECURITY · AI</text>
+        letter-spacing="8" opacity="0.4">CYBERSECURITY · AI</text>
 
   <!-- PHANTOM wordmark -->
-  <text x="200" y="460" text-anchor="middle" 
+  <text x="200" y="470" text-anchor="middle" 
         fill="url(#textGrad)" font-family="'Arial Black', 'Helvetica Neue', Arial, sans-serif" 
         font-size="42" font-weight="900" letter-spacing="14">
     PHANTOM
   </text>
 
-  <!-- Subtle underline glow -->
-  <line x1="80" y1="475" x2="320" y2="475" 
-        stroke="url(#textGrad)" stroke-width="1" opacity="0.3"
+  <!-- Underline -->
+  <line x1="80" y1="485" x2="320" y2="485" 
+        stroke="url(#textGrad)" stroke-width="1" opacity="0.25"
         filter="url(#circuitGlow)"/>
 
-  <!-- Version / tagline -->
-  <text x="200" y="495" text-anchor="middle" 
+  <!-- Tagline -->
+  <text x="200" y="505" text-anchor="middle" 
         fill="#94a3b8" font-family="'Courier New', monospace" font-size="10" 
-        letter-spacing="6" opacity="0.35">v0.2.0 /* autonomous cyber AI */</text>
+        letter-spacing="6" opacity="0.3">v0.2.0 /* autonomous cyber AI */</text>
 
 </svg>
 
