@@ -2940,20 +2940,20 @@ if (args.length > 0 && !args[0].startsWith("--")) {
     console.log(`Phantom — Cybersecurity AI Assistant
 
 Usage:
-  node phantom.mjs                          Conversational REPL (default)
-  node phantom.mjs --recon <domain>         Full recon (7 steps + report)
-  node phantom.mjs --tool <name> <input>    Run one tool directly
-  node phantom.mjs --repl                   Force conversational REPL mode
-  node phantom.mjs --list                   List all tools
-  node phantom.mjs --gui                    Start web dashboard
-  node phantom.mjs --api                    Start REST API server (port 9090)
-  node phantom.mjs --help                   This help
+  phantom                               Conversational REPL (default)
+  phantom --recon <domain>              Full recon (7 steps + report)
+  phantom --tool <name> <input>         Run one tool directly
+  phantom --repl                        Force conversational REPL mode
+  phantom --list                        List all tools
+  phantom --gui                         Start web dashboard
+  phantom --api                         Start REST API server (port 9090)
+  phantom --help                        This help
 
 Examples:
-  node phantom.mjs --recon example.com
-  node phantom.mjs --tool port_scan scanme.org
-  node phantom.mjs --tool cve_search "apache 2.4.49"
-  node phantom.mjs --tool bruteforce "ssh|192.168.1.1|root|admin,toor,123"`);
+  phantom --recon example.com
+  phantom --tool port_scan scanme.org
+  phantom --tool cve_search "apache 2.4.49"
+  phantom --tool bruteforce "ssh|192.168.1.1|root|admin,toor,123"`);
     process.exit(0);
   }
 
