@@ -110,6 +110,7 @@ node phantom.mjs --tool cve_search "nginx"     # run one tool
 node phantom.mjs --tool port_scan scanme.org   # port scan
 node phantom.mjs --tool bruteforce "ssh|host|root|pass1,pass2"
 node phantom.mjs --list                        # list all tools
+node phantom.mjs --gui                         # start web dashboard
 node phantom.mjs --help                        # show help
 ```
 
@@ -129,11 +130,29 @@ Auto-loads from `~/.config/phantom/config.json`:
 
 ## What's Left To Do
 
-- [ ] **Web UI / dashboard** — For monitoring agent activity
+- [x] **Web UI / dashboard** — Start with `node phantom.mjs --gui` or `npm run dashboard`
 - [ ] **Local model support** — Offline LLM via Ollama
 - [ ] **Autonomous agent chaining** — Multi-agent parallel playbook runs
 - [ ] **Distributed scanning** — Phantom runs across multiple hosts
 - [ ] **Plugin system** — Load external tool packs dynamically
+
+### Web Dashboard
+Start the dashboard with zero extra dependencies:
+
+```
+node phantom.mjs --gui
+# or
+npm run dashboard
+```
+
+Opens at **http://localhost:8080**. Custom port via `PHANTOM_PORT` env.
+
+**Tabs:**
+- **🛠 Tools** — Grid of all 49 tools, search bar, click to open & run with args. Output streams inline.
+- **📋 Playbooks** — List available playbooks, click to run with variable substitution.
+- **📄 Reports** — View saved scan reports.
+
+Built with vanilla JS/HTML/CSS. No npm deps, no CDN, no build step. Works in every browser including mobile Termux.
 
 ### External Deps (optional)
 - `OPENAI_API_KEY` — enables code_gen, self_add_tool (auto-integrate), playbook_create LLM generation

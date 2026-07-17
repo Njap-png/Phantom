@@ -11,6 +11,7 @@
     "start": "node phantom.mjs",
     "run": "bash run.sh",
     "build": "tsc",
+    "dashboard": "node phantom.mjs --gui",
     "dev": "tsx src/index.ts",
     "dev:build": "node dist/index.js",
     "clean": "rm -rf dist"
