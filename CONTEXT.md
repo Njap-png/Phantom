@@ -63,7 +63,20 @@
 
 ## How to Run
 
-### One command (symlinked to PATH)
+### Quick install (zero-setup)
+```bash
+bash <(curl -s https://raw.githubusercontent.com/Njap-png/Phantom/main/run.sh)
+```
+
+### Clone the full repo
+```bash
+git clone https://github.com/Njap-png/Phantom.git
+cd Phantom
+phantom                               # if symlinked, or:
+node phantom.mjs                      # zero-dep fallback
+```
+
+### One command (after symlink)
 ```bash
 phantom                               # conversational REPL (default)
 phantom --recon example.com           # full recon + report
