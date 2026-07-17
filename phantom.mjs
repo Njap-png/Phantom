@@ -2308,7 +2308,8 @@ class MinimalUI {
   w(msg) { this.log.push(msg); if (this.log.length > 100) this.log.shift(); }
   flush() { if (this.log.length > 0) console.log(this.log[this.log.length - 1]); }
   start() {
-    console.log(`Phantom${D} space evolving terminal${R}`);
+    console.log(`  ${c("cyan")}${B}👻  PHANTOM${R}`);
+    console.log(`  ${c("dim")}non-interactive mode${R}`);
     this.am.spawnDefaults();
     if (!this.am.llm?.hasLLM) console.log(`${D}No LLM. Use @llm_config to set up a provider.${R}`);
     if (!ENV.interactive) {
@@ -2412,7 +2413,9 @@ class ConversationalUI {
 
   async start() {
     process.stdout.write(cls + home);
-    console.log(`\n${B}${c("green")}  ◈  P H A N T O M${R}  ${D}conversational AI${R}\n`);
+    console.log(`\n${c("cyan")}${B}  👻  PHANTOM${R}`);
+    console.log(`  ${c("green")}${B}━━━━━━━━━━━━━${R}`);
+    console.log(`  ${c("dim")}cybersecurity AI · 62 tools${R}`);
 
     // Spawn single agent
     if (this.am.count === 0) {
@@ -2428,30 +2431,29 @@ class ConversationalUI {
 
     if (this.llm?.hasLLM) {
       const providerName = typeof this.llm.provider === "string" ? this.llm.provider : "connected";
-      this.log(`${c("green")}✓${R} ${B}${this.agent.name}${R} ${D}— ${providerName}${R}`);
+      this.log(`${c("green")}✓${R} ${B}Phantom${R} ${c("dim")}— ${providerName}${R}`);
 
       // Show available providers
       const ready = process.env.PHANTOM_PROVIDERS_READY;
       if (ready) {
         const list = ready.split(",").filter(n => n !== providerName);
         if (list.length > 0) {
-          this.log(`  ${D}also ready: ${list.join(", ")} · /model to switch${R}`);
+          this.log(`  ${c("dim")}also ready: ${list.join(", ")} · /model to switch${R}`);
         }
       }
     } else {
-      // Check if any provider is available but the provider object thinks none are
       this.log(`${c("yellow")}⚠${R} No LLM configured.`);
 
       const ready = process.env.PHANTOM_PROVIDERS_READY;
       if (ready) {
         const list = ready.split(",");
-        this.log(`  ${D}Available: ${list.join(", ")} · /model to select one${R}`);
+        this.log(`  ${c("dim")}Available: ${list.join(", ")} · /model to select one${R}`);
       } else {
-        this.log(`  ${D}Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or run Ollama locally${R}`);
-        this.log(`  ${D}43 tools available · tools-only mode (no AI reasoning)${R}`);
+        this.log(`  ${c("dim")}Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or run Ollama locally${R}`);
+        this.log(`  ${c("dim")}tools-only mode (no AI reasoning)${R}`);
       }
     }
-    this.log(`  ${D}43 tools · type /help for commands · \\ for multi-line${R}`);
+    this.log(`  ${c("dim")}62 tools · /help · \\\\ multi-line${R}`);
     this.log("");
 
     this.prompt();
@@ -2464,7 +2466,7 @@ class ConversationalUI {
     this.cursorPos = 0;
     this.inputLines = [];
 
-    process.stdout.write(`\n${c("green")}❯${R} `);
+    process.stdout.write(`\n${c("green")}👻${R} `);
 
     raw(true);
     this.inputHandler = (buf) => this.onKey(buf);
@@ -2572,7 +2574,7 @@ class ConversationalUI {
   }
 
   redrawLine() {
-    const prompt = this.inputLines.length > 0 ? `${c("green")}│${R} ` : `${c("green")}❯${R} `;
+    const prompt = this.inputLines.length > 0 ? `${c("green")}│${R} ` : `${c("green")}👻${R} `;
     const strippedPrompt = prompt.replace(/\x1b\[[0-9;]*m/g, "");
     const display = strippedPrompt + this.inputBuf;
 
@@ -2674,13 +2676,13 @@ class ConversationalUI {
       case "help":
       case "h":
         console.log(`\n${B}${c("green")}PHANTOM COMMANDS${R}`);
-        console.log(`  ${c("green")}/help${R}               — show this help`);
-        console.log(`  ${c("green")}/tools${R}               — list 43 tools`);
-        console.log(`  ${c("green")}/model${R} [provider]    — show/switch LLM`);
-        console.log(`  ${c("green")}/clear${R}                — clear screen`);
-        console.log(`  ${c("green")}/save${R} <name>          — save session`);
-        console.log(`  ${c("green")}/load${R} <name>          — load session`);
-        console.log(`  ${c("green")}/quit${R}                 — exit\n`);
+        console.log(`  ${c("green")}👻 /help${R}      — show this help`);
+        console.log(`  ${c("green")}  /tools${R}      — list 62 tools`);
+        console.log(`  ${c("green")}  /model${R}      — show/switch LLM`);
+        console.log(`  ${c("green")}  /clear${R}      — clear screen`);
+        console.log(`  ${c("green")}  /save${R} <n>   — save session`);
+        console.log(`  ${c("green")}  /load${R} <n>   — load session`);
+        console.log(`  ${c("green")}  /quit${R}       — exit\n`);
         console.log(`${D}Type anything to chat. Use \\ for multi-line.${R}`);
         console.log(`${D}The AI auto-uses tools via @tool_name|args syntax.${R}\n`);
         this.prompt();
@@ -2723,7 +2725,7 @@ class ConversationalUI {
       case "c":
         this.logLines = [];
         process.stdout.write(cls + home);
-        console.log(`\n${B}${c("green")}  ◈  P H A N T O M${R}  ${D}cleared${R}\n`);
+        console.log(`\n${c("cyan")}${B}  👻  P H A N T O M${R}  ${c("dim")}cleared${R}\n`);
         this.prompt();
         return;
 
