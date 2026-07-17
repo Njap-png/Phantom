@@ -1383,10 +1383,35 @@ function createProvider() {
     return "";
   }
 
+  async function detectProviders() {
+    const available = {};
+    for (const [name, p] of Object.entries(PROVIDERS)) {
+      if (name === "ollama") {
+        try {
+          const r = await fetch(`${p.url}/api/tags`, { signal: AbortSignal.timeout(3000) });
+          available[name] = r.ok ? "local" : "no";
+        } catch { available[name] = "no"; }
+      } else {
+        available[name] = p.keyEnv && getKey(p) ? "key" : "no";
+      }
+    }
+    return available;
+  }
+
+  function selectBest(avail) {
+    const order = ["ollama", "openai", "anthropic", "groq", "gemini", "deepseek", "mistral", "openrouter"];
+    for (const name of order) {
+      if (avail[name] && avail[name] !== "no") return name;
+    }
+    return null;
+  }
+
   return {
     get provider() { return PHANTOM_LLM_PROVIDER; },
     set provider(name) { if (PROVIDERS[name]) setProvider(name); },
     get providers() { return Object.keys(PROVIDERS); },
+    detectProviders,
+    selectBest,
     get hasLLM() {
       const p = getProvider();
       return !!(p.keyEnv ? getKey(p) : p === PROVIDERS.ollama);
@@ -2404,9 +2429,27 @@ class ConversationalUI {
     if (this.llm?.hasLLM) {
       const providerName = typeof this.llm.provider === "string" ? this.llm.provider : "connected";
       this.log(`${c("green")}✓${R} ${B}${this.agent.name}${R} ${D}— ${providerName}${R}`);
+
+      // Show available providers
+      const ready = process.env.PHANTOM_PROVIDERS_READY;
+      if (ready) {
+        const list = ready.split(",").filter(n => n !== providerName);
+        if (list.length > 0) {
+          this.log(`  ${D}also ready: ${list.join(", ")} · /model to switch${R}`);
+        }
+      }
     } else {
-      this.log(`${c("yellow")}⚠${R} No LLM configured. Set OPENAI_API_KEY or edit ~/.config/phantom/config.json`);
-      this.log(`  ${D}43 tools available · tools-only mode (no AI reasoning)${R}`);
+      // Check if any provider is available but the provider object thinks none are
+      this.log(`${c("yellow")}⚠${R} No LLM configured.`);
+
+      const ready = process.env.PHANTOM_PROVIDERS_READY;
+      if (ready) {
+        const list = ready.split(",");
+        this.log(`  ${D}Available: ${list.join(", ")} · /model to select one${R}`);
+      } else {
+        this.log(`  ${D}Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or run Ollama locally${R}`);
+        this.log(`  ${D}43 tools available · tools-only mode (no AI reasoning)${R}`);
+      }
     }
     this.log(`  ${D}43 tools · type /help for commands · \\ for multi-line${R}`);
     this.log("");
@@ -2658,8 +2701,14 @@ class ConversationalUI {
 
       case "model":
         if (rest.length === 0) {
+          const ready = process.env.PHANTOM_PROVIDERS_READY;
+          const avail = ready ? ready.split(",") : [];
           console.log(`\n${B}Current:${R} ${this.llm?.provider || "none"}`);
-          console.log(`Providers: ${this.llm?.providers?.join(", ") || "none"}`);
+          console.log(`${D}Available providers:${R}`);
+          for (const p of this.llm?.providers || []) {
+            const status = avail.includes(p) ? `${c("green")} ✅${R}` : `${c("dim")} —${R}`;
+            console.log(`  ${p.padEnd(14)}${status}`);
+          }
           console.log(`${D}/model <provider> to switch${R}\n`);
         } else if (this.llm?.providers?.includes(rest[0])) {
           this.llm.provider = rest[0];
@@ -3026,6 +3075,24 @@ Examples:
 }
 
 const am = new AgentManager(llm);
+
+// Wait for provider detection before starting UI
+const __detection = (async () => {
+  try {
+    if (ENV.interactive) {
+      const avail = await llm.detectProviders();
+      const ready = Object.entries(avail).filter(([, v]) => v !== "no").map(([n]) => n);
+      if (ready.length > 0) {
+        if (!ready.includes(llm.provider)) {
+          const best = llm.selectBest(avail);
+          if (best) llm.provider = best;
+        }
+        process.env.PHANTOM_PROVIDERS_READY = ready.join(",");
+      }
+    }
+  } catch {}
+})();
+if (ENV.interactive) await __detection;
 
 const ui = selectUI(am);
 ui.start();
