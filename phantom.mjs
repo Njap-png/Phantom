@@ -1515,6 +1515,142 @@ const hackerTools = {
       return report;
     } catch (e) { return `[self_improve Error] ${e.message}`; }
   },
+
+  install: async (tool) => {
+    const name = tool.trim().toLowerCase();
+    if (!name) return "[install] Usage: @install|tool_name. Tools: nmap, sqlmap, metasploit, searchsploit, ffuf, hydra, john, gobuster, nikto, wireshark";
+    const pmap = {
+      nmap:"nmap", sqlmap:"sqlmap", metasploit:"metasploit-framework", searchsploit:"exploitdb",
+      ffuf:"ffuf", hydra:"hydra", john:"john", gobuster:"gobuster", nikto:"nikto",
+      wireshark:"tshark", dnsutils:"dnsutils", netcat:"netcat-openbsd", curl:"curl",
+      wget:"wget", git:"git", python3:"python3", nodejs:"nodejs", ruby:"ruby",
+      perl:"perl", masscan:"masscan", dirb:"dirb", whatweb:"whatweb", wafw00f:"wafw00f"
+    };
+    const pkg = pmap[name] || name;
+    try {
+      const { execSync } = await import("child_process");
+      // Detect package manager
+      let pm = "apt"; let install = "apt install -y"; let update = "apt update -y";
+      try { execSync("command -v pkg", { stdio:"pipe" }); pm="pkg"; install="pkg install -y"; update="pkg update -y"; } catch {}
+      try { if (pm==="apt") execSync("command -v apt", { stdio:"pipe" }); } catch { try { execSync("command -v brew", { stdio:"pipe" }); pm="brew"; install="brew install"; update=""; } catch {} }
+      // Install
+      let out = `[install] Installing ${name} via ${pm}...\n`;
+      if (update) execSync(update, { stdio:"pipe", timeout:60000 });
+      execSync(`${install} ${pkg}`, { stdio:"pipe", timeout:120000 });
+      out += `✅ ${name} installed.`;
+      // Verify
+      try { execSync(`command -v ${name}`, { stdio:"pipe", timeout:3000 }); out += ` Verified.`; } catch { out += ` Check with '${name}'.`; }
+      return out;
+    } catch (e) { return `[install] Failed: ${e.message}`; }
+  },
+
+  update: async (input) => {
+    const force = input?.trim().toLowerCase() === "force";
+    try {
+      const { execSync } = await import("child_process");
+      // Check git
+      try { execSync("git rev-parse --git-dir", { stdio:"pipe", timeout:3000 }); } catch { return "[update] Not a git repository."; }
+      // Check remote
+      const remote = execSync("git remote -v", { encoding:"utf-8", timeout:3000 }).trim();
+      if (!remote) return "[update] No remote configured.";
+      // Fetch
+      execSync("git fetch", { stdio:"pipe", timeout:30000 });
+      const behind = parseInt(execSync("git rev-list --count HEAD..@{u}", { encoding:"utf-8", timeout:5000 }).trim() || "0");
+      if (behind === 0) return "[update] Already up to date.";
+      // Show diff
+      const log = execSync(`git log --oneline -${Math.min(behind,5)} HEAD..@{u}`, { encoding:"utf-8", timeout:5000 }).trim();
+      if (!force) return `[update] ${behind} commit(s) behind:\n${log}\n\nRun @update|force to pull.`;
+      // Pull
+      execSync("git pull --ff-only", { stdio:"pipe", timeout:30000 });
+      // Re-check syntax
+      try { execSync("node --check phantom.mjs", { stdio:"pipe", timeout:5000 }); } catch { return `[update] Pulled but SYNTAX ERROR in new code. Roll back with: git reset --hard HEAD@{1}`; }
+      return `✅ Updated! ${behind} commit(s) pulled.\n${log}\nSyntax verified.`;
+    } catch (e) { return `[update Error] ${e.message}`; }
+  },
+
+  batch: async (input) => {
+    const [fileArg, ...rest] = input.trim().split("|");
+    if (!fileArg || !rest.length) return "[batch] Usage: @batch|targets.txt|tool_name\nReads targets from file, runs tool on each.";
+    const toolName = rest.join("|").trim();
+    try {
+      const fp = resolve(process.cwd(), fileArg.trim());
+      const targets = fs.readFileSync(fp, "utf-8").split("\n").map(s => s.trim()).filter(s => s && !s.startsWith("#"));
+      if (!targets.length) return `[batch] No targets found in ${fileArg}`;
+      if (!hackerTools[toolName]) return `[batch] Unknown tool: "${toolName}". Available: ${Object.keys(hackerTools).slice(0,10).join(", ")}...`;
+      const results = [];
+      for (const target of targets.slice(0,20)) {
+        try {
+          const out = await hackerTools[toolName](target);
+          results.push({ target, status: "ok", output: out });
+        } catch (e) { results.push({ target, status: "error", error: e.message }); }
+      }
+      const passed = results.filter(r => r.status === "ok").length;
+      const failed = results.filter(r => r.status === "error").length;
+      let report = `# Batch Report\nTool: ${toolName}\nTargets: ${targets.length} (ran ${results.length})\nPassed: ${passed} | Failed: ${failed}\n\n`;
+      for (const r of results) {
+        report += `## ${r.target} [${r.status}]\n`;
+        report += r.status === "ok" ? r.output.slice(0,500) + "\n\n" : `Error: ${r.error}\n\n`;
+      }
+      const ts = Date.now();
+      const rDir = resolve(REPORTS_DIR, "batch");
+      if (!fs.existsSync(rDir)) fs.mkdirSync(rDir, { recursive: true });
+      fs.writeFileSync(resolve(rDir, `batch_${ts}.md`), report, "utf-8");
+      return report.slice(0,4000) + (report.length > 4000 ? `\n... Full report saved to ${rDir}/batch_${ts}.md` : "");
+    } catch (e) { return `[batch Error] ${e.message}`; }
+  },
+
+  schedule: async (input) => {
+    const parts = input.trim().split("|");
+    if (parts.length < 3) return "[schedule] Usage: @schedule|interval|tool|target\nInterval: daily, hourly, 30m, 10m, or cron '0 9 * * *'\nExample: @schedule|daily|recon|example.com";
+    const [interval, tool, ...targetParts] = parts;
+    const target = targetParts.join("|");
+    try {
+      let ms = 0;
+      if (interval === "daily") ms = 86400000;
+      else if (interval === "hourly") ms = 3600000;
+      else if (interval.match(/^(\d+)m$/)) ms = parseInt(interval) * 60000;
+      else if (interval.match(/^(\d+)h$/)) ms = parseInt(interval) * 3600000;
+      else return `[schedule] Unknown interval: "${interval}". Use: daily, hourly, 30m, 10m, 1h`;
+      if (!hackerTools[tool]) return `[schedule] Unknown tool: "${tool}"`;
+      const sid = setInterval(async () => {
+        try { await hackerTools[tool](target); } catch {}
+      }, ms);
+      // Store for management
+      if (!globalThis.__phantomSchedules) globalThis.__phantomSchedules = [];
+      const id = globalThis.__phantomSchedules.length;
+      globalThis.__phantomSchedules.push({ id, interval, tool, target, sid });
+      const next = new Date(Date.now() + ms);
+      return `⏰ Scheduled: ${tool} on ${target} every ${interval}\nNext run: ${next.toLocaleString()}\nID: ${id} (use @agent_memory to manage)`;
+    } catch (e) { return `[schedule Error] ${e.message}`; }
+  },
+
+  agent_memory: async (input) => {
+    const agents = ["Lyra", "Nova", "Orion", "Vega", "Atlas", "Helios", "Selene", "Aether"];
+    const arg = input?.trim().toLowerCase() || "list";
+    const dir = resolve(MEMORY_DIR, "agents");
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    if (arg === "list") {
+      const files = fs.readdirSync(dir);
+      if (!files.length) return "📝 Agent memories: (none yet)\nAgents: " + agents.join(", ") + "\n\nUse @agent_memory|<agent_name> to view.";
+      const list = files.map(f => `  ${f.replace(".json","")}: ${JSON.parse(fs.readFileSync(resolve(dir,f),"utf-8")).length || 0} entries`).join("\n");
+      return `📝 Agent Memories\n${list}\n\nUse @agent_memory|<name> to view, @agent_memory|<name> clear to reset.`;
+    }
+    const [name, action] = arg.split(/\s+/);
+    const agent = agents.find(a => a.toLowerCase() === name);
+    if (action === "clear") {
+      if (!agent) return `[agent_memory] Unknown agent: ${name}. Agents: ${agents.join(", ")}`;
+      fs.writeFileSync(resolve(dir, `${agent.toLowerCase()}.json`), "[]", "utf-8");
+      return `🗑️ Cleared memory for ${agent}`;
+    }
+    if (agent) {
+      const memPath = resolve(dir, `${agent.toLowerCase()}.json`);
+      let mem = [];
+      try { mem = JSON.parse(fs.readFileSync(memPath, "utf-8") || "[]"); } catch { mem = []; }
+      if (!mem.length) return `📝 ${agent}: No memories yet.`;
+      return `📝 ${agent} Memory (${mem.length} entries)\n${mem.slice(-5).map(m => `  [${new Date(m.ts).toLocaleTimeString()}] ${m.text?.slice(0,100)}`).join("\n")}`;
+    }
+    return `[agent_memory] Unknown: "${name}". Agents: ${agents.join(", ")}`;
+  },
 };
 
 // ── EventBus ──────────────────────────────────────────────
@@ -1748,6 +1884,11 @@ class Agent {
       hackbook: "Vulnerability learning database — search by type (sql-injection, xss, csrf, ssrf, rce, lfi, idor, etc.). Shows description, impact, testing, mitigation, tools. Format: search term. Use 'list' for all categories.",
       code_analyze: "Deep source code security analysis. Scans files for OWASP Top 10, hardcoded secrets, insecure patterns. Generates report + optional LLM analysis. Format: file or directory path.",
       self_improve: "Analyze Phantom's own source and suggest improvements. Scans phantom.mjs for code quality, performance, security, feature gaps. Format: optional focus (performance|security|features|all).",
+      install: "Auto-detect package manager and install security tools. Format: tool_name (nmap, sqlmap, metasploit, searchsploit, ffuf, hydra, john, gobuster, nikto, wireshark, burpsuite, etc.). Detects apt/pkg/brew/pip.",
+      update: "Self-update Phantom via git pull. Checks for updates, pulls latest code, re-verifies syntax, reports diff. Format: optional 'force' to skip confirmation.",
+      batch: "Multi-target batch processing. Format: file_path|tool_name. Reads targets from a file (one per line) and runs the specified tool against each. Aggregates results into one report.",
+      schedule: "Schedule recurring scans. Format: interval|tool|target. Interval: 'daily', 'hourly', '30m', or cron expression. Example: @schedule|daily|recon|example.com",
+      agent_memory: "View or manage agent conversation memory. Format: list | <agent_name> | <agent_name> clear. Agents: Lyra, Nova, Orion, Vega, Atlas, Helios, Selene, Aether.",
     };
     for (const [name, desc] of Object.entries(toolList)) {
       if (name === "delegate") {
