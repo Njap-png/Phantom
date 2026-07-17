@@ -2308,7 +2308,16 @@ class MinimalUI {
   w(msg) { this.log.push(msg); if (this.log.length > 100) this.log.shift(); }
   flush() { if (this.log.length > 0) console.log(this.log[this.log.length - 1]); }
   start() {
-    console.log(`  ${c("cyan")}${B}👻  PHANTOM${R}`);
+    console.log(`\n${c("cyan")}   ╔═══════════╗${R}`);
+    console.log(`${c("cyan")}  ╔╝           ╚╗${R}`);
+    console.log(`${c("cyan")} ╔╝   ╔═════╗   ╚╗${R}`);
+    console.log(`${c("cyan")} ║    ║ ${c("green")}◉ ◉${c("cyan")} ║    ║${R}`);
+    console.log(`${c("cyan")} ║    ║${c("dim")}     ${c("cyan")}║    ║${R}`);
+    console.log(`${c("cyan")} ║    ╚═════╝    ║${R}`);
+    console.log(`${c("cyan")} ╚╗             ╔╝${R}`);
+    console.log(`${c("cyan")}  ╚╗           ╔╝${R}`);
+    console.log(`${c("cyan")}   ╚═══════════╝${R}`);
+    console.log(`  ${c("green")}${B}P H A N T O M${R}`);
     console.log(`  ${c("dim")}non-interactive mode${R}`);
     this.am.spawnDefaults();
     if (!this.am.llm?.hasLLM) console.log(`${D}No LLM. Use @llm_config to set up a provider.${R}`);
@@ -2413,8 +2422,16 @@ class ConversationalUI {
 
   async start() {
     process.stdout.write(cls + home);
-    console.log(`\n${c("cyan")}${B}  👻  PHANTOM${R}`);
-    console.log(`  ${c("green")}${B}━━━━━━━━━━━━━${R}`);
+    console.log(`\n${c("cyan")}   ╔═══════════╗${R}`);
+    console.log(`${c("cyan")}  ╔╝           ╚╗${R}`);
+    console.log(`${c("cyan")} ╔╝   ╔═════╗   ╚╗${R}`);
+    console.log(`${c("cyan")} ║    ║ ${c("green")}◉ ◉${c("cyan")} ║    ║${R}`);
+    console.log(`${c("cyan")} ║    ║${c("dim")}     ${c("cyan")}║    ║${R}`);
+    console.log(`${c("cyan")} ║    ╚═════╝    ║${R}`);
+    console.log(`${c("cyan")} ╚╗             ╔╝${R}`);
+    console.log(`${c("cyan")}  ╚╗           ╔╝${R}`);
+    console.log(`${c("cyan")}   ╚═══════════╝${R}`);
+    console.log(`  ${c("green")}${B}P H A N T O M${R}`);
     console.log(`  ${c("dim")}cybersecurity AI · 62 tools${R}`);
 
     // Spawn single agent
@@ -2725,7 +2742,16 @@ class ConversationalUI {
       case "c":
         this.logLines = [];
         process.stdout.write(cls + home);
-        console.log(`\n${c("cyan")}${B}  👻  P H A N T O M${R}  ${c("dim")}cleared${R}\n`);
+        console.log(`\n${c("cyan")}   ╔═══════════╗${R}`);
+        console.log(`${c("cyan")}  ╔╝           ╚╗${R}`);
+        console.log(`${c("cyan")} ╔╝   ╔═════╗   ╚╗${R}`);
+        console.log(`${c("cyan")} ║    ║ ${c("green")}◉ ◉${c("cyan")} ║    ║${R}`);
+        console.log(`${c("cyan")} ║    ║${c("dim")}     ${c("cyan")}║    ║${R}`);
+        console.log(`${c("cyan")} ║    ╚═════╝    ║${R}`);
+        console.log(`${c("cyan")} ╚╗             ╔╝${R}`);
+        console.log(`${c("cyan")}  ╚╗           ╔╝${R}`);
+        console.log(`${c("cyan")}   ╚═══════════╝${R}`);
+        console.log(`  ${c("green")}${B}P H A N T O M${R}  ${c("dim")}cleared${R}\n`);
         this.prompt();
         return;
 
