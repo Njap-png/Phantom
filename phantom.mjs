@@ -4,9 +4,11 @@
 
 import fs from "fs";
 import http from "http";
-import { homedir } from "os";
+import { homedir, release } from "os";
 import { resolve, join } from "path";
 import { pathToFileURL } from "url";
+import { createRequire } from "module";
+const $r = createRequire(import.meta.url);
 
 const BASE_DIR = resolve(homedir(), ".config", "phantom");
 const MEMORY_DIR = resolve(BASE_DIR, "memory");
@@ -22,6 +24,15 @@ try {
   if (fs.existsSync(configPath)) _config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
 } catch {}
 if (_config.VT_API_KEY && !process.env.VT_API_KEY) process.env.VT_API_KEY = _config.VT_API_KEY;
+// Load all provider API keys from config
+const PROVIDER_KEYS = ["OPENAI_API_KEY","ANTHROPIC_API_KEY","GEMINI_API_KEY","GROQ_API_KEY","DEEPSEEK_API_KEY","MISTRAL_API_KEY","OPENROUTER_API_KEY","SHODAN_API_KEY","HIBP_API_KEY"];
+for (const k of PROVIDER_KEYS) { if (_config[k] && !process.env[k]) process.env[k] = _config[k]; }
+// Selected provider: env > config > "openai"
+let PHANTOM_LLM_PROVIDER = process.env.PHANTOM_LLM_PROVIDER || _config.default_provider || "openai";
+function setProvider(name) { PHANTOM_LLM_PROVIDER = name; process.env.PHANTOM_LLM_PROVIDER = name; _config.default_provider = name; try { fs.writeFileSync(resolve(BASE_DIR, "config.json"), JSON.stringify(_config, null, 2)); } catch {} }
+
+// LLM instance — set after createProvider()
+let llmInstance = null;
 
 function ensureDirs() {
   if (!fs.existsSync(MEMORY_DIR)) fs.mkdirSync(MEMORY_DIR, { recursive: true });
@@ -695,7 +706,8 @@ const hackerTools = {
       const pkg = fs.existsSync(resolve(phantomDir, "package.json"))
         ? JSON.parse(fs.readFileSync(resolve(phantomDir, "package.json"), "utf-8")) : {};
       const names = Object.keys(hackerTools).sort();
-      const needsLLM = !process.env.OPENAI_API_KEY && !process.env.OLLAMA_HOST;
+      const llmAvail = llmInstance?.hasLLM;
+      const llmName = llmInstance?.provider || PHANTOM_LLM_PROVIDER || "openai";
       return [
         `╔══════════════════════════════════════╗`,
         `║  PHANTOM — Cybersecurity Assistant   ║`,
@@ -703,13 +715,13 @@ const hackerTools = {
         ``,
         `Version:  ${pkg.version || "dev"}`,
         `Runtime:  Node.js ${process.version}`,
-        `Platform: ${process.platform} ${process.arch}`,
+        `Platform: ${process.platform} ${process.arch}${ENV.isProot ? " 🔒 PRoot" : ""}${ENV.isTermux ? " 📱 Termux" : ""}`,
         `Project:  ${phantomDir}`,
         ``,
         `📦 ${names.length} Tools:`,
         `  ${names.join(", ")}`,
         ``,
-        `🤖 ${needsLLM ? "LLM: Not connected (demo mode)" : process.env.OPENAI_API_KEY ? "LLM: OpenAI" : "LLM: Ollama"}`,
+        `🤖 ${llmAvail ? `LLM: ${llmName}` : "LLM: Not connected (set API key with @llm_config)"}`,
       ].join("\n");
     } catch (e) { return `[Self Info Error] ${e.message}`; }
   },
@@ -1207,9 +1219,9 @@ const hackerTools = {
   },
   plugin_load: async (input) => {
     try {
-      const {existsSync,mkdirSync,readdirSync,resolve} = await import("fs/promises").catch(() => require("fs"));
+      const {existsSync,mkdirSync,readdirSync,resolve} = await import("fs/promises").catch(() => $r("fs"));
       const pf = await import("path");
-      const pluginDir = (input||"").trim() || require("os").homedir() + "/.config/phantom/plugins";
+      const pluginDir = (input||"").trim() || $r("os").homedir() + "/.config/phantom/plugins";
       if (!existsSync(pluginDir)) mkdirSync(pluginDir, {recursive: true});
       const files = readdirSync(pluginDir).filter(f => f.endsWith(".mjs") || f.endsWith(".js"));
       if (!files.length) return `[Plugin] No plugins in ${pluginDir}`;
@@ -1224,15 +1236,15 @@ const hackerTools = {
     try {
       const [name,...rest] = input.split("|"); const n = (name||"").trim().toLowerCase().replace(/[^a-z0-9_]/g,"_"); const desc = (rest[0]||"Custom plugin").trim();
       if (!n) return `[Plugin] Format: tool_name|description`;
-      const d = require("os").homedir() + "/.config/phantom/plugins"; require("fs").mkdirSync(d, {recursive:true});
+      const d = $r("os").homedir() + "/.config/phantom/plugins"; $r("fs").mkdirSync(d, {recursive:true});
       const fp = d + "/" + n + ".mjs";
-      require("fs").writeFileSync(fp, `// Phantom Plugin: ${n}\n// ${desc}\nexport const name = "${n}";\nexport const description = "${desc}";\nexport async function execute(input) {\n  try { return \`[${n}] Processed: \${input}\`; } catch (e) { return \`[\${name} Error] \${e.message}\`; }\n}\n`);
+      $r("fs").writeFileSync(fp, `// Phantom Plugin: ${n}\n// ${desc}\nexport const name = "${n}";\nexport const description = "${desc}";\nexport async function execute(input) {\n  try { return \`[${n}] Processed: \${input}\`; } catch (e) { return \`[\${name} Error] \${e.message}\`; }\n}\n`);
       return `🔌 Plugin created: @${n}\n  ${fp}`;
     } catch (e) { return `[Plugin Error] ${e.message}`; }
   },
   report_export: async (input) => {
     try {
-      const {existsSync,readdirSync,readFileSync,writeFileSync} = require("fs"); const {resolve} = require("path"); const {homedir} = require("os");
+      const {existsSync,readdirSync,readFileSync,writeFileSync} = $r("fs"); const {resolve} = $r("path"); const {homedir} = $r("os");
       const rd = resolve(homedir(), ".config", "phantom", "reports");
       const name = input.trim();
       if (!name && existsSync(rd)) { const all = readdirSync(rd).filter(f => f.endsWith(".md")); if (!all.length) return `[ReportExport] No reports in ${rd}`; return `[ReportExport] Usage: @report_export|report_name\nAvailable: ${all.join(", ")}`; }
@@ -1245,6 +1257,70 @@ const hackerTools = {
       writeFileSync(fp.replace(/\.\w+$/, ".html"), html, "utf-8");
       return `📄 Exported: ${fp.replace(/\.\w+$/, ".html")}\n  Browser → Ctrl+P → PDF.`;
     } catch (e) { return `[ReportExport Error] ${e.message}`; }
+  },
+  distro: async (input) => {
+    try {
+      const cmd = (input||"").trim().toLowerCase();
+      const isProotEnv = ENV.isProot;
+      const distroId = ($r("fs").readFileSync("/etc/os-release","utf-8").match(/^ID=(.+)$/m) || [,"unknown"])[1];
+      const prettyName = ($r("fs").readFileSync("/etc/os-release","utf-8").match(/^PRETTY_NAME="(.+)"$/m) || [,"Unknown"])[1];
+      if (!cmd || cmd === "info") {
+        return `📦 Current Distro\n  ID: ${distroId}\n  Name: ${prettyName}\n  Kernel: ${$r("os").release()}\n  Arch: ${process.arch}\n  ${isProotEnv ? "🔒 PRoot: yes (nested proot-distro not available)" : "🔓 PRoot: no (proot-distro available)"}\n  Host: Termux (Termux)\n\nCommands:\n  @distro|info       — show this\n  @distro|list       — list proot-distro environments (outside PRoot only)\n  @distro|run <name> <cmd> — run command in another distro (outside PRoot)`;
+      }
+      if (cmd === "list") {
+        if (isProotEnv) return `[Distro] Can't list: already inside PRoot. Run from Termux host.`;
+        const { execSync } = $r("child_process");
+        const out = execSync("proot-distro list 2>&1", { encoding: "utf-8", timeout: 10000 });
+        return `📦 Available Distros\n${out.trim()}`;
+      }
+      if (cmd.startsWith("run ")) {
+        if (isProotEnv) return `[Distro] Can't run nested PRoot. Run from Termux host.`;
+        const rest = cmd.slice(4).trim();
+        const sp = rest.indexOf(" ");
+        const dName = sp > 0 ? rest.slice(0, sp) : rest;
+        const dCmd = sp > 0 ? rest.slice(sp + 1) : "whoami";
+        const { execSync } = $r("child_process");
+        const out = execSync(`proot-distro login ${dName} -- ${dCmd} 2>&1`, { encoding: "utf-8", timeout: 30000 });
+        return `📦 [${dName}] $ ${dCmd}\n${out.trim()}`;
+      }
+      return `[Distro] Unknown: "${cmd}". Try: info, list, run <name> <cmd>`;
+    } catch (e) { return `[Distro Error] ${e.message}`; }
+  },
+  llm_config: async (input) => {
+    try {
+      const provs = ["openai","anthropic","gemini","groq","deepseek","mistral","openrouter","ollama"];
+      const envs = {openai:"OPENAI_API_KEY",anthropic:"ANTHROPIC_API_KEY",gemini:"GEMINI_API_KEY",groq:"GROQ_API_KEY",deepseek:"DEEPSEEK_API_KEY",mistral:"MISTRAL_API_KEY",openrouter:"OPENROUTER_API_KEY",ollama:""};
+      const cmd = (input||"").trim().toLowerCase();
+      if (!cmd || cmd === "list" || cmd === "ls") {
+        const cur = PHANTOM_LLM_PROVIDER || "openai";
+        const status = provs.map(p => {
+          const e = envs[p]; const hasKey = !e || !!process.env[e];
+          return `  ${p === cur ? "→" : " "} ${p.padEnd(12)} ${e ? (hasKey ? "✅ key set" : "❌ no key") : "🟢 local"}${e ? ` (${e})` : ""}`;
+        }).join("\n");
+        return `🤖 LLM Configuration\nProvider: ${cur}\n\nAvailable:\n${status}\n\nUsage:\n  @llm_config            — show this\n  @llm_config|<provider> — switch provider\n  @llm_config|set KEY value — set API key (persisted)\n  @llm_config|model name — set model override`;
+      }
+      if (cmd.startsWith("set ")) {
+        const rest = cmd.slice(4).trim(); const sp = rest.indexOf(" ");
+        const e = (sp > 0 ? rest.slice(0, sp) : rest).toUpperCase();
+        const v = sp > 0 ? rest.slice(sp + 1) : "";
+        if (!v) return `[LLM] Usage: @llm_config|set ENV_NAME value`;
+        process.env[e] = v; _config[e] = v;
+        try { fs.writeFileSync(resolve(BASE_DIR, "config.json"), JSON.stringify(_config, null, 2)); } catch {}
+        return `✅ ${e} set and saved`;
+      }
+      if (cmd.startsWith("model ")) {
+        const m = cmd.slice(6).trim(); if (!m) return `[LLM] Usage: @llm_config|model name`;
+        _config.default_model = m;
+        try { fs.writeFileSync(resolve(BASE_DIR, "config.json"), JSON.stringify(_config, null, 2)); } catch {}
+        return `✅ Default model: ${m}`;
+      }
+      if (provs.includes(cmd)) {
+        if (llmInstance) { try { llmInstance.provider = cmd; } catch {} }
+        setProvider(cmd);
+        return `✅ Switched to ${cmd}. ${cmd === "ollama" ? "Run Ollama locally." : `Set ${cmd.toUpperCase()}_API_KEY if needed.`}`;
+      }
+      return `[LLM] Unknown: "${cmd}". Options: ${provs.join(", ")}, set KEY val, model name`;
+    } catch (e) { return `[LLM Error] ${e.message}`; }
   },
 };
 
@@ -1279,66 +1355,69 @@ const genId = () => `PH-${(++idCounter).toString(36).toUpperCase().padStart(4, "
 
 // ── LLM Provider ──────────────────────────────────────────
 function createProvider() {
-  const key = process.env.OPENAI_API_KEY || "";
-  const base = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
-  const ollamaBase = process.env.OLLAMA_HOST || "http://localhost:11434";
+  const PROVIDERS = {
+    openai:      { url: "https://api.openai.com/v1",            keyEnv: "OPENAI_API_KEY",      defaultModel: "gpt-4o",         chatPath: "/chat/completions",     fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
+    anthropic:   { url: "https://api.anthropic.com/v1",         keyEnv: "ANTHROPIC_API_KEY",   defaultModel: "claude-sonnet-4-20250514", chatPath: "/messages",         fmt: o => ({ model: o.model, messages: o.messages, max_tokens: 512 }),                                 parse: d => d.content?.[0]?.text || d.content?.toString() || "...",                                                                                                      auth: k => ({ "x-api-key": k, "anthropic-version": "2023-06-01" }) },
+    gemini:      { url: "https://generativelanguage.googleapis.com/v1beta", keyEnv: "GEMINI_API_KEY", defaultModel: "gemini-2.0-flash", chatPath: "/models/{model}:generateContent", fmt: o => ({ contents: o.messages.map(m => ({ role: m.role === "assistant" ? "model" : m.role, parts: [{ text: m.content }] })) }), parse: d => d.candidates?.[0]?.content?.parts?.[0]?.text || "...",                                             auth: () => ({}), urlMod: (u, m, k) => `${u}${m}?key=${k}` },
+    groq:        { url: "https://api.groq.com/openai/v1",       keyEnv: "GROQ_API_KEY",        defaultModel: "llama-3.3-70b-versatile", chatPath: "/chat/completions", fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
+    deepseek:    { url: "https://api.deepseek.com/v1",          keyEnv: "DEEPSEEK_API_KEY",    defaultModel: "deepseek-chat",   chatPath: "/chat/completions",     fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
+    mistral:     { url: "https://api.mistral.ai/v1",            keyEnv: "MISTRAL_API_KEY",     defaultModel: "mistral-large-latest", chatPath: "/chat/completions", fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
+    openrouter:  { url: "https://openrouter.ai/api/v1",         keyEnv: "OPENROUTER_API_KEY",  defaultModel: "anthropic/claude-sonnet-4", chatPath: "/chat/completions", fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
+    ollama:      { url: process.env.OLLAMA_HOST || "http://localhost:11434", keyEnv: "",        defaultModel: "llama3",         chatPath: "/api/chat",           fmt: o => ({ model: o.model, messages: o.messages, stream: false }),                                  parse: d => d.message?.content?.trim() || "...",                                                                                                                       auth: () => ({}) },
+  };
+
+  function getProvider() {
+    const name = PHANTOM_LLM_PROVIDER || "openai";
+    const p = PROVIDERS[name];
+    if (!p) return PROVIDERS.openai; // fallback
+    return p;
+  }
+
+  function getKey(p) {
+    if (p.keyEnv) {
+      const k = process.env[p.keyEnv];
+      if (k) return k;
+      // fallback: check config
+      if (_config[p.keyEnv]) return _config[p.keyEnv];
+    }
+    return "";
+  }
+
   return {
-    hasLLM: !!(key || process.env.OLLAMA_HOST),
+    get provider() { return PHANTOM_LLM_PROVIDER; },
+    set provider(name) { if (PROVIDERS[name]) setProvider(name); },
+    get providers() { return Object.keys(PROVIDERS); },
+    get hasLLM() {
+      const p = getProvider();
+      return !!(p.keyEnv ? getKey(p) : p === PROVIDERS.ollama);
+    },
     async chat(messages, opts = {}) {
-      if (key) {
-        try {
-          const r = await fetch(`${base}/chat/completions`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-            body: JSON.stringify({ model: opts.model || "gpt-4o", messages, temperature: 0.7, max_tokens: 512 }),
-          });
-          if (!r.ok) return `[API ${r.status}]`;
-          const d = await r.json();
-          return d.choices?.[0]?.message?.content?.trim() || "...";
-        } catch (e) { return `[net err: ${e.message}]`; }
-      }
-      if (ollamaBase) {
-        try {
-          const r = await fetch(`${ollamaBase}/api/chat`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model: opts.model || "llama3", messages, stream: false }),
-          });
-          if (!r.ok) return `[Ollama ${r.status}]`;
-          const d = await r.json();
-          return d.message?.content?.trim() || "...";
-        } catch (e) { return `[Ollama err: ${e.message}]`; }
-      }
-      return "";
+      const p = getProvider();
+      const key = getKey(p);
+      if (p.keyEnv && !key) return `[${PHANTOM_LLM_PROVIDER}] No API key. Set ${p.keyEnv} env or in config.json`;
+      const model = opts.model || p.defaultModel;
+      try {
+        let url = `${p.url}${p.chatPath.replace("{model}", model)}`;
+        const headers = { "Content-Type": "application/json", ...p.auth(key) };
+        if (p.urlMod) url = p.urlMod(url, p.chatPath.replace("{model}", model), key);
+        const body = JSON.stringify(p.fmt({ model, messages }));
+        const r = await fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(30000) });
+        if (!r.ok) { const t = await r.text().catch(() => ""); return `[${PHANTOM_LLM_PROVIDER} ${r.status}] ${t.substring(0, 200)}`; }
+        const d = await r.json();
+        return p.parse(d) || "...";
+      } catch (e) { return `[${PHANTOM_LLM_PROVIDER} err] ${e.message}`; }
     },
     async transcribe(filePath) {
-      if (!key) {
-        return "[No OpenAI API key set. Configure via `OPENAI_API_KEY` env or `~/.config/phantom/config.json`]";
-      }
+      const key = process.env.OPENAI_API_KEY;
+      if (!key) return "[Transcribe] Set OPENAI_API_KEY (only OpenAI supports audio)";
       try {
-        const fsMod = await import("fs");
-        const fileBuffer = fsMod.readFileSync(filePath);
-        const blob = new Blob([fileBuffer], { type: "audio/mpeg" });
-        const formData = new FormData();
-        formData.append("file", blob, "audio.mp3");
-        formData.append("model", "whisper-1");
-
-        const r = await fetch(`${base}/audio/transcriptions`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${key}`,
-          },
-          body: formData,
-        });
-        if (!r.ok) {
-          const err = await r.text().catch(() => "");
-          return `[Transcription API error ${r.status}: ${err.substring(0, 200)}]`;
-        }
+        const buf = fs.readFileSync(filePath);
+        const blob = new Blob([buf], { type: "audio/mpeg" });
+        const fd = new FormData(); fd.append("file", blob, "audio.mp3"); fd.append("model", "whisper-1");
+        const r = await fetch("https://api.openai.com/v1/audio/transcriptions", { method: "POST", headers: { "Authorization": `Bearer ${key}` }, body: fd });
         const d = await r.json();
-        return d.text || "[empty transcription]";
-      } catch (e) {
-        return `[Transcription request failed: ${e.message}]`;
-      }
+        return d.text || "[empty]";
+      } catch (e) { return `[Transcribe err] ${e.message}`; }
     }
   };
 }
@@ -1431,6 +1510,8 @@ class Agent {
       plugin_load: "Load external plugin tools from plugins directory. Input: optional path.",
       plugin_create: "Create a new plugin skeleton. Format: name|description.",
       report_export: "Export report to styled HTML (Ctrl+P → PDF). Input: report name.",
+      distro: "Show current Linux distro info and manage proot-distro environments. Commands: info, list, run <name> <cmd>.",
+      llm_config: "Configure LLM provider: list, switch, set API keys. Usage: list | <provider> | set KEY value | model name.",
     };
     for (const [name, desc] of Object.entries(toolList)) {
       this.tools[name] = { description: desc, execute: hackerTools[name] };
@@ -1456,7 +1537,7 @@ class Agent {
     } else {
       // No LLM: show available capabilities
       const caps = Object.keys(this.tools).join(", ") || "none";
-      response = `[${this.name} lv${this.evolutionLevel}] No LLM configured.\nAvailable tools: ${caps}\nSet OPENAI_API_KEY or OLLAMA_HOST to enable AI.`;
+      response = `[${this.name} lv${this.evolutionLevel}] No LLM configured.\nAvailable tools: ${caps}\nUse @llm_config to set up a provider (e.g. @llm_config|openai).`;
     }
 
     this.status = "speaking";
@@ -1587,6 +1668,7 @@ class AgentManager {
 const ENV = (() => {
   const isTTY = !!process.stdin.isTTY;
   const isTermux = !!(process.env.TERMUX_VERSION || process.env.PREFIX?.startsWith("/data/data/com.termux"));
+  const isProot = !!(process.env.PROOT_CWD || release().includes("PRoot") || process.env.PROOTFS_DIR);
   const isCI = !!process.env.CI || !!process.env.GITHUB_ACTIONS;
   const isWindows = process.platform === "win32";
   const isWSL = process.env.WSL_DISTRO_NAME || (process.env.OS?.includes("Linux") && isWindows);
@@ -1671,6 +1753,7 @@ const ENV = (() => {
     screenSize,
     inputMode,
     isTermux,
+    isProot,
     isTmux,
     isWSL,
     isWindows,
@@ -1986,7 +2069,7 @@ class DesktopUI {
 
     const hasLLM = this.am.llm?.hasLLM;
     if (!hasLLM) {
-      const msg = `${c("yellow")}⚠${R} No LLM configured. Set ${B}OPENAI_API_KEY${R} or ${B}OLLAMA_HOST${R}`;
+      const msg = `${c("yellow")}⚠${R} No LLM configured. Use @llm_config to set up.`;
       setTimeout(() => {
         this.panelOrder.forEach(id => this.log(id, msg));
         this.render();
@@ -2202,7 +2285,7 @@ class MinimalUI {
   start() {
     console.log(`Phantom${D} space evolving terminal${R}`);
     this.am.spawnDefaults();
-    if (!this.am.llm?.hasLLM) console.log(`${D}No LLM. Set OPENAI_API_KEY for AI responses.${R}`);
+    if (!this.am.llm?.hasLLM) console.log(`${D}No LLM. Use @llm_config to set up a provider.${R}`);
     if (!ENV.interactive) {
       // Non-interactive: just output and wait a bit then exit
       setTimeout(() => process.exit(0), 2000);
@@ -2537,6 +2620,7 @@ Examples:
 }
 
 const llm = createProvider();
+llmInstance = llm;
 const am = new AgentManager(llm);
 
 const ui = selectUI(am);

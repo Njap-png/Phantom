@@ -6,7 +6,7 @@
 
 ## Current State (as of latest commit)
 
-**60 hacker tools** in dual runtime (`.mjs` zero-dep + `src/` TypeScript):
+**62 hacker tools** in dual runtime (`.mjs` zero-dep + `src/` TypeScript):
 - **6 core**: shell, web_fetch, decode, file_analyze, dns_lookup, hash
 - **8 advanced**: whois, port_scan, http_headers, ssl_check, sub_enum, crawl, vt_check, yara
 - **4 workflow**: recon, cve_search, searchsploit, bruteforce
@@ -22,6 +22,8 @@
 - **4 OSINT**: shodan_search, email_breach, github_dork, sub_takeover
 - **2 plugin system**: plugin_load, plugin_create
 - **1 reporting**: report_export
+- **1 LLM config**: llm_config
+- **1 distro tools**: distro (Termux PRoot distro mgmt)
 - **1 GUI dashboard**, 1 code_gen, 1 self_add_tool
 
 ## Project Structure
@@ -54,7 +56,7 @@
 └── CONTEXT.md           ← THIS FILE
 ```
 
-## All 60 Tools
+## All 61 Tools
 
 | Tool | What it does |
 |------|-------------|
@@ -118,6 +120,8 @@
 | `plugin_load` | **🔌 Load external plugins dynamically** |
 | `plugin_create` | **🔌 Create plugin skeleton** |
 | `report_export` | **📄 Export report to HTML/PDF** |
+| `llm_config` | **🤖 Configure LLM provider: switch, set keys, list** |
+| `distro` | **📦 Show/manage Linux distros (Termux PRoot env)** |
 
 ## How to Use
 
@@ -131,7 +135,7 @@ node phantom.mjs --recon example.com           # full recon + report
 node phantom.mjs --tool cve_search "nginx"     # run one tool
 node phantom.mjs --tool port_scan scanme.org   # port scan
 node phantom.mjs --tool bruteforce "ssh|host|root|pass1,pass2"
-node phantom.mjs --list                        # list all 60 tools
+node phantom.mjs --list                        # list all 62 tools
 node phantom.mjs --gui                         # web dashboard (port 8080)
 node phantom.mjs --api                         # REST API server (port 9090)
 node phantom.mjs --help                        # show help
@@ -149,7 +153,7 @@ All responses are JSON `{ ok: true, data }` or `{ ok: false, error }`.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api` | API overview, tool list, version |
-| `GET` | `/api/tools` | List all 60 tools |
+| `GET` | `/api/tools` | List all 62 tools |
 | `GET` | `/api/info` | Tool metadata |
 | `GET` | `/api/tool/:name` | Specific tool info |
 | `GET` / `POST` | `/api/run?tool=X&args=Y` or `POST {"tool":"X","args":"Y"}` | Execute any tool |
@@ -185,6 +189,48 @@ OLLAMA_HOST=http://localhost:11434 node phantom.mjs
 
 Phantom will use Ollama for AI features (agent mode, code gen, etc.) instead of OpenAI.
 No internet connection needed — run fully air-gapped with your local models.
+
+## Multi-Provider LLM
+
+Choose from **8 providers** at runtime — no restart needed:
+
+| Provider | Env Var | Default Model |
+|----------|---------|---------------|
+| OpenAI | `OPENAI_API_KEY` | gpt-4o |
+| Anthropic | `ANTHROPIC_API_KEY` | claude-sonnet-4 |
+| Google Gemini | `GEMINI_API_KEY` | gemini-2.0-flash |
+| Groq | `GROQ_API_KEY` | llama-3.3-70b |
+| DeepSeek | `DEEPSEEK_API_KEY` | deepseek-chat |
+| Mistral | `MISTRAL_API_KEY` | mistral-large |
+| OpenRouter | `OPENROUTER_API_KEY` | claude-sonnet-4 |
+| Ollama | `OLLAMA_HOST` (base URL) | llama3 |
+
+**Set API key via env:**
+```bash
+ANTHROPIC_API_KEY=sk-ant-... node phantom.mjs
+```
+
+**Set API key at runtime (persisted to config.json):**
+```
+@llm_config|set ANTHROPIC_API_KEY sk-ant-...
+```
+
+**Switch provider at runtime:**
+```
+@llm_config|anthropic
+@llm_config|openai
+@llm_config|ollama
+```
+
+**View status:**
+```
+@llm_config|list
+```
+
+All keys can also be saved to `~/.config/phantom/config.json`:
+```json
+{ "default_provider": "anthropic", "ANTHROPIC_API_KEY": "sk-ant-..." }
+```
 
 ### Tool Calling Format (for LLM agents)
 ```
