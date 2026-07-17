@@ -2275,6 +2275,110 @@ function selectUI(am) {
 }
 
 // ── GUI Dashboard ──────────────────────────────────────────
+// ── REST API Handler ──────────────────────────────────────
+async function handleApiRequest(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
+  const url = new URL(req.url || '/', 'http://' + (req.headers.host || 'localhost'));
+  const json = (data, code = 200) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)); };
+  const body = () => new Promise(r => { let b = ''; req.on('data', c => b += c); req.on('end', () => r(JSON.parse(b))); });
+  try {
+    // GET /api — list all
+    if (url.pathname === '/api' || url.pathname === '/api/') {
+      return json({ ok: true, tools: Object.keys(hackerTools).sort(), version: '0.2.0', docs: '/api/tools, /api/run, /api/info, /api/playbooks, /api/reports' });
+    }
+    // GET /api/tools — list tool names
+    if (url.pathname === '/api/tools') {
+      return json({ ok: true, count: Object.keys(hackerTools).length, tools: Object.keys(hackerTools).sort() });
+    }
+    // GET /api/info — detailed tool info
+    if (url.pathname === '/api/info') {
+      const entries = Object.entries(hackerTools).sort(([a], [b]) => a < b ? -1 : 1).map(([name]) => ({ name }));
+      return json({ ok: true, count: entries.length, tools: entries });
+    }
+    // GET /api/tool/:name — tool metadata
+    const toolMatch = url.pathname.match(/^\/api\/tool\/(.+)$/);
+    if (toolMatch) {
+      const name = decodeURIComponent(toolMatch[1]);
+      if (!hackerTools[name]) return json({ ok: false, error: 'Tool not found' }, 404);
+      return json({ ok: true, name });
+    }
+    // POST /api/run — execute tool
+    if (url.pathname === '/api/run' && req.method === 'POST') {
+      const { tool, args } = await body();
+      if (!tool || !hackerTools[tool]) return json({ ok: false, error: `Tool "${tool}" not found` }, 404);
+      const result = await hackerTools[tool](args || '');
+      return json({ ok: true, tool, args: args || '', result });
+    }
+    // GET /api/run?tool=...&args=... — execute via GET
+    if (url.pathname === '/api/run' && req.method === 'GET') {
+      const tool = url.searchParams.get('tool');
+      const args = url.searchParams.get('args') || '';
+      if (!tool || !hackerTools[tool]) return json({ ok: false, error: `Tool "${tool}" not found` }, 404);
+      const result = await hackerTools[tool](args);
+      return json({ ok: true, tool, args, result });
+    }
+    // GET /api/playbooks — list playbooks
+    if (url.pathname === '/api/playbooks') {
+      const pbDir = resolve(homedir(), '.config', 'phantom', 'playbooks');
+      const names = [];
+      if (fs.existsSync(pbDir)) {
+        for (const f of fs.readdirSync(pbDir).filter(f => f.endsWith('.json'))) {
+          const pb = JSON.parse(fs.readFileSync(resolve(pbDir, f), 'utf-8'));
+          names.push({ name: pb.name, description: pb.description, steps: (pb.steps||[]).length, vars: pb.variables });
+        }
+      }
+      return json({ ok: true, playbooks: names });
+    }
+    // POST /api/playbook/run — run a playbook
+    if (url.pathname === '/api/playbook/run' && req.method === 'POST') {
+      const { name, vars } = await body();
+      if (!hackerTools.playbook_run) return json({ ok: false, error: 'playbook_run tool not loaded' }, 404);
+      const result = await hackerTools.playbook_run(vars ? name + '|' + vars : name);
+      return json({ ok: true, name, result });
+    }
+    // GET /api/playbook/run?name=...&vars=... — run via GET
+    if (url.pathname === '/api/playbook/run' && req.method === 'GET') {
+      const name = url.searchParams.get('name');
+      const vars = url.searchParams.get('vars') || '';
+      if (!name) return json({ ok: false, error: '?name= required' }, 400);
+      if (!hackerTools.playbook_run) return json({ ok: false, error: 'playbook_run not loaded' }, 404);
+      const result = await hackerTools.playbook_run(vars ? name + '|' + vars : name);
+      return json({ ok: true, name, result });
+    }
+    // GET /api/reports — list reports
+    if (url.pathname === '/api/reports') {
+      const reports = [];
+      if (fs.existsSync(REPORTS_DIR)) {
+        for (const f of fs.readdirSync(REPORTS_DIR).filter(f => f.endsWith('.md') || f.endsWith('.txt'))) {
+          const s = fs.readFileSync(resolve(REPORTS_DIR, f)).length;
+          reports.push({ name: f, size: s < 1024 ? s + 'B' : (s/1024).toFixed(1) + 'KB' });
+        }
+      }
+      return json({ ok: true, reports });
+    }
+    // GET /api/report/:name — view a report
+    if (url.pathname.startsWith('/api/report/')) {
+      const name = decodeURIComponent(url.pathname.slice(12));
+      const fp = resolve(REPORTS_DIR, name);
+      if (!fs.existsSync(fp)) return json({ ok: false, error: 'Report not found' }, 404);
+      return json({ ok: true, name, content: fs.readFileSync(fp, 'utf-8') });
+    }
+    // GET /api/health — health check
+    if (url.pathname === '/api/health') {
+      return json({ ok: true, status: 'running', tools: Object.keys(hackerTools).length, pid: process.pid, uptime: process.uptime().toFixed(0) + 's' });
+    }
+    return json({ ok: false, error: 'Not found' }, 404);
+  } catch (e) { return json({ ok: false, error: e.message }, 500); }
+}
+
+function startApiServer(port) {
+  const server = http.createServer((req, res) => handleApiRequest(req, res));
+  server.listen(port, () => console.log(`  🌐 Phantom API: http://localhost:${port}  (--api)`));
+}
+
 function startGuiDashboard(port) {
   const REPORTS = resolve(homedir(), '.config', 'phantom', 'reports');
   const HTML = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Phantom Dashboard</title><style>
@@ -2335,72 +2439,10 @@ function switchTab(n){document.querySelectorAll('.tab').forEach(t=>t.classList.r
 loadTools();
 </script></body></html>`;
 
-  const server = http.createServer(async (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
-    const url = new URL(req.url || '/', 'http://' + (req.headers.host || 'localhost'));
-    try {
-      if (url.pathname === '/api/tools') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(Object.keys(hackerTools).sort()));
-        return;
-      }
-      if (url.pathname === '/api/run') {
-        let b = ''; req.on('data', c => b += c); req.on('end', async () => {
-          const { tool, args } = JSON.parse(b);
-          if (!hackerTools[tool]) { res.writeHead(404); res.end(JSON.stringify({ error: 'Not found' })); return; }
-          try { const r = await hackerTools[tool](args || ''); res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ result: r })); }
-          catch (e) { res.writeHead(500); res.end(JSON.stringify({ error: e.message })); }
-        });
-        return;
-      }
-      if (url.pathname === '/api/playbooks') {
-        const pbDir = resolve(homedir(), '.config', 'phantom', 'playbooks');
-        const names = [];
-        if (fs.existsSync(pbDir)) {
-          for (const f of fs.readdirSync(pbDir).filter(f => f.endsWith('.json'))) {
-            const pb = JSON.parse(fs.readFileSync(resolve(pbDir, f), 'utf-8'));
-            names.push({ name: pb.name, description: pb.description, steps: (pb.steps||[]).length, vars: pb.variables });
-          }
-        }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(names));
-        return;
-      }
-      if (url.pathname === '/api/playbook/run') {
-        let b = ''; req.on('data', c => b += c); req.on('end', async () => {
-          const { name, vars } = JSON.parse(b);
-          if (!hackerTools.playbook_run) { res.writeHead(404); res.end(JSON.stringify({ error: 'playbook_run not found' })); return; }
-          try { const r = await hackerTools.playbook_run(vars ? name + '|' + vars : name); res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ result: r })); }
-          catch (e) { res.writeHead(500); res.end(JSON.stringify({ error: e.message })); }
-        });
-        return;
-      }
-      if (url.pathname === '/api/reports') {
-        const reports = [];
-        if (fs.existsSync(REPORTS)) {
-          for (const f of fs.readdirSync(REPORTS).filter(f => f.endsWith('.md') || f.endsWith('.txt'))) {
-            const s = fs.readFileSync(resolve(REPORTS, f)).length;
-            reports.push({ name: f, size: s < 1024 ? s + 'B' : (s/1024).toFixed(1) + 'KB' });
-          }
-        }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(reports));
-        return;
-      }
-      if (url.pathname.startsWith('/api/report/')) {
-        const name = decodeURIComponent(url.pathname.slice(12));
-        const fp = resolve(REPORTS, name);
-        if (!fs.existsSync(fp)) { res.writeHead(404); res.end(JSON.stringify({ error: 'Not found' })); return; }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ content: fs.readFileSync(fp, 'utf-8') }));
-        return;
-      }
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(HTML);
-    } catch (e) { res.writeHead(500); res.end(JSON.stringify({ error: e.message })); }
+  const server = http.createServer((req, res) => {
+    if (req.url?.startsWith('/api')) return handleApiRequest(req, res);
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(HTML);
   });
   server.listen(port, () => console.log('\n  🌐 Phantom Dashboard: http://localhost:' + port + '\n'));
 }
@@ -2425,6 +2467,7 @@ Usage:
   node phantom.mjs --tool <name> <input>    Run one tool directly
   node phantom.mjs --list                   List all tools
   node phantom.mjs --gui                    Start web dashboard
+  node phantom.mjs --api                    Start REST API server (port 9090)
   node phantom.mjs --help                   This help
 
 Examples:
@@ -2451,6 +2494,12 @@ Examples:
     startGuiDashboard(port);
     // Keep alive — server is already listening
     await new Promise(() => {}); // never resolves
+  }
+
+  if (flag === "api" || flag === "rest") {
+    const port = parseInt(process.env.PHANTOM_API_PORT || '9090');
+    startApiServer(port);
+    await new Promise(() => {}); // keep alive
   }
 
   if (flag === "tool" || flag === "t") {

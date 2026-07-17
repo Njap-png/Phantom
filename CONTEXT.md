@@ -121,22 +121,70 @@
 
 ## How to Use
 
-### Interactive Mode
-```bash
-node phantom.mjs                     # zero-dep entry
-OPENAI_API_KEY=sk-... node phantom.mjs  # with AI agents
-```
-
 ### CLI One-Shot Mode
 ```bash
+node phantom.mjs                           # zero-dep interactive
+OPENAI_API_KEY=sk-... node phantom.mjs     # with AI agents
+OLLAMA_HOST=http://localhost:11434 node phantom.mjs  # local LLM (offline)
+
 node phantom.mjs --recon example.com           # full recon + report
 node phantom.mjs --tool cve_search "nginx"     # run one tool
 node phantom.mjs --tool port_scan scanme.org   # port scan
 node phantom.mjs --tool bruteforce "ssh|host|root|pass1,pass2"
-node phantom.mjs --list                        # list all tools
-node phantom.mjs --gui                         # start web dashboard
+node phantom.mjs --list                        # list all 60 tools
+node phantom.mjs --gui                         # web dashboard (port 8080)
+node phantom.mjs --api                         # REST API server (port 9090)
 node phantom.mjs --help                        # show help
 ```
+
+## REST API (`--api`)
+
+Start the standalone API server on port 9090 (or `PHANTOM_API_PORT`):
+```bash
+node phantom.mjs --api
+```
+
+All responses are JSON `{ ok: true, data }` or `{ ok: false, error }`.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api` | API overview, tool list, version |
+| `GET` | `/api/tools` | List all 60 tools |
+| `GET` | `/api/info` | Tool metadata |
+| `GET` | `/api/tool/:name` | Specific tool info |
+| `GET` / `POST` | `/api/run?tool=X&args=Y` or `POST {"tool":"X","args":"Y"}` | Execute any tool |
+| `GET` | `/api/playbooks` | List playbooks |
+| `GET` / `POST` | `/api/playbook/run?name=X&vars=Y` | Run a playbook |
+| `GET` | `/api/reports` | List reports |
+| `GET` | `/api/report/:name` | View a report |
+| `GET` | `/api/health` | Health check (status, pid, uptime, tool count) |
+
+Examples:
+```bash
+# List tools
+curl http://localhost:9090/api/tools
+
+# Execute a tool (GET)
+curl "http://localhost:9090/api/run?tool=dns_lookup&args=example.com"
+
+# Execute a tool (POST)
+curl -X POST http://localhost:9090/api/run \
+  -H 'Content-Type: application/json' \
+  -d '{"tool":"port_scan","args":"scanme.org"}'
+
+# Health check
+curl http://localhost:9090/api/health
+```
+
+## Offline / Local LLM
+
+Set `OLLAMA_HOST` to use a local Ollama instance:
+```bash
+OLLAMA_HOST=http://localhost:11434 node phantom.mjs
+```
+
+Phantom will use Ollama for AI features (agent mode, code gen, etc.) instead of OpenAI.
+No internet connection needed — run fully air-gapped with your local models.
 
 ### Tool Calling Format (for LLM agents)
 ```
