@@ -1378,6 +1378,143 @@ const hackerTools = {
       return `[LLM] Unknown: "${cmd}". Options: ${provs.join(", ")}, set KEY val, model name`;
     } catch (e) { return `[LLM Error] ${e.message}`; }
   },
+
+  youtube_summarize: async (url) => {
+    try {
+      try { const { execSync } = await import("child_process"); execSync("command -v yt-dlp", { stdio: "pipe", timeout: 3000 }); } catch { return "[youtube] yt-dlp not found. Install: pip install yt-dlp"; }
+      const { execSync } = await import("child_process");
+      const title = execSync(`yt-dlp --print title "${url}" 2>/dev/null`, { encoding: "utf-8", timeout: 10000 }).trim();
+      let transcript = "";
+      try { transcript = execSync(`yt-dlp --write-auto-sub --sub-lang en --skip-download -o "%(id)s" "${url}" 2>/dev/null; cat *.vtt 2>/dev/null || true`, { encoding: "utf-8", timeout: 30000 }); } catch { try { transcript = execSync(`yt-dlp --write-subs --sub-lang en --skip-download -o "%(id)s" "${url}" 2>/dev/null; cat *.vtt 2>/dev/null || true`, { encoding: "utf-8", timeout: 30000 }); } catch {} }
+      if (!transcript) try { transcript = execSync(`yt-dlp --print description "${url}" 2>/dev/null`, { encoding: "utf-8", timeout: 10000 }); } catch {}
+      if (!transcript) return `[youtube] No transcript for: "${title}"`;
+      transcript = transcript.replace(/\d{2}:\d{2}:\d{2}[.,]\d{3}\s*>\s*/g, "").replace(/WEBVTT[\s\S]*?X-TIMESTAMP-MAP.*?\n/g, "").trim();
+      if (transcript.length > 6000) transcript = transcript.slice(0, 6000) + "\n...[truncated]";
+      let summary = "";
+      if (llmInstance?.chat) {
+        const resp = await llmInstance.chat([
+          { role: "system", content: "You are a cybersecurity training summarizer. Given a transcript, create: 1) 3-sentence summary 2) Key takeaways 3) A ready-to-use playbook with 3-5 steps. Format playbook as: ```playbook\nname: ...\ndescription: ...\nsteps:\n  - tool: ...\n    target: ...```" },
+          { role: "user", content: `Video: "${title}"\nTranscript:\n${transcript}` }
+        ]);
+        summary = resp.trim();
+      } else { summary = `Title: ${title}\nTranscript: ${transcript.length} chars\n(LLM unavailable) Data saved, add LLM for AI summary.`; }
+      const name = `yt_${title.replace(/[^a-z0-9]/gi, "_").slice(0, 30).toLowerCase()}`;
+      const pbPath = resolve(PLAYBOOKS_DIR, `${name}.json`);
+      if (!fs.existsSync(PLAYBOOKS_DIR)) fs.mkdirSync(PLAYBOOKS_DIR, { recursive: true });
+      fs.writeFileSync(pbPath, JSON.stringify({ name: title.slice(0,50), source: "youtube", url, created: new Date().toISOString(), summary }, null, 2), "utf-8");
+      return `🎬 YouTube: "${title}"\nTranscript: ${transcript.length} chars\nPlaybook: ${pbPath}\n\n${summary.slice(0,2000)}`;
+    } catch (e) { return `[youtube Error] ${e.message}`; }
+  },
+
+  hackbook: async (query) => {
+    const q = query?.trim().toLowerCase() || "list";
+    const Db = [
+      { id:"sql-injection", t:"SQL Injection (SQLi)", s:"Critical", d:"Attackers inject malicious SQL queries through input fields to manipulate databases, extract data, bypass auth, or execute commands.", i:"Data breach, auth bypass, RCE, complete DB compromise", test:["Submit single quote and double quote to trigger errors","Use time-based: ' OR SLEEP(5)--","UNION SELECT: ' UNION SELECT 1,2,3--","Test all vectors: GET, POST, headers, cookies","sqlmap -u 'http://target.com/page?id=1' --batch"], m:"Parameterized queries, input validation, least privilege DB accounts, WAF", tools:"sqlmap, jSQL, Burp Suite, NoSQLMap" },
+      { id:"xss", t:"Cross-Site Scripting (XSS)", s:"High", d:"Attackers inject malicious scripts into web pages viewed by other users. Types: Reflected, Stored, DOM-based.", i:"Session hijacking, credential theft, defacement, phishing", test:["Inject <script>alert(1)</script>","Event handlers: <img src=x onerror=alert(1)>","Test URL params for reflected XSS","DOM-based via location.hash","Polyglot payloads for WAF bypass"], m:"Output encoding, Content-Security-Policy, HttpOnly cookies, X-XSS-Protection", tools:"XSStrike, Burp Suite, OWASP ZAP, BeEF, Dalfox" },
+      { id:"csrf", t:"Cross-Site Request Forgery (CSRF)", s:"High", d:"Forces authenticated users to execute unwanted actions on a web app where they're authenticated.", i:"Unauthorized transactions, password changes, account takeover", test:["Check if state-changing requests lack CSRF tokens","Verify tokens tied to sessions","Test SameSite cookies","CORS misconfigurations","CSRF without origin/referer headers"], m:"Anti-CSRF tokens, SameSite=Strict/Lax cookies, Origin/Referer validation", tools:"Burp Suite, OWASP ZAP, CSRFTester" },
+      { id:"ssrf", t:"Server-Side Request Forgery (SSRF)", s:"High", d:"Attackers make the server send requests to internal systems, bypassing firewalls.", i:"Internal network scanning, cloud metadata access, service exploitation", test:["Submit URLs to internal IPs: 127.0.0.1, 169.254.169.254","Cloud metadata: http://169.254.169.254/latest/meta-data/","URL scheme bypass: file://, dict://, gopher://","Redirect-based SSRF","DNS rebinding"], m:"Allowlist destinations, disable unnecessary URL schemes, network segmentation", tools:"SSRFmap, Gopherus, Interactsh" },
+      { id:"rce", t:"Remote Code Execution (RCE)", s:"Critical", d:"Attackers execute arbitrary commands on the server via injection flaws.", i:"Full server compromise, data exfiltration, lateral movement, backdoor", test:["Command injection: ; whoami, | id, $(whoami)","File upload for web shells","Deserialization gadgets (Java, PHP, Python, .NET)","Template injection: {{7*7}}, ${7*7}","eval() sinks"], m:"Avoid dangerous functions (eval, exec, system), input validation, sandboxing, WAF", tools:"Metasploit, Commix, ysoserial, JexBoss" },
+      { id:"lfi", t:"Local File Inclusion (LFI)", s:"High", d:"Attackers read arbitrary files by manipulating path parameters. Can lead to RCE.", i:"Source code disclosure, credential leakage, RCE via log poisoning", test:["Path traversal: ../../../etc/passwd","PHP wrappers: php://filter/convert.base64-encode/","Null byte injection","Log poisoning: inject PHP in UA, include access.log"], m:"Avoid dynamic includes, allowlist paths, disable allow_url_fopen", tools:"LFISuite, Kadimus, PHP filter chain" },
+      { id:"idor", t:"Insecure Direct Object Reference (IDOR)", s:"Medium", d:"Attackers access unauthorized resources by modifying direct references.", i:"Unauthorized data access, account takeover, privilege escalation", test:["Increment IDs: /user/123 -> /user/124","Predictable UUIDs","Change params: ?invoice=123 -> ?invoice=456","Multi-tenant boundary violations"], m:"Access control checks, use unpredictable IDs (UUIDs)", tools:"Burp Sequencer, Autorize, AuthMatrix" },
+      { id:"xxe", t:"XML External Entity (XXE)", s:"High", d:"Attackers exploit XML parsers to read files, perform SSRF, or cause DoS.", i:"File disclosure, SSRF, DoS (Billion Laughs), RCE", test:["<!DOCTYPE foo [<!ENTITY xxe SYSTEM 'file:///etc/passwd'>]>","Blind XXE out-of-band","XXE in SVG upload, XML-RPC","XXE in docx/xlsx"], m:"Disable external entity processing, use JSON, disable DTDs", tools:"XXE-injection, OWASP ZAP, Burp Collaborator" },
+      { id:"open-redirect", t:"Open Redirect", s:"Medium", d:"Application redirects users to attacker-controlled URLs via unvalidated params.", i:"Phishing, malware distribution, credential theft, SEO spam", test:["/redirect?url=http://evil.com","Protocol-relative: //evil.com","Domain confusion: https://evil.com@target.com","Redirect chains for SSRF"], m:"Allowlist valid destinations, validate URLs, require confirmation", tools:"Oralyzer, Burp Scanner, OWASP ZAP" },
+      { id:"nosqli", t:"NoSQL Injection", s:"High", d:"Injection flaws in NoSQL databases where attackers inject JSON/JS operators.", i:"Auth bypass, data extraction, unauthorized access", test:["JSON operators: {$gt: ''}, {$ne: ''}, {$regex: '.*'}","username[$ne]=admin&password[$ne]=admin","POST with $where, $gte","NoSQL in login: ' || 1==1 //"], m:"Input validation, mongo-sanitize, parameterized queries", tools:"NoSQLMap, nosqli, Burp Suite" },
+      { id:"file-upload", t:"Malicious File Upload", s:"High", d:"Attackers upload malicious files processed or served by the app.", i:"RCE via web shell, malware distribution, server compromise", test:["Double extension: shell.php.jpg","MIME type manipulation","Upload .htaccess: AddType x-httpd-php .txt","SVG with XXE"], m:"Validate extension and content, store outside webroot, rename files, limit size", tools:"Burp Upload Scanner, Fuxploider" },
+      { id:"jwt", t:"JWT Attacks", s:"Medium", d:"Attacks on JSON Web Tokens: algorithm confusion, weak secrets, header injection.", i:"Auth bypass, privilege escalation, account takeover", test:["Algorithm to 'none': alg: none, empty sig","RS256 public key as HS256 secret","Bruteforce weak secret","kid header injection","Expired/revoked token testing"], m:"Enforce algorithm allowlist, strong secrets, validate claims, key rotation", tools:"jwt_tool, jwt-cracker, hashcat" },
+      { id:"cors", t:"CORS Misconfiguration", s:"Medium", d:"Improper CORS headers allow cross-origin requests from unauthorized domains.", i:"Data exfiltration, API abuse, credential theft", test:["Origin: https://evil.com check ACAO reflection","ACA with wildcard origin","Null origin","Preflight bypass"], m:"Allowlist origins, never wildcards with credentials, Vary: Origin", tools:"CORS Scanner, Burp, corsy" },
+      { id:"race-condition", t:"Race Condition", s:"Medium", d:"TOCTOU bugs where concurrent requests exploit gaps between check and use.", i:"Coupon abuse, ticket scalping, balance manipulation", test:["50 concurrent requests","Race password change","File upload race","Last-byte sync","Single-packet attack"], m:"Database transactions/locks, atomic operations, idempotency keys, rate limiting", tools:"Turbo Intruder (Burp), race-the-web" }
+    ];
+    if (q === "list") return `📚 PHANTOM HACKBOOK\n\nCategories (${Db.length}):\n${Db.map(e => `  ${e.t} — ${e.s}`).join("\n")}\n\nUsage: @hackbook|<category>\nExample: @hackbook|sql-injection`;
+    const matches = Db.filter(e => e.id.includes(q) || e.t.toLowerCase().includes(q) || e.d.toLowerCase().includes(q));
+    if (!matches.length) return `[hackbook] No results for "${q}". Try: ${Db.map(e=>e.id).join(", ")}`;
+    if (matches.length > 1) return `[hackbook] Multiple: ${matches.map(e=>e.t).join(", ")}. Be specific.`;
+    const e = matches[0];
+    return `📚 ${e.t}\n${"=".repeat(40)}\nSeverity: ${e.s}\n\n📖 ${e.d}\n\n⚠️ Impact:\n${e.i}\n\n🔍 Testing:\n${e.test.map((s,i) => `  ${i+1}. ${s}`).join("\n")}\n\n🛡️ Mitigation:\n${e.m}\n\n🔧 Tools:\n${e.tools}\n${"=".repeat(40)}`;
+  },
+
+  code_analyze: async (input) => {
+    const arg = input.trim();
+    if (!arg) return "[code_analyze] Usage: @code_analyze|file_path or directory";
+    try {
+      const fp = resolve(process.cwd(), arg);
+      const st = fs.statSync(fp);
+      let files = [];
+      if (st.isDirectory()) {
+        const { readdirSync } = await import("fs");
+        const all = readdirSync(fp, { recursive: true });
+        const exts = [".js",".ts",".mjs",".py",".php",".java",".go",".rs",".cpp",".c",".h",".rb",".html",".sh",".yaml",".sql"];
+        files = all.filter(f => exts.some(e => f.endsWith(e))).slice(0,20).map(f => resolve(fp, f));
+        if (!files.length) files = [fp];
+      } else { files = [fp]; }
+      const results = [];
+      for (const f of files.slice(0,5)) {
+        const code = fs.readFileSync(f, "utf-8").slice(0,3000);
+        const name = f.replace(process.cwd()+"/", "");
+        const ext = f.split(".").pop();
+        const issues = [];
+        const checks = [
+          { rx: [/\beval\s*\(/g, /\bexec\s*\(/g, /\bsystem\s*\(/g, /\bpopen\s*\(/g, /child_process/g], label: "eval/exec use" },
+          { rx: [/['"][A-Za-z0-9_]{20,}['"]/g, /(api[_-]?key|secret|password|token|auth).{0,20}=.{0,20}['"][A-Za-z0-9_]{8,}['"]/gi], label: "Hardcoded secret" },
+          { rx: [/['"].*\+.*['"].*SQL/g, /\bquery\(.*\+/g, /\bexecute\(.*\+/g], label: "SQL injection risk" },
+          { rx: [/==\s*true/g, /\b(true|false)\s*!=\s*/g], label: "Insecure comparison" },
+          { rx: [/\bMD5\b/g, /\bSHA1\b/gi, /\bRC4\b/g, /\bDES\b/g], label: "Weak crypto" },
+          { rx: [/\bfs\.readFileSync/g, /\bopen\(.*\$/g], label: "File access" },
+          { rx: [/console\.log\(/g, /print_r\(/g, /var_dump\(/g, /debugger/g], label: "Debug leak" },
+          { rx: [/\bredirect\(.*\$/g, /\bheader\(.*Location/g], label: "Unvalidated redirect" }
+        ];
+        for (const c of checks) for (const r of c.rx) { const m = code.match(r); if (m) issues.push(`${c.label} (${m.length}x)`); }
+        results.push({ file: name, size: code.length, ext, issues: [...new Set(issues)] });
+      }
+      let report = `# Code Security Analysis\nTarget: ${arg} (${files.length} files)\nScanned: ${Math.min(files.length,5)}\n\n`;
+      for (const r of results) {
+        report += `## ${r.file}\nSize: ${r.size}B | Type: ${r.ext}\n`;
+        if (r.issues.length) { r.issues.forEach(i => report += `- ${i}\n`); } else { report += "No issues found\n"; }
+        report += "\n";
+      }
+      if (files.length > 5) report += `_${files.length-5} more files not scanned_\n`;
+      if (llmInstance?.chat && results.length) {
+        const samples = results.map(r => `File: ${r.file}\n${fs.readFileSync(r.file,"utf-8").slice(0,1500)}`).join("\n\n---\n\n");
+        const llmOut = await llmInstance.chat([
+          { role: "system", content: "You are a code security auditor. Analyze for OWASP Top 10, hardcoded secrets, logic flaws. Give specific line numbers and fixes." },
+          { role: "user", content: `Code to analyze:\n\n${samples.slice(0,8000)}` }
+        ]);
+        report += `## AI Analysis\n\n${llmOut.trim().slice(0,3000)}\n`;
+      }
+      return report;
+    } catch (e) { return `[code_analyze Error] ${e.message}`; }
+  },
+
+  self_improve: async (input) => {
+    const focus = input?.trim().toLowerCase() || "all";
+    try {
+      const src = fs.readFileSync(resolve(process.cwd(), "phantom.mjs"), "utf-8");
+      const lines = src.split("\n").length;
+      const size = (src.length / 1024).toFixed(1);
+      const classes = (src.match(/class\s+\w+/g) || []).length;
+      const fns = (src.match(/async\s+\w+\s*\(/g) || []).length;
+      let report = `# Self-Improvement\nSource: phantom.mjs\nLines: ${lines} | Size: ${size} KB\nClasses: ${classes} | Async fns: ~${fns}\nFocus: ${focus}\n\n`;
+      const imps = [];
+      if (focus === "all" || focus === "performance") { imps.push(`Split ${lines}-line monolith into modules`); imps.push("Lazy-load rarely used tools"); imps.push("Use WeakMap for agent caches"); }
+      if (focus === "all" || focus === "security") { imps.push("Add input length limits to prevent ReDoS"); imps.push("Sanitize file paths to prevent traversal"); imps.push("Rate-limit shell execution"); imps.push("Validate URLs against SSRF allowlist"); }
+      if (focus === "all" || focus === "features") { imps.push("Web dashboard for agent monitoring"); imps.push("Plugin hot-reload without restart"); imps.push("Export to PDF/Nessus/OpenVAS"); imps.push("Multi-session tabs for concurrent targets"); imps.push("Voice commands via Termux TTS"); }
+      report += `## Improvements (${imps.length})\n\n${imps.map((s,i) => `${i+1}. ${s}`).join("\n")}\n\n`;
+      let patched = false;
+      if (llmInstance?.chat && lines > 3200) {
+        report += `LLM analyzing optimization opportunities...\n`;
+        const analysis = await llmInstance.chat([
+          { role: "system", content: "You are code optimization AI. Analyze Phantom source and suggest 3 specific improvements with exact code changes." },
+          { role: "user", content: `Source: phantom.mjs (${lines} lines, ${size} KB)\nFocus: ${focus}\n\nFirst 3000 chars:\n${src.slice(0,3000)}\n\nLast 2000 chars:\n${src.slice(-2000)}` }
+        ]);
+        report += `${analysis.trim().slice(0,2000)}\n`;
+        const dir = resolve(REPORTS_DIR, "self_improve");
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(resolve(dir, `analysis_${Date.now()}.md`), `# Self-Improvement\n\n${analysis}`, "utf-8");
+        patched = true;
+      }
+      report += `\n${patched ? "Analysis saved to reports/self_improve/" : "No LLM available for deep analysis"}\nTo apply: @self_edit|phantom.mjs|old|new`;
+      return report;
+    } catch (e) { return `[self_improve Error] ${e.message}`; }
+  },
 };
 
 // ── EventBus ──────────────────────────────────────────────
@@ -1607,6 +1744,10 @@ class Agent {
       report_export: "Export report to styled HTML (Ctrl+P → PDF). Input: report name.",
       distro: "Show current Linux distro info and manage proot-distro environments. Commands: info, list, run <name> <cmd>.",
       llm_config: "Configure LLM provider: list, switch, set API keys. Usage: list | <provider> | set KEY value | model name.",
+      youtube_summarize: "Download YouTube video transcript, summarize via LLM, and save as playbook. Format: youtube_url. Requires yt-dlp.",
+      hackbook: "Vulnerability learning database — search by type (sql-injection, xss, csrf, ssrf, rce, lfi, idor, etc.). Shows description, impact, testing, mitigation, tools. Format: search term. Use 'list' for all categories.",
+      code_analyze: "Deep source code security analysis. Scans files for OWASP Top 10, hardcoded secrets, insecure patterns. Generates report + optional LLM analysis. Format: file or directory path.",
+      self_improve: "Analyze Phantom's own source and suggest improvements. Scans phantom.mjs for code quality, performance, security, feature gaps. Format: optional focus (performance|security|features|all).",
     };
     for (const [name, desc] of Object.entries(toolList)) {
       if (name === "delegate") {
