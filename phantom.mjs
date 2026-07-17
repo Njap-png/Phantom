@@ -57,6 +57,62 @@ function loadMemory(name) {
   } catch (e) { return []; }
 }
 
+// ── System Tool Detection ─────────────────────────────────
+const SYSTEM_TOOLS = [
+  ["nmap", "Network scanning"],
+  ["sqlmap", "SQL injection testing"],
+  ["metasploit", "Exploitation framework"],
+  ["searchsploit", "Exploit search"],
+  ["ffuf", "Web fuzzing"],
+  ["gobuster", "Directory bruteforce"],
+  ["hydra", "Login bruteforce"],
+  ["john", "Password cracking"],
+  ["hashcat", "GPU password cracking"],
+  ["aircrack-ng", "WiFi security"],
+  ["tshark", "Packet analysis"],
+  ["masscan", "Fast port scanning"],
+  ["nikto", "Web server scanner"],
+  ["wpscan", "WordPress security"],
+  ["dirb", "Web content scanner"],
+  ["enum4linux", "SMB enumeration"],
+  ["smbclient", "SMB client"],
+  ["netcat", "Network Swiss army knife"],
+  ["socat", "Network relay"],
+  ["curl", "HTTP requests"],
+  ["wget", "File downloader"],
+  ["git", "Version control"],
+  ["python3", "Python interpreter"],
+  ["node", "Node.js runtime"],
+  ["docker", "Container engine"],
+  ["kubectl", "Kubernetes CLI"],
+  ["terraform", "Infrastructure as code"],
+  ["yara", "Malware pattern matching"],
+  ["clamscan", "Antivirus scanning"],
+  ["sslyze", "SSL/TLS analysis"],
+  ["testssl", "SSL/TLS testing"],
+  ["whois", "Domain WHOIS lookup"],
+  ["dig", "DNS lookup utility"],
+  ["nslookup", "DNS lookup"],
+  ["host", "DNS lookup"],
+  ["tcpdump", "Packet capture"],
+  ["sqlite3", "SQLite database"],
+  ["jq", "JSON processor"],
+  ["yt-dlp", "Media downloader"],
+  ["ffmpeg", "Media processor"],
+];
+
+async function detectSystemTools() {
+  const found = [];
+  for (const [bin, desc] of SYSTEM_TOOLS) {
+    try {
+      const { execSync } = await import("child_process");
+      execSync(`command -v ${bin} 2>/dev/null`, { stdio: "pipe", timeout: 1500 });
+      found.push({ bin, desc });
+    } catch {}
+  }
+  return found;
+}
+
 function saveKnowledge(name, knowledge) {
   try {
     ensureDirs();
@@ -1679,8 +1735,9 @@ User: ${userInput}`;
       { role: "system", content: systemPrompt },
     ];
 
-    // Max 3 tool iterations to prevent infinite loops
-    for (let iter = 0; iter < 3; iter++) {
+    // Max tool iterations — configurable via PHANTOM_MAX_ITER (default 8)
+    const maxIter = parseInt(process.env.PHANTOM_MAX_ITER) || 8;
+    for (let iter = 0; iter < maxIter; iter++) {
       const raw = await this.llm.chat(messages);
       const text = raw.trim();
 
@@ -2558,7 +2615,8 @@ class ConversationalUI {
     console.log(`${c("cyan")} █  ${c("magenta")}┊  ${c("magenta")}●${c("magenta")}  ┊${c("cyan")}  █${R}`);
     console.log(`${c("cyan")} ▀▄${c("magenta")} ═══════════${c("cyan")} ▄▀${R}`);
     console.log(`  ${c("magenta")}${B}P H A N T O M${R}`);
-    console.log(`  ${c("dim")}cybersecurity AI · 62 tools${R}`);
+    const toolCount = Object.keys(hackerTools).length;
+    console.log(`  ${c("dim")}cybersecurity AI · ${toolCount} tools${R}`);
 
     // Spawn single agent
     if (this.am.count === 0) {
@@ -2583,6 +2641,17 @@ class ConversationalUI {
           `${c("green")}${B}${a.name}${R}${c("dim")}(${a.role})${R}`
         ).join(" ")}`);
       }
+
+      // Detect and show available system tools
+      detectSystemTools().then(sysTools => {
+        if (sysTools.length > 0) {
+          const groups = [["recon", "scan", "web"], ["crack", "exploit", "payload"], ["analyze", "decode", "packet"]];
+          const featured = sysTools.filter(t => groups.some(g => g.some(k => t.desc.toLowerCase().includes(k)))).slice(0, 6);
+          if (featured.length > 0) {
+            this.log(`  ${c("dim")}sys:${R} ${featured.map(t => `${c("cyan")}${t.bin}${R}`).join(" ")}`);
+          }
+        }
+      }).catch(() => {});
 
       // Show available providers
       const ready = process.env.PHANTOM_PROVIDERS_READY;
@@ -2802,10 +2871,16 @@ class ConversationalUI {
       });
 
       // Clear thinking
-      process.stdout.write(`\r\x1b[K`);
+      process.stdout.write("\r\x1b[K");
 
       // Render the response with formatting
       this.renderResponse(response);
+
+      // Auto-save conversation
+      this.conversation.push(`user: ${input.substring(0, 200)}`);
+      this.conversation.push(`phantom: ${response.substring(0, 500)}`);
+      if (this.conversation.length > 500) this.conversation.splice(0, 100);
+      saveMemory("conversation_latest", this.conversation);
 
     } catch (err) {
       process.stdout.write(`\r\x1b[K`);
@@ -2819,7 +2894,7 @@ class ConversationalUI {
     this.log(`${c(color)}${text}${R}`);
   }
 
-  handleCommand(args) {
+  async handleCommand(args) {
     const op = args[0]?.toLowerCase();
     const rest = args.slice(1);
 
@@ -2827,10 +2902,13 @@ class ConversationalUI {
       case "help":
       case "h":
         console.log(`\n${B}${c("green")}PHANTOM COMMANDS${R}`);
-        console.log(`  ${c("green")}👻 /help${R}      — show this help`);
+        console.log(`  ${c("green")}  /help${R}      — show this help`);
         console.log(`  ${c("green")}  /tools${R}      — list 62 tools`);
         console.log(`  ${c("green")}  /model${R}      — show/switch LLM`);
         console.log(`  ${c("green")}  /clear${R}      — clear screen`);
+        console.log(`  ${c("green")}  /delegate${R}   — delegate task to agent`);
+        console.log(`  ${c("green")}  /talk${R} <a>   — talk directly to an agent`);
+        console.log(`  ${c("green")}  /agents${R}     — list team with status`);
         console.log(`  ${c("green")}  /save${R} <n>   — save session`);
         console.log(`  ${c("green")}  /load${R} <n>   — load session`);
         console.log(`  ${c("green")}  /quit${R}       — exit\n`);
@@ -2889,6 +2967,52 @@ class ConversationalUI {
         console.log(`  ${c("magenta")}${B}P H A N T O M${R}  ${c("dim")}cleared${R}\n`);
         this.prompt();
         return;
+
+      case "delegate":
+      case "del": {
+        const targetName = rest[0];
+        const task = rest.slice(1).join(" ");
+        if (!targetName) {
+          console.log(`\n${c("red")}✕${R} Usage: /delegate <agent> <task>\n`);
+          console.log(`  ${c("dim")}Agents:${R} ${this.am.list.map(a => `${a.name}(${a.role})`).join(", ")}\n`);
+        } else if (!task) {
+          console.log(`\n${c("red")}✕${R} Specify a task. Usage: /delegate <agent> <task>\n`);
+        } else {
+          const target = this.am.findAgent(targetName);
+          if (!target) {
+            console.log(`\n${c("red")}✕${R} No agent "${targetName}". Available: ${this.am.list.map(a => a.name).join(", ")}\n`);
+          } else {
+            console.log(`\n${c("magenta")}◆${R} Delegating to ${B}${target.name}${R} (${target.role})...\n`);
+            const result = await this.am.delegate(this.agent?.id, targetName, task);
+            console.log(`${c("green")}${result}${R}\n`);
+          }
+        }
+        this.prompt();
+        return;
+      }
+
+      case "talk":
+      case "t": {
+        const agentName = rest[0];
+        const message = rest.slice(1).join(" ");
+        if (!agentName) {
+          console.log(`\n${c("red")}✕${R} Usage: /talk <agent> <message>\n`);
+          console.log(`  ${c("dim")}Agents:${R} ${this.am.list.map(a => `${a.name}(${a.role})`).join(", ")}\n`);
+        } else if (!message) {
+          console.log(`\n${c("red")}✕${R} Specify a message. Usage: /talk <agent> <message>\n`);
+        } else {
+          const target = this.am.findAgent(agentName);
+          if (!target) {
+            console.log(`\n${c("red")}✕${R} No agent "${agentName}". Available: ${this.am.list.map(a => a.name).join(", ")}\n`);
+          } else {
+            console.log(`\n${c("cyan")}◈${R} Talking to ${B}${target.name}${R} (${target.role})...\n`);
+            const result = await target.receive("user", message);
+            console.log(`${c("green")}${result}${R}\n`);
+          }
+        }
+        this.prompt();
+        return;
+      }
 
       case "save":
         if (rest[0]) {
