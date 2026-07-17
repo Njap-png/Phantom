@@ -3088,6 +3088,47 @@ const __detection = (async () => {
           if (best) llm.provider = best;
         }
         process.env.PHANTOM_PROVIDERS_READY = ready.join(",");
+      } else {
+        // No LLM available — offer to set up an API key
+        console.log(`\n${c("yellow")}⚠ No LLM provider configured.${R}`);
+        console.log(`${D}You can run Ollama locally or set an API key.${R}`);
+        const keyProviders = [
+          ["openai", "OPENAI_API_KEY", "OpenAI"],
+          ["anthropic", "ANTHROPIC_API_KEY", "Anthropic"],
+          ["groq", "GROQ_API_KEY", "Groq"],
+          ["gemini", "GEMINI_API_KEY", "Google Gemini"],
+          ["deepseek", "DEEPSEEK_API_KEY", "DeepSeek"],
+          ["mistral", "MISTRAL_API_KEY", "Mistral"],
+          ["openrouter", "OPENROUTER_API_KEY", "OpenRouter"],
+        ];
+        console.log(`\n${B}Set up a provider?${R} (${D}enter number or leave blank to skip${R})`);
+        for (let i = 0; i < keyProviders.length; i++) {
+          console.log(`  ${i + 1}) ${keyProviders[i][2]}`);
+        }
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        const pick = await new Promise(r => rl.question(`\n${c("cyan")}?${R} Choice (1-${keyProviders.length}): `, r));
+        rl.close();
+        const idx = parseInt(pick) - 1;
+        if (idx >= 0 && idx < keyProviders.length) {
+          const [, envVar, label] = keyProviders[idx];
+          const rl2 = readline.createInterface({ input: process.stdin, output: process.stdout });
+          const key = await new Promise(r => rl2.question(`${c("cyan")}🔑${R} Enter ${label} API key: `, r));
+          rl2.close();
+          if (key.trim()) {
+            process.env[envVar] = key.trim();
+            _config[envVar] = key.trim();
+            try { fs.writeFileSync(resolve(BASE_DIR, "config.json"), JSON.stringify(_config, null, 2)); } catch {}
+            console.log(`${c("green")}✓${R} ${label} API key saved to config.json\n`);
+            // Re-detect
+            const avail2 = await llm.detectProviders();
+            const ready2 = Object.entries(avail2).filter(([, v]) => v !== "no").map(([n]) => n);
+            if (ready2.length > 0) {
+              const best = llm.selectBest(avail2);
+              if (best) llm.provider = best;
+              process.env.PHANTOM_PROVIDERS_READY = ready2.join(",");
+            }
+          }
+        }
       }
     }
   } catch {}
