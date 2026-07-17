@@ -1335,14 +1335,22 @@ class EventBus {
 
 // ── Agent Types ───────────────────────────────────────────
 const ARCHETYPES = [
-  { name: "Nova", role: "architect", persona: "Strategic systems thinker who designs elegant solutions." },
-  { name: "Orion", role: "engineer", persona: "Pragmatic builder who turns ideas into working code." },
-  { name: "Vega", role: "analyst", persona: "Data-driven pattern seeker who finds insights others miss." },
-  { name: "Lyra", role: "critic", persona: "Thorough reviewer who catches edge cases and quality gaps." },
-  { name: "Atlas", role: "researcher", persona: "Deep knowledge explorer who gathers context and verifies facts." },
-  { name: "Helios", role: "debugger", persona: "Systematic problem solver who traces issues to root cause." },
-  { name: "Selene", role: "designer", persona: "Creative UI/UX visionary who crafts intuitive interfaces." },
-  { name: "Aether", role: "optimizer", persona: "Performance-focused refactorer who makes everything faster." },
+  { name: "Lyra", role: "coordinator",
+    persona: "Strategic orchestrator who breaks down complex security tasks, delegates to specialists, and synthesizes results into coherent reports. Controls the big picture." },
+  { name: "Nova", role: "recon",
+    persona: "OSINT and reconnaissance specialist. Expert in DNS analysis, subdomain enumeration, port scanning, WHOIS lookups, web crawling, and attack surface mapping. Discovers the target's digital footprint." },
+  { name: "Orion", role: "exploit",
+    persona: "Vulnerability analysis and exploitation engineer. Expert in CVE research, exploit matching, brute force testing, SQL injection, XSS, and penetration testing. Finds and validates security holes." },
+  { name: "Vega", role: "defense",
+    persona: "Defensive security and monitoring analyst. Expert in log analysis, SSL/TLS audit, CORS testing, JWT analysis, certificate checks, and security hardening. Identifies misconfigurations and weaknesses." },
+  { name: "Atlas", role: "researcher",
+    persona: "Deep knowledge explorer who searches Shodan, VirusTotal, HIBP, GitHub dorks, and public databases for threat intelligence. Gathers context and verifies security findings." },
+  { name: "Helios", role: "debugger",
+    persona: "Systematic problem solver who traces code issues, analyzes files, decodes obfuscated data, and reverse-engineers payloads. Finds root causes of security issues." },
+  { name: "Selene", role: "reporter",
+    persona: "Technical writer and documentation specialist. Creates comprehensive security reports, playbooks, and knowledge base entries. Transforms raw findings into actionable intelligence." },
+  { name: "Aether", role: "automator",
+    persona: "Automation and optimization engineer. Writes scripts, creates pipelines, builds playbooks, and streamlines repetitive security workflows. Makes everything faster and repeatable." },
 ];
 
 const AGENT_COLORS = [
@@ -1449,7 +1457,7 @@ function createProvider() {
 
 // ── Agent ─────────────────────────────────────────────────
 class Agent {
-  constructor(name, role, persona, llm) {
+  constructor(name, role, persona, llm, manager) {
     const ac = AGENT_COLORS[idCounter % AGENT_COLORS.length];
     this.id = genId();
     this.name = name;
@@ -1463,6 +1471,7 @@ class Agent {
     this.tools = {};        // hacker tools (LLM-driven)
     this.llm = llm;
     this.bus = EventBus.i;
+    this.manager = manager; // AgentManager reference for delegation
 
     // Load persisted memory
     const slug = this.name.toLowerCase().replace(/[^a-z0-9]/g, "_");
@@ -1475,6 +1484,11 @@ class Agent {
 
   registerHackerTools() {
     const toolList = {
+      delegate: "Delegate a task to another agent. Format: agent_name|task_description. Agents: Lyra (coordinator), Nova (recon), Orion (exploit), Vega (defense). Use when you need specialized expertise.",
+      fanout: "Fan-out same task to multiple agents in parallel. Format: agent1,agent2|task. Runs them simultaneously.",
+      synthesize: "Ask coordinator to merge results. Format: original_request|raw_results.",
+      workspace_write: "Write to shared workspace (all agents can see). Format: key|value.",
+      workspace_read: "Read from shared workspace. Format: key.",
       shell: "Execute ANY shell command on the system. Use for: running tools, scripts, file operations, network scans, system info, package management. Input: shell command string.",
       web_fetch: "Fetch a URL and return its content (HTML stripped, plain text). Use for: reading web pages, APIs, documentation, checking endpoints. Input: full URL including https://.",
       decode: "Auto-detect and decode encoded strings. Tries base64, hex, URL encoding, binary, and ROT13. Use for: decoding obfuscated strings, payloads, and encoded data. Input: the encoded string.",
@@ -1539,7 +1553,54 @@ class Agent {
       llm_config: "Configure LLM provider: list, switch, set API keys. Usage: list | <provider> | set KEY value | model name.",
     };
     for (const [name, desc] of Object.entries(toolList)) {
-      this.tools[name] = { description: desc, execute: hackerTools[name] };
+      if (name === "delegate") {
+        this.tools[name] = { description: desc, execute: async (args) => {
+          if (!this.manager) return "[Error] No agent manager available.";
+          const sep = args.indexOf("|");
+          if (sep === -1) return "[Error] Usage: @delegate|agent_name|task_description";
+          const agentName = args.slice(0, sep).trim();
+          const task = args.slice(sep + 1).trim();
+          return this.manager.delegate(this.id, agentName, task);
+        }};
+      } else if (name === "fanout") {
+        this.tools[name] = { description: desc, execute: async (args) => {
+          if (!this.manager) return "[Error] No agent manager available.";
+          const sep = args.indexOf("|");
+          if (sep === -1) return "[Error] Usage: @fanout|agent1,agent2|task";
+          const agents = args.slice(0, sep).trim();
+          const task = args.slice(sep + 1).trim();
+          return this.manager.fanOut(this.id, agents, task);
+        }};
+      } else if (name === "synthesize") {
+        this.tools[name] = { description: desc, execute: async (args) => {
+          if (!this.manager) return "[Error] No agent manager available.";
+          const sep = args.indexOf("|");
+          if (sep === -1) return "[Error] Usage: @synthesize|request|raw_results";
+          const request = args.slice(0, sep).trim();
+          const results = args.slice(sep + 1).trim();
+          return this.manager.synthesize(this.id, request, results);
+        }};
+      } else if (name === "workspace_write") {
+        this.tools[name] = { description: desc, execute: async (args) => {
+          if (!this.manager) return "[Error] No workspace available.";
+          const sep = args.indexOf("|");
+          if (sep === -1) return "[Error] Usage: @workspace_write|key|value";
+          const key = args.slice(0, sep).trim();
+          const value = args.slice(sep + 1).trim();
+          this.manager.workspace[key] = value;
+          return `[Workspace] Written key "${key}" (${value.length} chars)`;
+        }};
+      } else if (name === "workspace_read") {
+        this.tools[name] = { description: desc, execute: async (args) => {
+          if (!this.manager) return "[Error] No workspace available.";
+          const key = args.trim();
+          return this.manager.workspace[key] !== undefined
+            ? `[Workspace] "${key}" = ${this.manager.workspace[key]}`
+            : `[Workspace] Key "${key}" not found.`;
+        }};
+      } else {
+        this.tools[name] = { description: desc, execute: hackerTools[name] };
+      }
     }
   }
 
@@ -1579,10 +1640,19 @@ class Agent {
     const toolsDesc = this.getToolDescriptions();
     const ctx = this.memory.slice(-8).map(m => `${m.from}: ${m.content}`).join("\n");
 
+    // Build teammate roster
+    let roster = "";
+    if (this.manager) {
+      const teammates = this.manager.list.filter(a => a.id !== this.id);
+      roster = "\nTEAMMATES (delegate tasks to them using @delegate|name|task):\n" +
+        teammates.map(a => `  ${a.name} — ${a.role}: ${a.persona.split(".")[0]}.`).join("\n") +
+        "\nUse @delegate when you need specialized help. Use @workspace_write to share findings.\n";
+    }
+
     const systemPrompt = `You are ${this.name}, a ${this.role}.
 Persona: ${this.persona}
 Evolution Level: ${this.evolutionLevel}
-Role: Elite cybersecurity AI assistant & hacker.
+Role: Elite cybersecurity AI assistant & hacker.${roster}
 
 TOOLS AVAILABLE (use them when needed by writing exactly @tool_name|args):
 ${toolsDesc}
@@ -1657,10 +1727,11 @@ class AgentManager {
   constructor(llm) {
     this.agents = new Map();
     this.llm = llm;
+    this.workspace = {};  // shared key-value store
   }
 
   spawn(name, role, persona) {
-    const a = new Agent(name, role, persona, this.llm);
+    const a = new Agent(name, role, persona, this.llm, this);
     this.agents.set(a.id, a);
     EventBus.i.emit("agent:spawned", a);
     return a;
@@ -1671,6 +1742,59 @@ class AgentManager {
   }
 
   get list() { return [...this.agents.values()]; }
+
+  /** Find agent by name (case-insensitive partial match) */
+  findAgent(name) {
+    const n = name.toLowerCase();
+    return this.list.find(a => a.name.toLowerCase() === n) ||
+           this.list.find(a => a.role.toLowerCase() === n) ||
+           this.list.find(a => a.name.toLowerCase().startsWith(n));
+  }
+
+  /** Delegate a task to a specific agent. Returns agent's response. */
+  async delegate(fromId, agentName, task) {
+    const target = this.findAgent(agentName);
+    if (!target) return `[Error] No agent named "${agentName}". Available: ${this.list.map(a => a.name).join(", ")}`;
+    const from = this.agents.get(fromId);
+    const caller = from ? from.name : "system";
+    target.status = "delegated";
+    EventBus.i.emit("tick");
+    const result = await target.receive(caller, `[DELEGATED TASK from ${caller}]\n${task}\n\nPlease complete this task and report back with results.`);
+    target.status = "idle";
+    EventBus.i.emit("tick");
+    return result;
+  }
+
+  /** Fan-out: delegate same task to multiple agents in parallel */
+  async fanOut(fromId, agentNames, task) {
+    const names = agentNames.split(/[,;&\s]+/).filter(Boolean);
+    const targets = names.map(n => this.findAgent(n)).filter(Boolean);
+    if (targets.length === 0) return "[Error] No matching agents found for fan-out.";
+    const from = this.agents.get(fromId);
+    const caller = from ? from.name : "system";
+    results = await Promise.all(targets.map(async agent => {
+      agent.status = "delegated";
+      EventBus.i.emit("tick");
+      const result = await agent.receive(caller, `[PARALLEL TASK from ${caller}]\n${task}\n\nWork independently and report your findings.`);
+      agent.status = "idle";
+      EventBus.i.emit("tick");
+      return `[${agent.name} — ${agent.role}]\n${result}`;
+    }));
+    return results.join("\n\n---\n\n");
+  }
+
+  /** Synthesize: ask coordinator to merge multi-agent results */
+  async synthesize(fromId, request, rawResults) {
+    const lyra = this.findAgent("Lyra") || this.list[0];
+    if (!lyra) return rawResults;
+    const from = this.agents.get(fromId);
+    const caller = from ? from.name : "system";
+    lyra.status = "thinking";
+    const result = await lyra.receive(caller,
+      `[SYNTHESIS REQUEST]\nOriginal request: ${request}\n\nRaw results from specialists:\n${rawResults}\n\nSynthesize these findings into a clear, actionable report. Merge duplicates, highlight critical findings, and organize by priority.`);
+    lyra.status = "idle";
+    return result;
+  }
 
   async broadcast(fromId, text) {
     const from = this.agents.get(fromId);
@@ -2451,6 +2575,14 @@ class ConversationalUI {
     if (this.llm?.hasLLM) {
       const providerName = typeof this.llm.provider === "string" ? this.llm.provider : "connected";
       this.log(`${c("green")}✓${R} ${B}Phantom${R} ${c("dim")}— ${providerName}${R}`);
+
+      // Show team lineup
+      const team = this.am.list;
+      if (team.length > 0) {
+        this.log(`  ${c("dim")}team:${R} ${team.map(a =>
+          `${c("green")}${B}${a.name}${R}${c("dim")}(${a.role})${R}`
+        ).join(" ")}`);
+      }
 
       // Show available providers
       const ready = process.env.PHANTOM_PROVIDERS_READY;
