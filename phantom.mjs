@@ -1117,6 +1117,135 @@ const hackerTools = {
       return `[Hash Crack] Not found: ${hash}. Supports MD5.`;
     } catch (e) { return `[Hash Crack Error] ${e.message}`; }
   },
+
+  dir_bruteforce: async (input) => {
+    try {
+      const url = input.startsWith("http") ? input.replace(/\/+$/, "") : `https://${input.replace(/\/+$/, "")}`;
+      const paths = ["/admin","/api","/.git","/.env","/backup","/wp-admin","/login","/config","/robots.txt","/.htaccess","/phpinfo.php","/test","/uploads","/debug","/graphql","/swagger","/api/v1","/health","/actuator","/console","/jenkins","/phpmyadmin","/cgi-bin","/server-status","/shell","/crossdomain.xml","/.well-known/security.txt","/metrics","/dump","/logs"];
+      const results = (await Promise.allSettled(paths.map(async p => {
+        try { const r = await fetch(url + p, {signal:AbortSignal.timeout(5000)}); if (r.status !== 404) return `  ${r.status} ${url}${p}`; } catch {}
+        return null;
+      }))).flatMap(r => r.status === "fulfilled" && r.value ? [r.value] : []);
+      return results.length ? `🔍 Dir Bruteforce — ${results.length} hits on ${url}\n${results.join("\n")}` : `[DirBrute] No paths at ${url}`;
+    } catch (e) { return `[DirBrute Error] ${e.message}`; }
+  },
+  xss_scan: async (input) => {
+    try {
+      const url = input.startsWith("http") ? input : `https://${input}`;
+      const payloads = ["<script>alert(1)</script>", "\"><script>alert(1)</script>", "'\"><img src=x onerror=alert(1)>", "{{constructor.constructor('alert(1)')()}}", "'';!--\"<XSS>=&{()}"];
+      const results = (await Promise.allSettled(payloads.map(async p => {
+        try { const tu = (url.includes("?") ? url + "&" : url + "?") + "q=" + encodeURIComponent(p); const r = await fetch(tu, {signal:AbortSignal.timeout(5000)}); const t = await r.text(); if (t.includes(p.substring(0,15))) return `  ⚠ ${p.substring(0,25)} reflected`; } catch {}
+        return null;
+      }))).flatMap(r => r.status === "fulfilled" && r.value ? [r.value] : []);
+      return results.length ? `🚨 XSS — ${results.length} reflection(s) on ${url}\n${results.join("\n")}` : `[XSS] No reflection at ${url}`;
+    } catch (e) { return `[XSS Error] ${e.message}`; }
+  },
+  sql_detect: async (input) => {
+    try {
+      const url = input.startsWith("http") ? input : `https://${input}`;
+      const payloads = ["' OR '1'='1", "' OR 1=1--", "' UNION SELECT 1--", "' AND 1=1--", "' AND SLEEP(3)--", "'; DROP TABLE users--", "' OR '1'='1' /*"];
+      const results = (await Promise.allSettled(payloads.map(async p => {
+        try { const tu = url.includes("?") ? url.replace(/([=?&])[^=&]+$/, "$1" + encodeURIComponent(p)) : url + "?id=" + encodeURIComponent(p); const r = await fetch(tu, {signal:AbortSignal.timeout(8000)}); const t = (await r.text().catch(() => "")).toLowerCase(); if (["sql","mysql","sqlite","syntax","unclosed","quotation","jdbc"].some(s => t.includes(s))) return `  ⚠ ${p.substring(0,20)} → SQL error`; } catch {}
+        return null;
+      }))).flatMap(r => r.status === "fulfilled" && r.value ? [r.value] : []);
+      return results.length ? `⚠️ SQLi — ${results.length} injection(s) on ${url}\n${results.join("\n")}` : `[SQLi] No errors at ${url}`;
+    } catch (e) { return `[SQLi Error] ${e.message}`; }
+  },
+  open_redirect: async (input) => {
+    try {
+      const url = input.startsWith("http") ? input : `https://${input}`;
+      const params = ["url","redirect","redirect_uri","return","return_to","r","next","target","redir","dest","out","to","go","callback","ref"];
+      const results = (await Promise.allSettled(params.map(async p => {
+        try { const tu = (url.includes("?") ? url + "&" : url + "?") + p + "=https://evil.com"; const r = await fetch(tu, {redirect:"manual",signal:AbortSignal.timeout(5000)}); if ((r.headers.get("location")||"").includes("evil.com")) return `  ⚠ ${p}= → external redirect`; } catch {}
+        return null;
+      }))).flatMap(r => r.status === "fulfilled" && r.value ? [r.value] : []);
+      return results.length ? `🔀 Redirect — ${results.length} open redirect(s)\n${results.join("\n")}` : `[OpenRedirect] None at ${url}`;
+    } catch (e) { return `[OpenRedirect Error] ${e.message}`; }
+  },
+  shodan_search: async (input) => {
+    const key = process.env.SHODAN_API_KEY;
+    if (!key) return `[Shodan] Set SHODAN_API_KEY env var`;
+    try {
+      const r = await fetch(`https://api.shodan.io/shodan/host/search?key=${key}&query=${encodeURIComponent(input.trim())}&limit=10`, {signal:AbortSignal.timeout(15000)});
+      const d = await r.json();
+      if (!d.matches?.length) return `[Shodan] No results for "${input}"`;
+      return `🌐 Shodan — ${d.total} result(s)\n${d.matches.slice(0,10).map(m => `  ${m.ip_str}:${m.port} ${m.transport||""} ${(m.product||m.data||"").substring(0,50)}`).join("\n")}`;
+    } catch (e) { return `[Shodan Error] ${e.message}`; }
+  },
+  email_breach: async (input) => {
+    try {
+      const email = input.trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return `[EmailBreach] Invalid email`;
+      const key = process.env.HIBP_API_KEY;
+      if (!key) return `[EmailBreach] Set HIBP_API_KEY env var`;
+      const r = await fetch(`https://haveibeenpwned.com/api/v3/breachedaccount/${encodeURIComponent(email)}?truncateResponse=true`, {headers:{"hibp-api-key":key,"User-Agent":"Phantom"}, signal:AbortSignal.timeout(10000)});
+      if (r.status === 404) return `🔒 ${email} — No known breaches ✅`;
+      if (r.status === 200) { const b = await r.json(); return `⚠️ ${email} — ${b.length} breach(es)\n${b.slice(0,10).map(x => `  🔴 ${x.Name} (${x.BreachDate||"?"})`).join("\n")}`; }
+      return `[EmailBreach] HTTP ${r.status}`;
+    } catch (e) { return `[EmailBreach Error] ${e.message}`; }
+  },
+  github_dork: async (input) => {
+    try {
+      const r = await fetch(`https://api.github.com/search/code?q=${encodeURIComponent(input.trim())}&per_page=10`, {headers:{"Accept":"application/vnd.github.v3+json","User-Agent":"Phantom-Cyber"}, signal:AbortSignal.timeout(15000)});
+      if (r.status === 403) return `[GitHubDork] Rate limited. Try again.`;
+      const d = await r.json();
+      if (!d.items?.length) return `[GitHubDork] No results for "${input}"`;
+      return `🔍 GitHub Dork — ${d.total_count} result(s)\n${d.items.slice(0,10).map(i => `  📄 ${i.repository?.full_name||"?"}/${i.name}`).join("\n")}`;
+    } catch (e) { return `[GitHubDork Error] ${e.message}`; }
+  },
+  sub_takeover: async (input) => {
+    try {
+      const domain = input.replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+      const r = await fetch(`https://dns.google/resolve?name=${domain}&type=CNAME`, {signal:AbortSignal.timeout(8000)});
+      const d = await r.json();
+      const cnames = d?.Answer?.filter(a => a.type === 5).map(a => a.data) || [];
+      if (!cnames.length) return `[SubTakeover] No CNAME for ${domain}`;
+      const svcs = {"cloudfront.net":"AWS CloudFront","s3.amazonaws.com":"AWS S3","github.io":"GitHub Pages","herokuapp.com":"Heroku","azurewebsites.net":"Azure","trafficmanager.net":"Azure TM","pantheonsite.io":"Pantheon","squarespace.com":"Squarespace","zendesk.com":"Zendesk","freshdesk.com":"Freshdesk","helpscout.net":"Help Scout","readme.io":"ReadMe","unbounce.com":"Unbounce","statuspage.io":"Statuspage"};
+      const lines = cnames.map(c => { const s = Object.entries(svcs).find(([k]) => c.includes(k)); return s ? `  ⚠ → ${c.trim()} — ${s[1]} takeover!` : `  ℹ → ${c.trim()}`; });
+      return `🔍 Subdomain Takeover — ${domain}\n${lines.join("\n")}`;
+    } catch (e) { return `[SubTakeover Error] ${e.message}`; }
+  },
+  plugin_load: async (input) => {
+    try {
+      const {existsSync,mkdirSync,readdirSync,resolve} = await import("fs/promises").catch(() => require("fs"));
+      const pf = await import("path");
+      const pluginDir = (input||"").trim() || require("os").homedir() + "/.config/phantom/plugins";
+      if (!existsSync(pluginDir)) mkdirSync(pluginDir, {recursive: true});
+      const files = readdirSync(pluginDir).filter(f => f.endsWith(".mjs") || f.endsWith(".js"));
+      if (!files.length) return `[Plugin] No plugins in ${pluginDir}`;
+      let loaded = 0;
+      for (const f of files) {
+        try { const mod = await import(pf.resolve(pluginDir, f)); if (mod.name && mod.execute) { globalThis.hackerTools ||= {}; globalThis.hackerTools[mod.name] = mod.execute; loaded++; } } catch {}
+      }
+      return loaded ? `🔌 Loaded ${loaded} plugin(s)` : `[Plugin] No valid plugins`;
+    } catch (e) { return `[Plugin Error] ${e.message}`; }
+  },
+  plugin_create: async (input) => {
+    try {
+      const [name,...rest] = input.split("|"); const n = (name||"").trim().toLowerCase().replace(/[^a-z0-9_]/g,"_"); const desc = (rest[0]||"Custom plugin").trim();
+      if (!n) return `[Plugin] Format: tool_name|description`;
+      const d = require("os").homedir() + "/.config/phantom/plugins"; require("fs").mkdirSync(d, {recursive:true});
+      const fp = d + "/" + n + ".mjs";
+      require("fs").writeFileSync(fp, `// Phantom Plugin: ${n}\n// ${desc}\nexport const name = "${n}";\nexport const description = "${desc}";\nexport async function execute(input) {\n  try { return \`[${n}] Processed: \${input}\`; } catch (e) { return \`[\${name} Error] \${e.message}\`; }\n}\n`);
+      return `🔌 Plugin created: @${n}\n  ${fp}`;
+    } catch (e) { return `[Plugin Error] ${e.message}`; }
+  },
+  report_export: async (input) => {
+    try {
+      const {existsSync,readdirSync,readFileSync,writeFileSync} = require("fs"); const {resolve} = require("path"); const {homedir} = require("os");
+      const rd = resolve(homedir(), ".config", "phantom", "reports");
+      const name = input.trim();
+      if (!name && existsSync(rd)) { const all = readdirSync(rd).filter(f => f.endsWith(".md")); if (!all.length) return `[ReportExport] No reports in ${rd}`; return `[ReportExport] Usage: @report_export|report_name\nAvailable: ${all.join(", ")}`; }
+      const fp = resolve(rd, name.includes(".") ? name : name + ".md");
+      if (!existsSync(fp)) return `[ReportExport] Not found: ${name}`;
+      const content = readFileSync(fp, "utf-8");
+      const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Phantom — ${name}</title><style>body{font-family:system-ui,sans-serif;max-width:800px;margin:20px auto;padding:20px;background:#1a1a2e;color:#c8d6e5}h1{color:#00ff88}h2{color:#ffaa00}h3{color:#5a7aff}code,pre{background:#0a0a0f;color:#44ff88;padding:2px 6px;border-radius:3px}pre{padding:12px}}</style></head><body>${
+        content.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/^#### (.+)$/gm,"<h4>$1</h4>").replace(/^### (.+)$/gm,"<h3>$1</h3>").replace(/^## (.+)$/gm,"<h2>$1</h2>").replace(/^# (.+)$/gm,"<h1>$1</h1>").replace(/\*\*(.+?)\*\*/g,"<b>$1</b>").replace(/`{3}([\s\S]*?)`{3}/g,"<pre>$1</pre>").replace(/`(.+?)`/g,"<code>$1</code>").replace(/\n/g,"<br>")
+      }</body></html>`;
+      writeFileSync(fp.replace(/\.\w+$/, ".html"), html, "utf-8");
+      return `📄 Exported: ${fp.replace(/\.\w+$/, ".html")}\n  Browser → Ctrl+P → PDF.`;
+    } catch (e) { return `[ReportExport Error] ${e.message}`; }
+  },
 };
 
 // ── EventBus ──────────────────────────────────────────────
@@ -1291,6 +1420,17 @@ class Agent {
       cors_test: "Test for CORS misconfigurations with various Origin headers. Input: URL.",
       jwt_decode: "Decode JWT token header and payload without verification. Input: JWT string.",
       hash_crack: "Look up MD5 hash in online rainbow tables. Input: MD5 hash.",
+      dir_bruteforce: "Web directory brute force: probes 30+ common paths. Input: URL or domain.",
+      xss_scan: "Cross-Site Scripting scanner: injects XSS payloads, checks reflection. Input: URL.",
+      sql_detect: "SQL Injection detection: sends SQLi payloads, checks error signatures. Input: URL.",
+      open_redirect: "Open redirect scanner: tests 15 common redirect params. Input: URL.",
+      shodan_search: "Search Shodan for connected devices. Requires SHODAN_API_KEY. Input: query.",
+      email_breach: "Check email in known data breaches via HIBP API. Requires HIBP_API_KEY. Input: email.",
+      github_dork: "Search GitHub code for secrets and keys. Input: search query.",
+      sub_takeover: "Check subdomain for CNAME takeover (AWS, GitHub, Heroku, etc.). Input: domain.",
+      plugin_load: "Load external plugin tools from plugins directory. Input: optional path.",
+      plugin_create: "Create a new plugin skeleton. Format: name|description.",
+      report_export: "Export report to styled HTML (Ctrl+P → PDF). Input: report name.",
     };
     for (const [name, desc] of Object.entries(toolList)) {
       this.tools[name] = { description: desc, execute: hackerTools[name] };

@@ -3,6 +3,7 @@ import { createHash } from "crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "fs";
 import { homedir } from "os";
 import { resolve } from "path";
+import { pathToFileURL } from "url";
 import * as dns from "dns/promises";
 import tls from "tls";
 import net from "net";
@@ -1473,6 +1474,230 @@ async function hashCrack(input: string): Promise<string> {
   } catch (e: any) { return `[Hash Crack Error] ${e.message}`; }
 }
 
+// ── WEB APP SECURITY ──────────────────────────────────────
+
+/** Directory Bruteforce — probes 30+ common web paths */
+async function dirBruteforce(input: string): Promise<string> {
+  try {
+    const url = input.startsWith("http") ? input.replace(/\/+$/, "") : `https://${input.replace(/\/+$/, "")}`;
+    const paths = ["/admin","/api","/.git","/.env","/backup","/wp-admin","/login","/config","/robots.txt","/.htaccess","/phpinfo.php","/test","/uploads","/debug","/graphql","/swagger","/api/v1","/health","/actuator","/console","/jenkins","/phpmyadmin","/cgi-bin","/server-status","/shell","/crossdomain.xml","/.well-known/security.txt","/metrics","/dump","/logs"];
+    const results = (await Promise.allSettled(paths.map(async p => {
+      try {
+        const r = await fetch(url + p, { signal: AbortSignal.timeout(5000) });
+        if (r.status !== 404) return `  ${r.status} ${url}${p}`;
+      } catch {}
+      return null;
+    }))).flatMap(r => r.status === "fulfilled" && r.value ? [r.value] : []);
+    if (!results.length) return `[DirBrute] No interesting paths at ${url}`;
+    return `🔍 Dir Bruteforce — ${results.length} hits on ${url}\n${results.join("\n")}`;
+  } catch (e: any) { return `[DirBrute Error] ${e.message}`; }
+}
+
+/** XSS Scanner — injects payloads, checks for reflection */
+async function xssScan(input: string): Promise<string> {
+  try {
+    const url = input.startsWith("http") ? input : `https://${input}`;
+    const payloads = ["<script>alert(1)</script>", "\"><script>alert(1)</script>", "'\"><img src=x onerror=alert(1)>", "{{constructor.constructor('alert(1)')()}}", "'';!--\"<XSS>=&{()}"];
+    const results = (await Promise.allSettled(payloads.map(async p => {
+      try {
+        const testUrl = url.includes("?") ? `${url}&q=${encodeURIComponent(p)}` : `${url}?q=${encodeURIComponent(p)}`;
+        const r = await fetch(testUrl, { signal: AbortSignal.timeout(5000) });
+        const text = await r.text();
+        if (text.includes(p.substring(0, 15))) return `  ⚠ ${p.substring(0, 25)} reflected at ${testUrl.substring(0, 60)}`;
+      } catch {}
+      return null;
+    }))).flatMap(r => r.status === "fulfilled" && r.value ? [r.value] : []);
+    if (!results.length) return `[XSS] No obvious reflection at ${url}`;
+    return `🚨 XSS — ${results.length} reflection(s) on ${url}\n${results.join("\n")}`;
+  } catch (e: any) { return `[XSS Error] ${e.message}`; }
+}
+
+/** SQLi Detection — sends SQLi payloads, checks error signatures */
+async function sqlDetect(input: string): Promise<string> {
+  try {
+    const url = input.startsWith("http") ? input : `https://${input}`;
+    const payloads = ["' OR '1'='1", "' OR 1=1--", "' UNION SELECT 1--", "' AND 1=1--", "' AND SLEEP(3)--", "'; DROP TABLE users--", "' OR '1'='1' /*", "' OR 1=2--"];
+    const results = (await Promise.allSettled(payloads.map(async p => {
+      try {
+        const testUrl = url.includes("?") ? url.replace(/([=?&])[^=&]+$/, `$1${encodeURIComponent(p)}`) : `${url}?id=${encodeURIComponent(p)}`;
+        const r = await fetch(testUrl, { signal: AbortSignal.timeout(8000) });
+        const text = await r.text().catch(() => "");
+        const sigs = ["sql", "mysql", "sqlite", "ora-", "syntax", "unclosed", "quotation", "mysql_fetch", "pg_", "odbc_", "jdbc", "driver"];
+        if (sigs.some(s => text.toLowerCase().includes(s))) return `  ⚠ ${p.substring(0, 20)} → SQL error at ${testUrl.substring(0, 50)}`;
+      } catch {}
+      return null;
+    }))).flatMap(r => r.status === "fulfilled" && r.value ? [r.value] : []);
+    if (!results.length) return `[SQLi] No SQL errors at ${url}`;
+    return `⚠️ SQLi — ${results.length} potential injection(s) on ${url}\n${results.join("\n")}`;
+  } catch (e: any) { return `[SQLi Error] ${e.message}`; }
+}
+
+/** Open Redirect — tests common redirect params for external redirects */
+async function openRedirect(input: string): Promise<string> {
+  try {
+    const url = input.startsWith("http") ? input : `https://${input}`;
+    const params = ["url","redirect","redirect_uri","return","return_to","r","next","target","redir","dest","out","to","go","callback","ref"];
+    const ext = "https://evil.com";
+    const results = (await Promise.allSettled(params.map(async p => {
+      try {
+        const testUrl = url.includes("?") ? `${url}&${p}=${encodeURIComponent(ext)}` : `${url}?${p}=${encodeURIComponent(ext)}`;
+        const r = await fetch(testUrl, { redirect: "manual", signal: AbortSignal.timeout(5000) });
+        if ((r.headers.get("location") || "").includes("evil.com")) return `  ⚠ ${p}= → external redirect`;
+      } catch {}
+      return null;
+    }))).flatMap(r => r.status === "fulfilled" && r.value ? [r.value] : []);
+    if (!results.length) return `[OpenRedirect] No vulnerable params at ${url}`;
+    return `🔀 Redirect Check — ${results.length} open redirect(s)\n${results.join("\n")}`;
+  } catch (e: any) { return `[OpenRedirect Error] ${e.message}`; }
+}
+
+// ── OSINT TOOLS ───────────────────────────────────────────
+
+/** Shodan Search — requires SHODAN_API_KEY */
+async function shodanSearch(input: string): Promise<string> {
+  const key = process.env.SHODAN_API_KEY;
+  if (!key) return `[Shodan] Set SHODAN_API_KEY env var. Get one at https://account.shodan.io`;
+  try {
+    const q = encodeURIComponent(input.trim());
+    const r = await fetch(`https://api.shodan.io/shodan/host/search?key=${key}&query=${q}&limit=10`, { signal: AbortSignal.timeout(15000) });
+    const d = await r.json() as any;
+    if (!d.matches?.length) return `[Shodan] No results for "${input}"`;
+    const lines = d.matches.slice(0, 10).map((m: any) => `  ${m.ip_str}:${m.port} ${m.transport||""} ${(m.product||m.data||"").substring(0, 50)}`);
+    return `🌐 Shodan — ${d.total} result(s) for "${input}"\n${lines.join("\n")}`;
+  } catch (e: any) { return `[Shodan Error] ${e.message}`; }
+}
+
+/** Email Breach Check — tries HIBP API (needs HIBP_API_KEY) */
+async function emailBreach(input: string): Promise<string> {
+  try {
+    const email = input.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return `[EmailBreach] Invalid email`;
+    const key = process.env.HIBP_API_KEY;
+    if (!key) return `[EmailBreach] Set HIBP_API_KEY for breach lookups. Get one at haveibeenpwned.com/API/Key`;
+    const r = await fetch(`https://haveibeenpwned.com/api/v3/breachedaccount/${encodeURIComponent(email)}?truncateResponse=true`, {
+      headers: { "hibp-api-key": key, "User-Agent": "Phantom-Security-Agent" },
+      signal: AbortSignal.timeout(10000)
+    });
+    if (r.status === 404) return `🔒 ${email} — No known breaches ✅`;
+    if (r.status === 200) {
+      const breaches = await r.json() as any[];
+      return `⚠️ ${email} — ${breaches.length} breach(es)\n${breaches.slice(0, 10).map((b: any) => `  🔴 ${b.Name} (${b.BreachDate||"?"})`).join("\n")}`;
+    }
+    return `[EmailBreach] HTTP ${r.status}`;
+  } catch (e: any) { return `[EmailBreach Error] ${e.message}`; }
+}
+
+/** GitHub Dork — searches code for secrets/keys */
+async function githubDork(input: string): Promise<string> {
+  try {
+    const query = encodeURIComponent(input.trim());
+    const r = await fetch(`https://api.github.com/search/code?q=${query}&per_page=10`, {
+      headers: { "Accept": "application/vnd.github.v3+json", "User-Agent": "Phantom-Cyber-Tool" },
+      signal: AbortSignal.timeout(15000)
+    });
+    if (r.status === 403) return `[GitHubDork] Rate limited. Authenticated: 30 req/min, unauthenticated: 10. Try again.`;
+    const d = await r.json() as any;
+    if (!d.items?.length) return `[GitHubDork] No results for "${input}"`;
+    return `🔍 GitHub Dork — ${d.total_count} result(s) for "${input}"\n${d.items.slice(0, 10).map((i: any) => `  📄 ${i.repository?.full_name||"?"}/${i.name}`).join("\n")}`;
+  } catch (e: any) { return `[GitHubDork Error] ${e.message}`; }
+}
+
+/** Subdomain Takeover Check — tests CNAME for unclaimed cloud services */
+async function subTakeover(input: string): Promise<string> {
+  try {
+    const domain = input.replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+    const r = await fetch(`https://dns.google/resolve?name=${domain}&type=CNAME`, { signal: AbortSignal.timeout(8000) });
+    const d = await r.json() as any;
+    const cnames = d?.Answer?.filter((a: any) => a.type === 5).map((a: any) => a.data) || [];
+    if (!cnames.length) return `[SubTakeover] No CNAME records for ${domain}`;
+    const svcs: Record<string, string> = {
+      "cloudfront.net":"AWS CloudFront","s3.amazonaws.com":"AWS S3","github.io":"GitHub Pages",
+      "herokuapp.com":"Heroku","azurewebsites.net":"Azure App Service","trafficmanager.net":"Azure TM",
+      "pantheonsite.io":"Pantheon","squarespace.com":"Squarespace","zendesk.com":"Zendesk",
+      "freshdesk.com":"Freshdesk","helpscout.net":"Help Scout","readme.io":"ReadMe",
+      "unbounce.com":"Unbounce","statuspage.io":"Statuspage",
+    };
+    const lines = cnames.map((c: string) => {
+      const svc = Object.entries(svcs).find(([s]: [string, string]) => c.includes(s));
+      return svc ? `  ⚠ → ${c.trim()} — ${svc[1]} takeover possible!` : `  ℹ → ${c.trim()}`;
+    });
+    return `🔍 Subdomain Takeover — ${domain}\n${lines.join("\n")}`;
+  } catch (e: any) { return `[SubTakeover Error] ${e.message}`; }
+}
+
+// ── PLUGIN SYSTEM ─────────────────────────────────────────
+
+/** Load external plugins from ~/.config/phantom/plugins/ */
+async function pluginLoad(input: string): Promise<string> {
+  try {
+    const pluginDir = (input || "").trim() || resolve(homedir(), ".config", "phantom", "plugins");
+    if (!existsSync(pluginDir)) mkdirSync(pluginDir, { recursive: true });
+    const files = readdirSync(pluginDir).filter((f: string) => f.endsWith(".mjs") || f.endsWith(".js"));
+    if (!files.length) return `[Plugin] No plugins in ${pluginDir}. Use @plugin_create to make one.`;
+    let loaded = 0;
+    for (const f of files) {
+      try {
+        const mod = await import(pathToFileURL(resolve(pluginDir, f)).href) as any;
+        if (mod.name && typeof mod.execute === "function") {
+          hackerTools[mod.name] = hackerTools[mod.name] || { description: mod.description || f, execute: mod.execute };
+          loaded++;
+        }
+      } catch (e: any) { /* skip broken */ }
+    }
+    return loaded ? `🔌 Loaded ${loaded} plugin(s) from ${pluginDir}` : `[Plugin] No valid modules in ${pluginDir}`;
+  } catch (e: any) { return `[Plugin Error] ${e.message}`; }
+}
+
+/** Create a new plugin skeleton */
+async function pluginCreate(input: string): Promise<string> {
+  try {
+    const [name, ...rest] = input.split("|");
+    const n = (name || "").trim().toLowerCase().replace(/[^a-z0-9_]/g, "_");
+    const desc = (rest[0] || "Custom Phantom plugin").trim();
+    if (!n) return `[Plugin] Format: tool_name|description`;
+    const pluginDir = resolve(homedir(), ".config", "phantom", "plugins");
+    if (!existsSync(pluginDir)) mkdirSync(pluginDir, { recursive: true });
+    const code = `// Phantom Plugin: ${n}\n// ${desc}\nexport const name = "${n}";\nexport const description = "${desc}";\nexport async function execute(input) {\n  try {\n    return \`[${n}] Processed: \${input}\`;\n  } catch (e) { return \`[\${name} Error] \${e.message}\`; }\n}\n`;
+    const fp = resolve(pluginDir, `${n}.mjs`);
+    writeFileSync(fp, code, "utf-8");
+    try {
+      const mod = await import(pathToFileURL(fp).href) as any;
+      hackerTools[mod.name] = { description: mod.description, execute: mod.execute };
+      return `🔌 Plugin created + loaded: @${n}\n  ${fp}`;
+    } catch {
+      return `🔌 Plugin created: @${n}\n  ${fp}\n  Run @plugin_load to activate.`;
+    }
+  } catch (e: any) { return `[Plugin Error] ${e.message}`; }
+}
+
+// ── REPORTING ─────────────────────────────────────────────
+
+/** Export report to styled HTML (browser → Ctrl+P = PDF) */
+async function reportExport(input: string): Promise<string> {
+  try {
+    const reportsDir = resolve(homedir(), ".config", "phantom", "reports");
+    const name = input.trim();
+    if (!name && existsSync(reportsDir)) {
+      const all = readdirSync(reportsDir).filter((f: string) => f.endsWith(".md"));
+      if (!all.length) return `[ReportExport] No .md reports found in ${reportsDir}`;
+      return `[ReportExport] Usage: @report_export|report_name\nAvailable: ${all.join(", ")}`;
+    }
+    const fp = resolve(reportsDir, name.includes(".") ? name : `${name}.md`);
+    if (!existsSync(fp)) return `[ReportExport] Not found: ${name}`;
+    const content = readFileSync(fp, "utf-8");
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Phantom — ${name}</title><style>body{font-family:system-ui,sans-serif;max-width:800px;margin:20px auto;padding:20px;background:#1a1a2e;color:#c8d6e5}h1{color:#00ff88}h2{color:#ffaa00}h3{color:#5a7aff}code,pre{background:#0a0a0f;color:#44ff88;padding:2px 6px;border-radius:3px}pre{padding:12px}hr{border-color:#333}</style></head><body>${
+      content.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+        .replace(/^#### (.+)$/gm,"<h4>$1</h4>").replace(/^### (.+)$/gm,"<h3>$1</h3>")
+        .replace(/^## (.+)$/gm,"<h2>$1</h2>").replace(/^# (.+)$/gm,"<h1>$1</h1>")
+        .replace(/\*\*(.+?)\*\*/g,"<b>$1</b>").replace(/`{3}([\s\S]*?)`{3}/g,"<pre>$1</pre>")
+        .replace(/`(.+?)`/g,"<code>$1</code>").replace(/\n/g,"<br>")
+    }</body></html>`;
+    const htmlPath = fp.replace(/\.\w+$/, ".html");
+    writeFileSync(htmlPath, html, "utf-8");
+    return `📄 Report exported: ${htmlPath}\n  Open in browser → Ctrl+P → Save as PDF.`;
+  } catch (e: any) { return `[ReportExport Error] ${e.message}`; }
+}
+
 export const hackerTools: Record<string, HackerTool> = {
   shell: {
     description:
@@ -1736,5 +1961,68 @@ export const hackerTools: Record<string, HackerTool> = {
     description:
       "Look up MD5 hash in online rainbow tables (nitrxgen API). Use for: cracking password hashes, identifying plaintext. Input: MD5 hash (32 hex chars).",
     execute: hashCrack,
+  },
+
+  // ── WEB APP SECURITY ──
+  dir_bruteforce: {
+    description:
+      "Web directory brute force: probes 30+ common paths (admin, api, .git, .env, uploads, etc.). Uses parallel requests. Use for: finding hidden endpoints, admin panels, exposed files. Input: URL or domain.",
+    execute: dirBruteforce,
+  },
+  xss_scan: {
+    description:
+      "Cross-Site Scripting scanner: injects multiple XSS payloads via query params and checks if they reflect. Use for: detecting XSS vulnerabilities. Input: URL (with or without params).",
+    execute: xssScan,
+  },
+  sql_detect: {
+    description:
+      "SQL Injection detection: sends common SQLi payloads (' OR 1=1--, UNION SELECT, etc.) and scans for SQL error signatures. Use for: finding SQLi entry points. Input: URL with parameter.",
+    execute: sqlDetect,
+  },
+  open_redirect: {
+    description:
+      "Open redirect scanner: tests 15 common redirect parameters (url, redirect, next, etc.) for external redirects. Use for: finding unvalidated redirects. Input: URL.",
+    execute: openRedirect,
+  },
+
+  // ── OSINT ──
+  shodan_search: {
+    description:
+      "Search Shodan for internet-connected devices, open ports, and banners. Requires SHODAN_API_KEY. Use for: OSINT, exposed devices, infrastructure discovery. Input: search query.",
+    execute: shodanSearch,
+  },
+  email_breach: {
+    description:
+      "Check if an email appears in known data breaches via HIBP API (requires HIBP_API_KEY). Shows breach names and dates. Use for: OSINT, compromise investigation. Input: email address.",
+    execute: emailBreach,
+  },
+  github_dork: {
+    description:
+      "Search GitHub source code for secrets, keys, and sensitive data via GitHub Code Search. Use for: finding exposed credentials, API keys, and configs. Input: search query.",
+    execute: githubDork,
+  },
+  sub_takeover: {
+    description:
+      "Check subdomain for potential takeover via unclaimed CNAME records. Checks 15+ cloud services (AWS S3, CloudFront, GitHub Pages, Heroku, Azure, etc.). Use for: identifying dangling DNS. Input: domain.",
+    execute: subTakeover,
+  },
+
+  // ── PLUGIN SYSTEM ──
+  plugin_load: {
+    description:
+      "Load external plugin tools from ~/.config/phantom/plugins/. Imports .mjs/.js modules with name/description/execute exports. Use for: extending Phantom without modifying core. Input: optional plugin directory path.",
+    execute: pluginLoad,
+  },
+  plugin_create: {
+    description:
+      "Create a new Phantom plugin skeleton. Format: name|description. Saves to ~/.config/phantom/plugins/ and attempts auto-load. Use for: quickly extending toolset. Input: tool_name|description.",
+    execute: pluginCreate,
+  },
+
+  // ── REPORTING ──
+  report_export: {
+    description:
+      "Export a saved markdown report to styled dark-themed HTML. Open in browser → Ctrl+P → Save as PDF. Use for: sharing findings, report formatting. Input: report name (without .md).",
+    execute: reportExport,
   },
 };

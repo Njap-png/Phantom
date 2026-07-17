@@ -6,10 +6,23 @@
 
 ## Current State (as of latest commit)
 
-**18 hacker tools** in dual runtime (`.mjs` zero-dep + `src/` TypeScript):
+**60 hacker tools** in dual runtime (`.mjs` zero-dep + `src/` TypeScript):
 - **6 core**: shell, web_fetch, decode, file_analyze, dns_lookup, hash
 - **8 advanced**: whois, port_scan, http_headers, ssl_check, sub_enum, crawl, vt_check, yara
 - **4 workflow**: recon, cve_search, searchsploit, bruteforce
+- **5 file ops**: file_read, file_write, file_edit, file_search, file_list
+- **3 self tools**: self_info, self_read, self_edit
+- **2 auto-scan**: vuln_scan, report_save
+- **2 sessions**: session_save, session_load
+- **2 knowledge**: knowledge_add, knowledge_search
+- **4 playbook**: playbook_create, playbook_list, playbook_run, playbook_edit
+- **5 recon tools**: geoip, dns_zone, http_methods, robots_txt, email_verify
+- **6 utility**: reverse_dns, wayback, cert_expiry, cors_test, jwt_decode, hash_crack
+- **4 web security**: dir_bruteforce, xss_scan, sql_detect, open_redirect
+- **4 OSINT**: shodan_search, email_breach, github_dork, sub_takeover
+- **2 plugin system**: plugin_load, plugin_create
+- **1 reporting**: report_export
+- **1 GUI dashboard**, 1 code_gen, 1 self_add_tool
 
 ## Project Structure
 
@@ -41,7 +54,7 @@
 └── CONTEXT.md           ← THIS FILE
 ```
 
-## All 49 Tools
+## All 60 Tools
 
 | Tool | What it does |
 |------|-------------|
@@ -94,6 +107,17 @@
 | `cors_test` | **CORS misconfiguration scanner** |
 | `jwt_decode` | **Decode JWT header + payload** |
 | `hash_crack` | **Online MD5 rainbow table lookup** |
+| `dir_bruteforce` | **🎯 Web dir brute: 30+ common paths** |
+| `xss_scan` | **⚠️ XSS scanner: injects payloads, checks reflection** |
+| `sql_detect` | **⚠️ SQLi detection: error signatures** |
+| `open_redirect` | **🔀 Open redirect scanner: 15 params** |
+| `shodan_search` | **🌐 Shodan device search (needs API key)** |
+| `email_breach` | **🔒 HIBP breach lookup (needs API key)** |
+| `github_dork` | **🔍 GitHub code search for secrets** |
+| `sub_takeover` | **⚠️ Subdomain CNAME takeover check** |
+| `plugin_load` | **🔌 Load external plugins dynamically** |
+| `plugin_create` | **🔌 Create plugin skeleton** |
+| `report_export` | **📄 Export report to HTML/PDF** |
 
 ## How to Use
 
@@ -130,11 +154,14 @@ Auto-loads from `~/.config/phantom/config.json`:
 
 ## What's Left To Do
 
-- [x] **Web UI / dashboard** — Start with `node phantom.mjs --gui` or `npm run dashboard`
+- [x] **Web UI / dashboard** — `node phantom.mjs --gui` or `npm run dashboard`
+- [x] **Web app security scanning** — dir bruteforce, XSS, SQLi, open redirect
+- [x] **OSINT & recon tools** — Shodan, email breach, GitHub dork, subdomain takeover
+- [x] **Plugin system** — Extend Phantom with external modules
+- [x] **Report export** — HTML/PDF report generation
 - [ ] **Local model support** — Offline LLM via Ollama
 - [ ] **Autonomous agent chaining** — Multi-agent parallel playbook runs
 - [ ] **Distributed scanning** — Phantom runs across multiple hosts
-- [ ] **Plugin system** — Load external tool packs dynamically
 
 ### Web Dashboard
 Start the dashboard with zero extra dependencies:
