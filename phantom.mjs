@@ -430,6 +430,7 @@ class Agent {
       project_file_add: "Add a file to a project by copying it into the project directory. Input: project|filepath.",
       project_note: "Add or list project notes. Format: project|note_text (or just project name to list). Input: project|note.",
       project_switch: "Set active project for context. Input: project name.",
+      scope: "Manage authorized target scope for bug bounty / pentesting. Commands: add <target>, remove <target|#id>, check <target>, clear, export. Use 'scope' alone to list all scoped targets. Input: command + args.",
     };
     for (const [name, desc] of Object.entries(toolList)) {
       if (name === "delegate") {

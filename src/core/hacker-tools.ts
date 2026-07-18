@@ -1273,6 +1273,23 @@ async function projectSwitch(name: string): Promise<string> {
   } catch(e: any) { return `[Project Error] ${e.message}`; }
 }
 
+async function scope(input: string): Promise<string> {
+  const SCOPE_FILE = `${process.env.HOME||"/root"}/.config/phantom/scope.json`;
+  const {existsSync,readFileSync,writeFileSync,mkdirSync} = await import("fs");
+  const dir = `${process.env.HOME||"/root"}/.config/phantom`;
+  if (!existsSync(dir)) mkdirSync(dir,{recursive:true});
+  function load() { try { return existsSync(SCOPE_FILE)?JSON.parse(readFileSync(SCOPE_FILE,"utf-8")):[]; } catch { return []; } }
+  function save(s: string[]) { writeFileSync(SCOPE_FILE,JSON.stringify(s,null,2)); }
+  if (!input||!input.trim()) { const s=load(); return s.length?`🎯 SCOPE (${s.length})\n${s.map((t:string,i:number)=>`  ${i+1}. ${t}`).join("\n")}`:`🎯 Scope: (empty) — use "scope add <target>"`; }
+  const parts = input.split(/\s+/).map(s=>s.trim()); const cmd = parts[0].toLowerCase();
+  if (cmd==="add") { if(!parts[1])return `[Scope] Usage: scope add <target>`; const s=load(),t=parts.slice(1).join(" "); if(s.includes(t))return`[Scope] "${t}" already in scope.`; s.push(t);save(s);return`✅ Added: ${t} (${s.length} total)`; }
+  if (cmd==="remove"||cmd==="rm") { if(!parts[1])return`[Scope] Usage: scope remove <target|#id>`; const s=load();const idx=parseInt(parts[1]);if(!isNaN(idx)&&idx>0&&idx<=s.length){const r=s.splice(idx-1,1);save(s);return`❌ Removed: ${r[0]}`;}const t=parts.slice(1).join(" ");const i=s.indexOf(t);if(i===-1)return`[Scope] "${t}" not in scope.`;s.splice(i,1);save(s);return`❌ Removed: ${t}`; }
+  if (cmd==="check") { if(!parts[1])return`[Scope] Usage: scope check <target>`; const s=load(),t=parts.slice(1).join(" ").toLowerCase();const f=s.filter((x:string)=>t.includes(x.toLowerCase())||x.toLowerCase().includes(t));return f.length?`✅ "${parts.slice(1).join(" ")}" matches: ${f.join(", ")}`:`⚠️ "${parts.slice(1).join(" ")}" NOT in scope`; }
+  if (cmd==="clear") { save([]);return`🗑️ Scope cleared`; }
+  if (cmd==="export") { const s=load();return s.length?s.join("\n"):"(empty)"; }
+  return `[Scope] Commands: add <target>, remove <target|#id>, check <target>, clear, export.`;
+}
+
 // ── END NEW TOOLS ─────────────────────────────────────────
 
 async function whois(domain: string): Promise<string> {
@@ -3159,5 +3176,9 @@ export const hackerTools: Record<string, HackerTool> = {
   project_switch: {
     description: "Set active project for context. Input: project name.",
     execute: projectSwitch,
+  },
+  scope: {
+    description: "Manage authorized target scope for bug bounty / pentesting. Commands: add <target>, remove <target|#id>, check <target>, clear, export. Input: command + args.",
+    execute: scope,
   },
 };
