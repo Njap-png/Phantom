@@ -2030,6 +2030,11 @@ if (args.length > 0 && !args[0].startsWith("--")) {
   const flag = args[0].replace("--", "");
   const input = args.slice(1).join(" ") || "";
 
+  if (flag === "version" || flag === "v") {
+    log.cli(`Phantom v${PHANTOM_VERSION}`);
+    process.exit(0);
+  }
+
   if (flag === "help" || flag === "h") {
     log.cli(`Phantom — Cybersecurity AI Assistant
 
@@ -2045,6 +2050,7 @@ Usage:
   phantom --gui                         Start web dashboard (port 8080)
   phantom --api                         Start REST API server (port 9090)
   phantom --quiet                       Suppress banner/status
+  phantom --version                     Show version
   phantom --help                        This help
 
 Scheduling:
