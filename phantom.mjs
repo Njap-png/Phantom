@@ -418,6 +418,8 @@ class Agent {
       batch: "Multi-target batch processing. Format: file_path|tool_name. Reads targets from a file (one per line) and runs the specified tool against each. Aggregates results into one report.",
       schedule: "Schedule recurring scans. Format: interval|tool|target. Interval: 'daily', 'hourly', '30m', or cron expression. Example: @schedule|daily|recon|example.com",
       agent_memory: "View or manage agent conversation memory. Format: list | <agent_name> | <agent_name> clear. Agents: Lyra, Nova, Orion, Vega, Atlas, Helios, Selene, Aether.",
+      fuzz: "Web fuzzing engine. Discovers hidden paths, parameters, and files via concurrent HTTP requests with a built-in common wordlist. Format: url|wordlist_type (common, admin, backup, params, php, asp, jsp, custom:path.txt). Shows status, size, redirects. Input: https://target.com/FUZZ or https://target.com?param=FUZZ",
+      pwn: "Auto-exploit chain. Runs full recon, finds CVEs, searches exploit-db, and generates an exploit plan. Format: target|optional_port. Chains: recon → CVE search → exploit lookup → metasploit resource generation.",
     };
     for (const [name, desc] of Object.entries(toolList)) {
       if (name === "delegate") {
@@ -2168,9 +2170,14 @@ __r.llmInstance = llmInstance;
   // Unknown flag — run as tool name directly
   const toolName = flag;
   if (hackerTools[toolName]) {
-    console.log(`🔧 ${toolName} ${input ? `— ${input}` : ""}`);
+    process.stdout.write(`🔧 ${toolName}${input ? ` — ${input}` : ""}  `);
+    const start = Date.now();
+    process.stdout.write(`[*] processing...\r`);
     const result = await hackerTools[toolName](input || "");
-    console.log(result);
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+    console.log(`\r${result ? result.slice(0, 10000) : "(empty)"}`);
+    if (result && result.length > 10000) console.log(`...[truncated ${result.length} total chars]`);
+    if (elapsed > 0.5) console.log(`⏱ ${elapsed}s`);
     process.exit(0);
   }
 
