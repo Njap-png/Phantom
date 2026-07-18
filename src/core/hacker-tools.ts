@@ -1370,6 +1370,146 @@ async function ffuf(input: string): Promise<string> {
   } catch(e: any) { return `[ffuf Error] ${e.message}`; }
 }
 
+async function httpx(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[httpx] Usage: @httpx|<domain_or_file> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["httpx"],{encoding:"utf-8",timeout:5000}); } catch { return `[httpx] NOT INSTALLED`; }
+    const parts = input.trim().split(/\s+/);
+    const target = parts[0]; const extra = parts.slice(1);
+    const result = execFileSync("httpx", ["-l","/dev/stdin",...extra,"-o","/dev/stdout"], {input:target,encoding:"utf-8",timeout:60000,maxBuffer:1024*1024});
+    const lines = result.trim().split("\n").filter(Boolean);
+    if (!lines.length) return `[httpx] No alive for ${target}`;
+    return [`🔎 Httpx: ${target}`,`Alive: ${lines.length}`,...lines.slice(0,50).map(l=>`  ${l}`),...(lines.length>50?[`  ... and ${lines.length-50} more`]:[])].join("\n");
+  } catch(e: any) { return `[httpx Error] ${e.message}`; }
+}
+
+async function nuclei(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[nuclei] Usage: @nuclei|<URL> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["nuclei"],{encoding:"utf-8",timeout:5000}); } catch { return `[nuclei] NOT INSTALLED`; }
+    const parts = input.trim().split(/\s+/);
+    const target = parts[0]; const extra = parts.slice(1);
+    try { execFileSync("nuclei",["-ut","-silent"],{encoding:"utf-8",timeout:30000}); } catch {}
+    const out = execFileSync("nuclei", ["-u",target,"-o","/dev/stdout","-silent",...extra], {encoding:"utf-8",timeout:180000,maxBuffer:2*1024*1024});
+    const lines = out.trim().split("\n").filter(Boolean);
+    if (!lines.length) return `[nuclei] No findings for ${target}`;
+    const result = [`🔬 Nuclei: ${target}`, `Findings: ${lines.length}`];
+    result.push(...lines.slice(0,100).map(l=>`  ${l}`));
+    if (lines.length > 100) result.push(`  ... and ${lines.length-100} more`);
+    return result.join("\n");
+  } catch(e: any) { return `[nuclei Error] ${e.message}`; }
+}
+
+async function amass(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[amass] Usage: @amass|<domain> [mode] [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["amass"],{encoding:"utf-8",timeout:5000}); } catch { return `[amass] NOT INSTALLED`; }
+    const parts = input.trim().split(/\s+/);
+    const domain = parts[0];
+    const mode = parts.length>1&&["enum","intel","db"].includes(parts[1])?parts[1]:"enum";
+    const extra = mode==="enum"?parts.slice(1).filter((_,i)=>i!==0&&parts[i]!==mode):parts.slice(2);
+    const args = mode==="enum"?["enum","-d",domain,"-json","/dev/stdout","-silent",...extra]
+               : mode==="intel"?["intel","-d",domain,"-json","/dev/stdout","-silent",...extra]
+               : ["db","-d",domain,"-json","/dev/stdout","-silent",...extra];
+    const out = execFileSync("amass", args, {encoding:"utf-8",timeout:180000,maxBuffer:2*1024*1024});
+    const lines = out.trim().split("\n").filter(Boolean);
+    if (!lines.length) return `[amass] 0 results for ${domain}`;
+    const names = lines.map(l=>{try{return JSON.parse(l).name||l}catch{return l}}).filter(Boolean);
+    const unique = [...new Set(names)].sort();
+    const result = [`🔎 Amass ${mode}: ${domain}`, `Results: ${unique.length}`];
+    result.push(...unique.slice(0,100).map(s=>`  ${s}`));
+    if (unique.length>100) result.push(`  ... and ${unique.length-100} more`);
+    return result.join("\n");
+  } catch(e: any) { return `[amass Error] ${e.message}`; }
+}
+
+async function gau(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[gau] Usage: @gau|<domain> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["gau"],{encoding:"utf-8",timeout:5000}); } catch { return `[gau] NOT INSTALLED`; }
+    const parts = input.trim().split(/\s+/);
+    const domain = parts[0].replace(/^https?:\/\//,"").replace(/\/.*$/,"");
+    const extra = parts.slice(1);
+    const out = execFileSync("gau", ["--o","/dev/stdout",domain,...extra], {encoding:"utf-8",timeout:120000,maxBuffer:5*1024*1024});
+    const lines = out.trim().split("\n").filter(Boolean);
+    if (!lines.length) return `[gau] 0 URLs for ${domain}`;
+    const unique = [...new Set(lines)];
+    const result = [`🔎 Gau: ${domain}`, `URLs: ${unique.length}`];
+    result.push(...unique.slice(0,80).map(u=>`  ${u}`));
+    if (unique.length>80) result.push(`  ... and ${unique.length-80} more`);
+    return result.join("\n");
+  } catch(e: any) { return `[gau Error] ${e.message}`; }
+}
+
+async function dnsx(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[dnsx] Usage: @dnsx|<domain_or_file> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["dnsx"],{encoding:"utf-8",timeout:5000}); } catch { return `[dnsx] NOT INSTALLED`; }
+    const parts = input.trim().split(/\s+/);
+    const target = parts[0]; const extra = parts.slice(1);
+    const out = execFileSync("dnsx", ["-d",target,"-o","/dev/stdout",...extra], {encoding:"utf-8",timeout:60000,maxBuffer:1024*1024});
+    const lines = out.trim().split("\n").filter(Boolean);
+    if (!lines.length) return `[dnsx] 0 records for ${target}`;
+    return [`🔎 Dnsx: ${target}`, `Records: ${lines.length}`,...lines.slice(0,50).map(l=>`  ${l}`)].join("\n");
+  } catch(e: any) { return `[dnsx Error] ${e.message}`; }
+}
+
+async function gitleaks(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[gitleaks] Usage: @gitleaks|<path> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["gitleaks"],{encoding:"utf-8",timeout:5000}); } catch { return `[gitleaks] NOT INSTALLED`; }
+    const parts = input.trim().split(/\s+/);
+    const path = parts[0]; const extra = parts.slice(1);
+    const out = execFileSync("gitleaks", ["detect","--source",path,"-v","--no-color",...extra], {encoding:"utf-8",timeout:180000,maxBuffer:2*1024*1024});
+    const lines = out.trim().split("\n").filter(Boolean);
+    if (!lines.length) return `[gitleaks] 0 secrets in ${path}`;
+    const result = [`🔐 Gitleaks: ${path}`, `Findings: ${lines.length}`];
+    result.push(...lines.slice(0,50).map(l=>`  ${l}`));
+    if (lines.length>50) result.push(`  ... and ${lines.length-50} more`);
+    return result.join("\n");
+  } catch(e: any) { return `[gitleaks Error] ${e.message}`; }
+}
+
+async function s3scanner(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[s3scanner] Usage: @s3scanner|<bucket_or_file> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["s3scanner"],{encoding:"utf-8",timeout:5000}); } catch { return `[s3scanner] NOT INSTALLED`; }
+    const parts = input.trim().split(/\s+/);
+    const cmd = parts[0]; const extra = parts.slice(1);
+    const out = execFileSync("s3scanner", [cmd,...extra], {encoding:"utf-8",timeout:120000,maxBuffer:1024*1024});
+    const lines = out.trim().split("\n").filter(Boolean);
+    if (!lines.length) return `[s3scanner] 0 buckets`;
+    const result = [`🔎 S3 Scanner: ${cmd}`, `Results: ${lines.length}`];
+    result.push(...lines.slice(0,50).map(l=>`  ${l}`));
+    if (lines.length>50) result.push(`  ... and ${lines.length-50} more`);
+    return result.join("\n");
+  } catch(e: any) { return `[s3scanner Error] ${e.message}`; }
+}
+
+async function gobuster(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[gobuster] Usage: @gobuster|<mode>|<url> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["gobuster"],{encoding:"utf-8",timeout:5000}); } catch { return `[gobuster] NOT INSTALLED`; }
+    const parts = input.trim().split("|").map(s=>s.trim());
+    if (parts.length<2) return `[gobuster] Usage: @gobuster|<mode>|<opts>`;
+    const mode = parts[0].toLowerCase();
+    const rest = parts.slice(1).join(" ");
+    const modeArgs = (mode==="dir"?["dir"]:mode==="dns"?["dns"]:mode==="vhost"?["vhost"]:["fuzz"]).concat(rest.split(/\s+/));
+    const out = execFileSync("gobuster", [...modeArgs,"-o","/dev/stdout","-q"], {encoding:"utf-8",timeout:180000,maxBuffer:2*1024*1024});
+    const lines = out.trim().split("\n").filter(Boolean);
+    if (!lines.length) return `[gobuster] No results`;
+    return [`⚡ Gobuster ${mode}: ${rest}`, `Results: ${lines.length}`,...lines.slice(0,80).map(l=>`  ${l}`)].join("\n");
+  } catch(e: any) { return `[gobuster Error] ${e.message}`; }
+}
+
 // ── END NEW TOOLS ─────────────────────────────────────────
 
 async function whois(domain: string): Promise<string> {
@@ -3272,5 +3412,37 @@ export const hackerTools: Record<string, HackerTool> = {
   ffuf: {
     description: "External: ffuf — blazing-fast web fuzzer. Discovers paths, params, vhosts. Input: ffuf args. Requires ffuf binary.",
     execute: ffuf,
+  },
+  httpx: {
+    description: "External: ProjectDiscovery httpx — probe for alive web servers. Input: domain or file. Requires httpx binary.",
+    execute: httpx,
+  },
+  nuclei: {
+    description: "External: ProjectDiscovery nuclei — template-based vulnerability scanner. Input: URL [options]. Requires nuclei binary.",
+    execute: nuclei,
+  },
+  amass: {
+    description: "External: OWASP amass — thorough subdomain enumeration. Modes: enum, intel, db. Input: domain [mode]. Requires amass binary.",
+    execute: amass,
+  },
+  gau: {
+    description: "External: getallurls (lc/gau) — fetch known URLs from Wayback/AlienVault/CommonCrawl. Input: domain. Requires gau binary.",
+    execute: gau,
+  },
+  dnsx: {
+    description: "External: ProjectDiscovery dnsx — DNS resolution toolkit. Input: domain. Requires dnsx binary.",
+    execute: dnsx,
+  },
+  gitleaks: {
+    description: "External: gitleaks — git repository secret scanner. Input: repo path. Requires gitleaks binary.",
+    execute: gitleaks,
+  },
+  s3scanner: {
+    description: "External: s3scanner — find S3 buckets and check permissions. Input: bucket. Requires s3scanner binary.",
+    execute: s3scanner,
+  },
+  gobuster: {
+    description: "External: gobuster — directory, DNS, vhost brute-forcing. Modes: dir, dns, vhost, fuzz. Input: mode|opts. Requires gobuster binary.",
+    execute: gobuster,
   },
 };

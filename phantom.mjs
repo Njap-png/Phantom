@@ -434,6 +434,14 @@ class Agent {
       katana: "External: ProjectDiscovery katana — fast web crawler for URL discovery. Supports depth, rate-limit, JS extraction. Input: url [options]. Requires katana binary installed.",
       subfinder: "External: ProjectDiscovery subfinder — passive subdomain enumeration using multiple sources (crt.sh, certspotter, hackertarget, etc.). Input: domain [options]. Requires subfinder binary.",
       ffuf: "External: ffuf — blazing-fast web fuzzer by Joohansson. Discovers hidden paths, parameters, vhosts. Supports built-in wordlists. Input: ffuf args. Requires ffuf binary.",
+      httpx: "External: ProjectDiscovery httpx — probe for alive web servers. Detects status, title, tech stack, IP. Input: domain or file. Requires httpx binary.",
+      nuclei: "External: ProjectDiscovery nuclei — template-based vulnerability scanner. Scans CVEs, exposures, misconfigs. Input: URL [options]. Requires nuclei binary.",
+      amass: "External: OWASP amass — thorough subdomain enumeration. Modes: enum, intel, db. Input: domain [mode] [options]. Requires amass binary.",
+      gau: "External: getallurls (lc/gau) — fetch known URLs from Wayback/AlienVault/CommonCrawl. Input: domain. Requires gau binary.",
+      dnsx: "External: ProjectDiscovery dnsx — DNS resolution toolkit. Multi-record type resolver. Input: domain. Requires dnsx binary.",
+      gitleaks: "External: gitleaks — git repository secret scanner. Detects accidental credential commits. Input: repo path. Requires gitleaks binary.",
+      s3scanner: "External: s3scanner — find S3 buckets and check permissions. Input: bucket name or file. Requires s3scanner binary.",
+      gobuster: "External: gobuster — directory, DNS, and vhost brute-forcing. Modes: dir, dns, vhost, fuzz. Input: mode|opts. Requires gobuster binary.",
     };
     for (const [name, desc] of Object.entries(toolList)) {
       if (name === "delegate") {
