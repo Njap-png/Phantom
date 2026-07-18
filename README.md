@@ -147,11 +147,35 @@ Every push runs across Node.js 20 and 22:
 
 Phantom auto-detects available providers on startup. Supported:
 
-- **Ollama** (local, default)
-- **OpenAI** / **Groq** / **Anthropic** / **Gemini**
-- **DeepSeek** / **Mistral** / **OpenRouter**
+| Provider | Config |
+|---|---|
+| **Ollama** (local, default) | Auto-detected if running |
+| **OpenAI** | `OPENAI_API_KEY` env or `@llm_config\|set\|openai_api_key\|sk-...` |
+| **OpenCode** (via Hermes) | `@llm_config\|opencode\|deepseek-v4-flash-free` |
+| **Groq** | `GROQ_API_KEY` env |
+| **Anthropic** | `ANTHROPIC_API_KEY` env |
+| **Gemini** | `GEMINI_API_KEY` env |
+| **DeepSeek** | `DEEPSEEK_API_KEY` env |
+| **Mistral** | `MISTRAL_API_KEY` env |
+| **OpenRouter** | `OPENROUTER_API_KEY` env |
 
 Set API keys via interactive prompt on first run, or directly in `~/.config/phantom/config.json`.
+
+### Example: Hermes Agent / OpenCode provider
+
+Phantom works with Hermes Agent's OpenCode provider chain:
+
+```bash
+# Via @llm_config interactive
+👻 @llm_config|opencode|deepseek-v4-flash-free
+
+# Or set env vars
+export PHANTOM_LLM_PROVIDER=opencode
+export HERMES_OPCODE_API_KEY=sk-your-key-here   # <-- REPLACE with your key
+phantom
+```
+
+> ⚠ Never commit real API keys to Git. Use environment variables or the interactive `@llm_config` prompt instead.
 
 ## Configuration
 
@@ -175,6 +199,7 @@ All config lives in `~/.config/phantom/`:
 | `PHANTOM_LLM_PROVIDER` | `openai` | Default LLM provider |
 | `PHANTOM_PROVIDERS_READY` | — | Comma-separated ready providers |
 | `PHANTOM_QUIET` | — | Suppress banner/status output |
+| `HERMES_OPCODE_API_KEY` | — | Hermes Agent / OpenCode provider API key |
 
 ## Architecture
 
