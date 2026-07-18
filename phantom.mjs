@@ -442,6 +442,19 @@ class Agent {
       gitleaks: "External: gitleaks — git repository secret scanner. Detects accidental credential commits. Input: repo path. Requires gitleaks binary.",
       s3scanner: "External: s3scanner — find S3 buckets and check permissions. Input: bucket name or file. Requires s3scanner binary.",
       gobuster: "External: gobuster — directory, DNS, and vhost brute-forcing. Modes: dir, dns, vhost, fuzz. Input: mode|opts. Requires gobuster binary.",
+      nmap: "Wrapper around nmap — industry-standard port scanner. SYN scan, version detection, NSE scripts, OS fingerprint. Input: target [options]. Requires nmap binary.",
+      sqlmap: "Wrapper around sqlmap — automated SQL injection detection and exploitation. Input: sqlmap args. Requires sqlmap binary.",
+      whatweb: "Web technology fingerprinting — identifies CMS, frameworks, JS libs, servers. Input: URL. Requires whatweb binary.",
+      wafw00f: "Web Application Firewall detection and fingerprinting. Input: URL. Requires wafw00f binary.",
+      trufflehog: "Secret scanner for git repos, filesystems, and S3 buckets. Input: type|target. Requires trufflehog binary.",
+      hydra: "Online password brute-force via hydra. Supports SSH, FTP, HTTP, MySQL, RDP, etc. Input: target|proto|user|passwords. Requires hydra binary.",
+      masscan: "Ultra-fast port scanner (can scan entire internet). Input: target [options]. Requires masscan binary (root).",
+      nikto: "Web server scanner — outdated files, config issues, known vulns. Input: URL [options]. Requires nikto binary.",
+      arjun: "HTTP parameter discovery — finds hidden GET/POST parameters. Input: URL [options]. Requires arjun binary (pip).",
+      gospider: "Web spider/crawler — discovers links, forms, scripts, S3 buckets. Input: URL [options]. Requires gospider binary.",
+      cloud_enum: "Cloud resource enumeration — S3, Azure Blobs, GCP buckets. Input: keyword. Requires cloud_enum binary (pip).",
+      notify: "Send notifications to Slack/Telegram/Discord/webhooks. Input: message. Requires notify binary. Setup: projectdiscovery/notify",
+      interactsh: "Out-of-band interaction/request bin for blind vuln detection (SSRF, XSS). Actions: start, poll, stop. Requires interactsh-client binary.",
     };
     for (const [name, desc] of Object.entries(toolList)) {
       if (name === "delegate") {

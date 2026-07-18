@@ -1510,6 +1510,199 @@ async function gobuster(input: string): Promise<string> {
   } catch(e: any) { return `[gobuster Error] ${e.message}`; }
 }
 
+async function nmap(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[nmap] Usage: @nmap|<target> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["nmap"],{encoding:"utf-8",timeout:5000}); } catch { return `[nmap] NOT INSTALLED`; }
+    const parts = input.trim().split(/\s+/);
+    const target = parts[0]; const extra = parts.slice(1);
+    const out = execFileSync("nmap", [target,...extra,"-oN","/dev/stdout"], {encoding:"utf-8",timeout:300000,maxBuffer:1024*1024});
+    const lines = out.trim().split("\n");
+    const interesting = lines.filter(l => !l.startsWith("#") && !l.startsWith("Nmap done") && !l.startsWith("Nmap scan") && !l.match(/^\d+ ports/) && l.trim());
+    if (!interesting.length) return `[nmap] No results for ${target}`;
+    return [`🔎 Nmap: ${target}`, ...interesting.slice(0,80).map(l=>`  ${l}`),...(interesting.length>80?[`  ... ${interesting.length} total lines`]:[])].join("\n");
+  } catch(e: any) { return `[nmap Error] ${e.message}`; }
+}
+
+async function sqlmap(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[sqlmap] Usage: @sqlmap|<URL> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["sqlmap"],{encoding:"utf-8",timeout:5000}); } catch { return `[sqlmap] NOT INSTALLED`; }
+    const out = execFileSync("sqlmap", input.trim().split(/\s+/), {encoding:"utf-8",timeout:300000,maxBuffer:2*1024*1024});
+    const lines = out.trim().split("\n").filter(Boolean);
+    const summary = lines.filter(l => l.includes("Parameter") || l.includes("Type:") || l.includes("Title:") || l.includes("Payload:") || l.includes("identified") || l.includes("vulnerable") || l.includes("table") || l.includes("entry"));
+    return summary.length ? [`🔬 Sqlmap: ${input.split(/\s+/)[1]||""}`,...summary.slice(0,50).map(l=>`  ${l}`)].join("\n") : `[sqlmap] No injection found (${lines.length} raw lines)`;
+  } catch(e: any) { return `[sqlmap Error] ${e.message}`; }
+}
+
+async function whatweb(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[whatweb] Usage: @whatweb|<URL> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["whatweb"],{encoding:"utf-8",timeout:5000}); } catch { return `[whatweb] NOT INSTALLED`; }
+    const parts = input.trim().split(/\s+/);
+    const target = parts[0]; const extra = parts.slice(1);
+    const out = execFileSync("whatweb", [target,...extra,"--color","never"], {encoding:"utf-8",timeout:120000,maxBuffer:1024*1024});
+    return out.trim() || `[whatweb] No results for ${target}`;
+  } catch(e: any) { return `[whatweb Error] ${e.message}`; }
+}
+
+async function wafw00f(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[wafw00f] Usage: @wafw00f|<URL> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["wafw00f"],{encoding:"utf-8",timeout:5000}); } catch { return `[wafw00f] NOT INSTALLED`; }
+    const parts = input.trim().split(/\s+/);
+    const target = parts[0]; const extra = parts.slice(1);
+    const out = execFileSync("wafw00f", [target,...extra], {encoding:"utf-8",timeout:120000,maxBuffer:1024*1024});
+    return out.trim() || `[wafw00f] No WAF for ${target}`;
+  } catch(e: any) { return `[wafw00f Error] ${e.message}`; }
+}
+
+async function trufflehog(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[trufflehog] Usage: @trufflehog|<target> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["trufflehog"],{encoding:"utf-8",timeout:5000}); } catch { return `[trufflehog] NOT INSTALLED`; }
+    const parts = input.trim().split(/\s+/);
+    const srcType = parts[0]; const target = parts[1]; const extra = parts.slice(2);
+    const args = srcType==="filesystem"?["filesystem",target,...extra,"--no-update"]
+               : srcType.startsWith("s3")?["s3","--bucket",target||srcType,...extra,"--no-update"]
+               : ["git",target||srcType,...extra,"--no-update"];
+    const out = execFileSync("trufflehog", args, {encoding:"utf-8",timeout:300000,maxBuffer:2*1024*1024});
+    const lines = out.trim().split("\n").filter(Boolean);
+    if (!lines.length) return `[trufflehog] 0 secrets found`;
+    const result = [`🔐 TruffleHog: ${target||srcType}`, `Findings: ${lines.length}`];
+    result.push(...lines.slice(0,50).map(l=>`  ${l}`));
+    if (lines.length>50) result.push(`  ... and ${lines.length-50} more`);
+    return result.join("\n");
+  } catch(e: any) { return `[trufflehog Error] ${e.message}`; }
+}
+
+async function hydra(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[hydra] Usage: @hydra|<target>|<proto>|<user>|<pass> [options]`;
+  try {
+    const { execFileSync, execSync } = await import("child_process");
+    try { execSync("which hydra",{encoding:"utf-8",timeout:5000}); } catch { return `[hydra] NOT INSTALLED`; }
+    const parts = input.trim().split("|").map(s=>s.trim());
+    if (parts.length<3) return `[hydra] Need: target|protocol|user|passwords`;
+    const target = parts[0]; const proto = parts[1]; const user = parts[2]; const pass = parts[3]||"";
+    const extra = parts.slice(4);
+    const { writeFileSync, unlinkSync } = await import("fs");
+    const passFile = pass.includes("/")||pass.includes(".")?pass:`/tmp/hydra_${Date.now()}.txt`;
+    if (!pass.includes("/")&&!pass.includes(".")) writeFileSync(passFile, pass.replace(/,/g,"\n"));
+    const args = ["-l",user,"-P",passFile,`${proto}://${target}`,...extra,"-o","/dev/stdout","-t","4","-w","10","-vV"];
+    const out = execFileSync("hydra", args, {encoding:"utf-8",timeout:300000,maxBuffer:1024*1024});
+    try { if (!pass.includes("/")&&!pass.includes(".")) unlinkSync(passFile); } catch {}
+    const found = out.trim().split("\n").filter(l => l.includes("password:")||l.includes("login:")||l.includes("[SUCCESS]"));
+    return found.length ? [`🔑 Hydra: ${target} (${proto})`,...found.map(l=>`  ${l}`)].join("\n") : `[hydra] No creds for ${user}@${target}`;
+  } catch(e: any) { return `[hydra Error] ${e.message}`; }
+}
+
+async function masscan(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[masscan] Usage: @masscan|<target> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["masscan"],{encoding:"utf-8",timeout:5000}); } catch { return `[masscan] NOT INSTALLED (requires root)`; }
+    const parts = input.trim().split(/\s+/);
+    const target = parts[0]; const extra = parts.slice(1);
+    const out = execFileSync("masscan", [target,...extra,"-oG","/dev/stdout","--rate","1000"], {encoding:"utf-8",timeout:300000,maxBuffer:2*1024*1024});
+    const lines = out.trim().split("\n").filter(l => l.startsWith("Host:"));
+    if (!lines.length) return `[masscan] No open ports on ${target}`;
+    return [`⚡ Masscan: ${target}`, `Open: ${lines.length}`,...lines.slice(0,100).map(l=>`  ${l}`)].join("\n");
+  } catch(e: any) { return `[masscan Error] ${e.message}`; }
+}
+
+async function nikto(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[nikto] Usage: @nikto|<URL> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["nikto"],{encoding:"utf-8",timeout:5000}); } catch { return `[nikto] NOT INSTALLED`; }
+    const parts = input.trim().split(/\s+/);
+    const out = execFileSync("nikto", parts, {encoding:"utf-8",timeout:300000,maxBuffer:2*1024*1024});
+    const lines = out.trim().split("\n").filter(Boolean);
+    const findings = lines.filter(l => l.includes("+") && !l.includes("-------") && !l.includes("Target IP"));
+    if (!findings.length) return `[nikto] 0 findings`;
+    return [`🔎 Nikto: ${parts[1]||""}`, `Findings: ${findings.length}`,...findings.slice(0,80).map(l=>`  ${l}`)].join("\n");
+  } catch(e: any) { return `[nikto Error] ${e.message}`; }
+}
+
+async function arjun(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[arjun] Usage: @arjun|<URL> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["arjun"],{encoding:"utf-8",timeout:5000}); } catch { return `[arjun] NOT INSTALLED (pip install arjun)`; }
+    const parts = input.trim().split(/\s+/);
+    const out = execFileSync("arjun", parts, {encoding:"utf-8",timeout:180000,maxBuffer:1024*1024});
+    const lines = out.trim().split("\n").filter(Boolean);
+    const found = lines.filter(l => l.includes("[+]")||l.includes("found")||l.includes("parameter"));
+    return found.length ? [`🔎 Arjun: ${parts[1]||""}`,...found.slice(0,40).map(l=>`  ${l}`)].join("\n") : `[arjun] No params found`;
+  } catch(e: any) { return `[arjun Error] ${e.message}`; }
+}
+
+async function gospider(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[gospider] Usage: @gospider|<URL> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["gospider"],{encoding:"utf-8",timeout:5000}); } catch { return `[gospider] NOT INSTALLED`; }
+    const parts = input.trim().split(/\s+/);
+    const out = execFileSync("gospider", parts, {encoding:"utf-8",timeout:180000,maxBuffer:2*1024*1024});
+    const lines = out.trim().split("\n").filter(Boolean);
+    if (!lines.length) return `[gospider] 0 results`;
+    const urls = lines.filter(l => l.startsWith("http"));
+    const result = [`🕷️ Gospider: ${parts[1]||""}`, `URLs: ${urls.length}`];
+    result.push(...urls.slice(0,60).map(u=>`  ${u}`));
+    if (urls.length>60) result.push(`  ... and ${urls.length-60} more`);
+    return result.join("\n");
+  } catch(e: any) { return `[gospider Error] ${e.message}`; }
+}
+
+async function cloud_enum(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[cloud_enum] Usage: @cloud_enum|<keyword> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["cloud_enum"],{encoding:"utf-8",timeout:5000}); } catch { return `[cloud_enum] NOT INSTALLED (pip install cloud_enum)`; }
+    const parts = input.trim().split(/\s+/);
+    const kw = parts[0]; const extra = parts.slice(1);
+    const out = execFileSync("cloud_enum", ["-k",kw,...extra,"-q"], {encoding:"utf-8",timeout:180000,maxBuffer:2*1024*1024});
+    const lines = out.trim().split("\n").filter(Boolean);
+    const found = lines.filter(l => l.includes("found")||l.includes("open")||l.includes("public")||l.includes("http"));
+    if (!found.length) return `[cloud_enum] No resources for "${kw}"`;
+    return [`☁️ Cloud: ${kw}`, `Found: ${found.length}`,...found.slice(0,60).map(l=>`  ${l}`)].join("\n");
+  } catch(e: any) { return `[cloud_enum Error] ${e.message}`; }
+}
+
+async function notify(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[notify] Usage: @notify|<message> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["notify"],{encoding:"utf-8",timeout:5000}); } catch { return `[notify] NOT INSTALLED`; }
+    execFileSync("notify", ["-silent","-data",input], {encoding:"utf-8",timeout:30000,maxBuffer:1024*1024});
+    return `✅ Notification sent`;
+  } catch(e: any) { return `[notify Error] ${e.message}`; }
+}
+
+async function interactsh(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[interactsh] Usage: @interactsh|<action> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    try { execFileSync("which",["interactsh-client"],{encoding:"utf-8",timeout:5000}); } catch { return `[interactsh] NOT INSTALLED`; }
+    const parts = input.trim().split(/\s+/);
+    const action = parts[0]; const extra = parts.slice(1);
+    if (action==="start") {
+      const out = execFileSync("interactsh-client", ["-json",...extra], {encoding:"utf-8",timeout:15000,maxBuffer:1024*1024});
+      return `📡 Interactsh: ${out.trim().split("\n")[0]||out.trim()}\nUse URL in SSRF/blind XSS payloads`;
+    } else if (action==="poll"&&parts[1]) {
+      const out = execFileSync("interactsh-client", ["-poll-url",parts[1],...extra,"-json"], {encoding:"utf-8",timeout:30000,maxBuffer:1024*1024});
+      const lines = out.trim().split("\n").filter(Boolean);
+      return lines.length ? [`📡 Interactions (${lines.length}):`,...lines.slice(0,30).map(l=>`  ${l}`)].join("\n") : `[interactsh] No interactions`;
+    } else if (action==="stop") return `[interactsh] Stopped`;
+    return `[interactsh] start | poll <url> | stop`;
+  } catch(e: any) { return `[interactsh Error] ${e.message}`; }
+}
+
 // ── END NEW TOOLS ─────────────────────────────────────────
 
 async function whois(domain: string): Promise<string> {
@@ -3444,5 +3637,57 @@ export const hackerTools: Record<string, HackerTool> = {
   gobuster: {
     description: "External: gobuster — directory, DNS, vhost brute-forcing. Modes: dir, dns, vhost, fuzz. Input: mode|opts. Requires gobuster binary.",
     execute: gobuster,
+  },
+  nmap: {
+    description: "Wrapper around nmap — industry-standard port scanner (SYN, version, NSE, OS). Input: target [options]. Requires nmap binary.",
+    execute: nmap,
+  },
+  sqlmap: {
+    description: "Wrapper around sqlmap — automated SQL injection detection and exploitation. Input: sqlmap args. Requires sqlmap binary.",
+    execute: sqlmap,
+  },
+  whatweb: {
+    description: "Web technology fingerprinting — CMS, frameworks, JS libs, servers. Input: URL. Requires whatweb binary.",
+    execute: whatweb,
+  },
+  wafw00f: {
+    description: "Web Application Firewall detection and fingerprinting. Input: URL. Requires wafw00f binary.",
+    execute: wafw00f,
+  },
+  trufflehog: {
+    description: "Secret scanner for git repos, filesystems, and S3. Detects leaked credentials. Input: type|target. Requires trufflehog binary.",
+    execute: trufflehog,
+  },
+  hydra: {
+    description: "Online password brute-force (SSH, FTP, HTTP, MySQL, RDP, etc). Input: target|proto|user|passwords. Requires hydra binary.",
+    execute: hydra,
+  },
+  masscan: {
+    description: "Ultra-fast port scanner (can scan entire internet). Input: target [options]. Requires masscan binary (root).",
+    execute: masscan,
+  },
+  nikto: {
+    description: "Web server scanner — outdated files, config issues, known vulns. Input: URL [options]. Requires nikto binary.",
+    execute: nikto,
+  },
+  arjun: {
+    description: "HTTP parameter discovery — hidden GET/POST params. Input: URL [options]. Requires arjun (pip).",
+    execute: arjun,
+  },
+  gospider: {
+    description: "Web spider/crawler — links, forms, scripts, S3. Input: URL [options]. Requires gospider binary.",
+    execute: gospider,
+  },
+  cloud_enum: {
+    description: "Cloud resource enumeration — S3, Azure, GCP. Input: keyword. Requires cloud_enum (pip).",
+    execute: cloud_enum,
+  },
+  notify: {
+    description: "Send notifications to Slack/Telegram/Discord. Input: message. Requires notify binary.",
+    execute: notify,
+  },
+  interactsh: {
+    description: "OOB interaction/request bin for blind vuln detection (SSRF, XSS). Actions: start, poll, stop. Requires interactsh-client.",
+    execute: interactsh,
   },
 };
