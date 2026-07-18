@@ -1305,15 +1305,18 @@ class MinimalUI {
   start() {
     console.log(`\n${c("magenta")}${c("dim")}·   ·   ·   ·   ·   ·   ${R}`);
     console.log(`${c("cyan")}  ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄${R}`);
-    console.log(`${c("cyan")} █${c("magenta")} ═══ ═══ ═══ ═══ ═══${c("cyan")} █${R}`);
-    console.log(`${c("cyan")}▐█${c("magenta")} ·   ·   ·   ·   ·${c("cyan")} █▌${R}`);
-    console.log(`${c("cyan")}▐█   ${c("magenta")}╔═══════════╗${c("cyan")}   █▌${R}`);
-    console.log(`${c("cyan")}▐█   ${c("magenta")}║ ${c("green")}◈     ◈${c("magenta")} ║${c("cyan")}   █▌${R}`);
-    console.log(`${c("cyan")}▐█   ${c("magenta")}║${c("dim")}  ╔═══╗${c("magenta")}   ║${c("cyan")}   █▌${R}`);
-    console.log(`${c("cyan")}▐█   ${c("magenta")}╚═══════════╝${c("cyan")}   █▌${R}`);
-    console.log(`${c("cyan")} █   ${c("magenta")}┊ ${c("dim")}║${c("magenta")}   ${c("dim")}║${c("magenta")} ┊${c("cyan")}   █${R}`);
-    console.log(`${c("cyan")} █   ${c("magenta")}┊ ${c("dim")}║${c("magenta")} ● ${c("dim")}║${c("magenta")} ┊${c("cyan")}   █${R}`);
-    console.log(`${c("cyan")} ▀▄  ${c("dim")}║${c("magenta")} ═══ ${c("dim")}║${c("cyan")}  ▄▀${R}`);
+    console.log(`${c("cyan")} ▐█${R}  ${c("magenta")}╔═══════════╗${R}  ${c("cyan")}█▌${R}`);
+    console.log(`${c("cyan")} ▐█${R}  ${c("magenta")}║${R}  ${c("green")}◉${R}     ${c("green")}◉${R}  ${c("magenta")}║${R}  ${c("cyan")}█▌${R}`);
+    console.log(`${c("cyan")} ▐█${R}  ${c("magenta")}║${R}   ${D}╔═══╗${R}   ${c("magenta")}║${R}  ${c("cyan")}█▌${R}`);
+    console.log(`${c("cyan")} ▐█${R}  ${c("magenta")}║${R}   ${D}║   ║${R}   ${c("magenta")}║${R}  ${c("cyan")}█▌${R}`);
+    console.log(`${c("cyan")} ▐█${R}  ${c("magenta")}║${R}   ${D}╚═══╝${R}   ${c("magenta")}║${R}  ${c("cyan")}█▌${R}`);
+    console.log(`${c("cyan")} ▐█${R}  ${c("magenta")}╚═══════════╝${R}  ${c("cyan")}█▌${R}`);
+    console.log(`${c("cyan")}  █${R}  ${B}┌───────────┐${R}  ${c("cyan")}█${R} `);
+    console.log(`${c("cyan")}  █${R}  ${B}│${R} ${c("cyan")}█${R}         ${c("cyan")}█${R} ${B}│${R}  ${c("cyan")}█${R} `);
+    console.log(`${c("cyan")}  █${R}  ${B}│${R} ${c("cyan")}█${R}   ${c("green")}●${R}     ${c("cyan")}█${R} ${B}│${R}  ${c("cyan")}█${R} `);
+    console.log(`${c("cyan")}  █${R}  ${B}│${R} ${c("cyan")}█${R}  ${c("green")}${D}═══${R}    ${c("cyan")}█${R} ${B}│${R}  ${c("cyan")}█${R} `);
+    console.log(`${c("cyan")}  █${R}  ${B}└───────────┘${R}  ${c("cyan")}█${R} `);
+    console.log(`${c("cyan")} ▐▄${c("magenta")}▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀${c("cyan")}▄▌${R}`);
     console.log(`  ${c("magenta")}${B}P H A N T O M${R}`);
     console.log(`  ${c("dim")}non-interactive mode${R}`);
     this.am.spawnDefaults();
