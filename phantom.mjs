@@ -1788,20 +1788,26 @@ class ConversationalUI {
       case "h":
         const toolCount = Object.keys(hackerTools).length;
         console.log(`\n${B}${c("green")}PHANTOM COMMANDS${R}`);
-        console.log(`  ${c("green")}  /help${R}      — show this help`);
-        console.log(`  ${c("green")}  /tools${R}      — list ${toolCount} tools`);
-        console.log(`  ${c("green")}  /gui${R}        — start web dashboard (port 8080)`);
-        console.log(`  ${c("green")}  /api${R}        — start REST API (port 9090)`);
-        console.log(`  ${c("green")}  /model${R}      — show/switch LLM`);
-        console.log(`  ${c("green")}  /clear${R}      — clear screen`);
-        console.log(`  ${c("green")}  /delegate${R}   — delegate task to agent`);
-        console.log(`  ${c("green")}  /talk${R} <a>   — talk directly to an agent`);
-        console.log(`  ${c("green")}  /agents${R}     — list team with status`);
-        console.log(`  ${c("green")}  /save${R} <n>   — save session`);
-        console.log(`  ${c("green")}  /load${R} <n>   — load session`);
-        console.log(`  ${c("green")}  /quit${R}       — exit\n`);
+        console.log(`  ${c("green")}  /help${R}        — show this help`);
+        console.log(`  ${c("green")}  /tools${R}        — list ${toolCount} tools`);
+        console.log(`  ${c("green")}  /gui${R}          — start web dashboard (port 8080)`);
+        console.log(`  ${c("green")}  /api${R}          — start REST API (port 9090)`);
+        console.log(`  ${c("green")}  /model${R}        — show/switch LLM`);
+        console.log(`  ${c("green")}  /clear${R}        — clear screen`);
+        console.log(`  ${c("green")}  /delegate${R}     — delegate task to agent`);
+        console.log(`  ${c("green")}  /talk${R} <a>     — talk directly to an agent`);
+        console.log(`  ${c("green")}  /agents${R}       — list team with status`);
+        console.log(`  ${c("green")}  /save${R} <n>     — save session`);
+        console.log(`  ${c("green")}  /load${R} <n>     — load session`);
+        console.log(`  ${c("green")}  /quit${R}         — exit\n`);
         console.log(`${D}Type anything to chat. Use \\ for multi-line.${R}`);
-        console.log(`${D}The AI auto-uses tools via @tool_name|args syntax.${R}\n`);
+        console.log(`${D}The AI auto-uses tools via @tool_name|args syntax.${R}`);
+        console.log(`${D}@pipe${R}          — chain tools: @pipe|subfinder|example.com|httpx`);
+        console.log(`${D}@schedule${R}      — scheduled scans: @schedule|daily|recon|target`);
+        console.log(`${D}@scope${R}         — manage targets: @scope|add|example.com`);
+        console.log(`${D}@workspace_write${R} — save findings: @workspace_write|key|value`);
+        console.log(`${D}TAB${R}            — autocomplete @tool_name|`);
+        console.log(`${D}--quiet${R}        — suppress banner/status (env: PHANTOM_QUIET)\n`);
         this.prompt();
         return;
 
@@ -2032,18 +2038,35 @@ Usage:
   phantom --recon <domain>              Full recon (7 steps + report)
   phantom --tool <name> <input>         Run one tool directly
   phantom --tool --json <name> <input>  JSON structured output
-  phantom --tool --pipe sub\|dom\|httpx  Pipe tools (chain output→input)
+  phantom --tool --pipe "sub | dom | httpx"  Pipe tools (chain output→input)
   phantom --repl                        Force conversational REPL mode
   phantom --list                        List all tools
+  phantom --list --json                 List tools as JSON
   phantom --gui                         Start web dashboard (port 8080)
   phantom --api                         Start REST API server (port 9090)
+  phantom --quiet                       Suppress banner/status
   phantom --help                        This help
+
+Scheduling:
+  @schedule|daily|recon|target          Schedule daily recon
+  @schedule|hourly|scan|target          Schedule hourly scan
+  @schedule|list                        Show scheduled jobs
+  @schedule|remove|0                    Cancel a schedule (by ID)
+  @schedule|scope-auto                  Auto-schedule scope targets
+
+Scope:
+  @scope|add|domain.com                 Add target to scope
+  @scope|add|file.txt                   Load targets from file
+  @scope|list                           Show scope
+  @scope|remove|domain.com              Remove target
+  @scope|clear                          Clear scope
 
 Examples:
   phantom --recon example.com
   phantom --tool port_scan scanme.org
   phantom --tool cve_search "apache 2.4.49"
-  phantom --tool bruteforce "ssh|192.168.1.1|root|admin,toor,123"`);
+  phantom --tool bruteforce "ssh|192.168.1.1|root|admin,toor,123"
+  phantom --tool --pipe "subfinder|example.com | httpx | nuclei"`);
     process.exit(0);
   }
 
