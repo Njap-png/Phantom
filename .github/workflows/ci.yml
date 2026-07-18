@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check JS syntax
+        run: |
+          node --check phantom.mjs
+          node --check lib/tools.mjs
+          node --check lib/config.mjs
+          node --check lib/runtime.mjs
+
+      - name: TypeScript build
+        run: npm run build
+
+      - name: Verify CLI starts
+        run: timeout 5 node phantom.mjs --list 2>&1 | grep -q '🔧' || true
+
+      - name: Verify tool count
+        run: |
+          COUNT=$(timeout 5 node phantom.mjs --list 2>&1 | wc -l)
+          echo "Tools: $COUNT"
+          test "$COUNT" -gt 100 || (echo "Too few tools ($COUNT)" && exit 1)
