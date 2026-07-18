@@ -420,6 +420,16 @@ class Agent {
       agent_memory: "View or manage agent conversation memory. Format: list | <agent_name> | <agent_name> clear. Agents: Lyra, Nova, Orion, Vega, Atlas, Helios, Selene, Aether.",
       fuzz: "Web fuzzing engine. Discovers hidden paths, parameters, and files via concurrent HTTP requests with a built-in common wordlist. Format: url|wordlist_type (common, admin, backup, params, php, asp, jsp, custom:path.txt). Shows status, size, redirects. Input: https://target.com/FUZZ or https://target.com?param=FUZZ",
       pwn: "Auto-exploit chain. Runs full recon, finds CVEs, searches exploit-db, and generates an exploit plan. Format: target|optional_port. Chains: recon → CVE search → exploit lookup → metasploit resource generation.",
+      web_click: "Navigate and click web page elements by index, link text, or URL. Input: url|selector|method (index/text/selector).",
+      web_links: "Extract and categorize all links from a page (internal/external/resources). Input: URL.",
+      web_form: "Extract HTML forms and submit with custom field values. Input: url|field1=val1|field2=val2.",
+      web_snapshot: "Get structured text snapshot of a page: headings, meta, links, content. Input: URL.",
+      project_create: "Create a new project workspace. Stores metadata in ~/.config/phantom/projects/. Input: project name.",
+      project_list: "List all projects with file/note counts and age. Input: none.",
+      project_info: "Show project details: created date, files, notes, tools used. Input: project name.",
+      project_file_add: "Add a file to a project by copying it into the project directory. Input: project|filepath.",
+      project_note: "Add or list project notes. Format: project|note_text (or just project name to list). Input: project|note.",
+      project_switch: "Set active project for context. Input: project name.",
     };
     for (const [name, desc] of Object.entries(toolList)) {
       if (name === "delegate") {
@@ -1720,9 +1730,12 @@ class ConversationalUI {
     switch (op) {
       case "help":
       case "h":
+        const toolCount = Object.keys(hackerTools).length;
         console.log(`\n${B}${c("green")}PHANTOM COMMANDS${R}`);
         console.log(`  ${c("green")}  /help${R}      — show this help`);
-        console.log(`  ${c("green")}  /tools${R}      — list 62 tools`);
+        console.log(`  ${c("green")}  /tools${R}      — list ${toolCount} tools`);
+        console.log(`  ${c("green")}  /gui${R}        — start web dashboard (port 8080)`);
+        console.log(`  ${c("green")}  /api${R}        — start REST API (port 9090)`);
         console.log(`  ${c("green")}  /model${R}      — show/switch LLM`);
         console.log(`  ${c("green")}  /clear${R}      — clear screen`);
         console.log(`  ${c("green")}  /delegate${R}   — delegate task to agent`);
@@ -1851,6 +1864,35 @@ class ConversationalUI {
           } else {
             console.log(`\n${c("red")}✕${R} Not found: ${rest[0]}\n`);
           }
+        }
+        this.prompt();
+        return;
+
+      case "gui":
+      case "dashboard":
+      case "g":
+        if (this._guiRunning) {
+          console.log(`\n${c("yellow")}⚠${R} Dashboard already running on port ${this._guiPort || 8080}\n`);
+        } else {
+          const guiPort = parseInt(rest[0]) || 8080;
+          startGuiDashboard(guiPort);
+          this._guiRunning = true;
+          this._guiPort = guiPort;
+          console.log(`\n${c("green")}✓${R} Dashboard started at ${c("cyan")}http://localhost:${guiPort}${R}\n`);
+        }
+        this.prompt();
+        return;
+
+      case "api":
+      case "rest":
+        if (this._apiRunning) {
+          console.log(`\n${c("yellow")}⚠${R} API server already running on port ${this._apiPort || 9090}\n`);
+        } else {
+          const apiPort = parseInt(rest[0]) || 9090;
+          startApiServer(apiPort);
+          this._apiRunning = true;
+          this._apiPort = apiPort;
+          console.log(`\n${c("green")}✓${R} API server started at ${c("cyan")}http://localhost:${apiPort}${R}\n`);
         }
         this.prompt();
         return;

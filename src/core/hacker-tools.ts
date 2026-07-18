@@ -225,6 +225,1056 @@ async function hash(input: string): Promise<string> {
 
 // ── NEW TOOLS ─────────────────────────────────────────────
 
+// ── SANDBOX (Isolated Binary Execution) ─────────────────────
+async function sandboxExec(input: string): Promise<string> {
+  // Format: path|args|timeout(seconds) — or just path
+  const parts = input.split("|").map(s => s.trim());
+  const binaryPath = parts[0];
+  const binaryArgs = parts[1] || "";
+  const timeoutSec = parseInt(parts[2]) || 15;
+
+  try {
+    if (!existsSync(binaryPath)) return `[Sandbox] File not found: ${binaryPath}`;
+
+    // Check file type
+    const buf = readFileSync(binaryPath);
+    const magic = buf.slice(0, 4).toString("hex");
+    const isElf = magic.startsWith("7f454c46");
+    const isScript = buf.slice(0, 3).toString() === "#!/";
+    const isPe = magic.startsWith("4d5a");
+
+    const report: string[] = [
+      `🧪 Sandbox Execution Report`,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      `Binary: ${binaryPath}`,
+      `Size: ${buf.length} bytes (${(buf.length / 1024).toFixed(1)} KB)`,
+      `Type: ${isElf ? "ELF (Linux)" : isScript ? "Script" : isPe ? "PE (Windows — cannot execute on Linux)" : "Unknown"}`,
+      `SHA256: ${createHash("sha256").update(buf).digest("hex")}`,
+      ``,
+    ];
+
+    if (isPe) {
+      report.push("⚠ PE files require Windows/Wine to execute. Static analysis only.");
+      report.push("→ Use @pe_analyze|" + binaryPath + " for deeper PE analysis.");
+      return report.join("\n");
+    }
+
+    if (!isElf && !isScript) {
+      report.push("⚠ Not an ELF or script — cannot execute directly.");
+      return report.join("\n");
+    }
+
+    // Create sandbox directory
+    const sandboxDir = resolve(homedir(), ".config", "phantom", "sandbox", `run_${Date.now()}`);
+    mkdirSync(sandboxDir, { recursive: true });
+    const sandboxPath = resolve(sandboxDir, "target");
+
+    // Copy file to sandbox
+    writeFileSync(sandboxPath, buf);
+    try { execSync(`chmod +x '${sandboxPath}'`, { timeout: 3000 }); } catch {}
+
+    const tmpDir = resolve(sandboxDir, "tmp");
+    mkdirSync(tmpDir, { recursive: true });
+
+    report.push(`🔒 Sandbox: ${sandboxDir}`);
+    report.push(`⏱  Timeout: ${timeoutSec}s`);
+    report.push(``);
+
+    // Try strace first for deeper analysis
+    let hasStrace = false;
+    try { execSync("which strace", { encoding: "utf-8", timeout: 3000 }); hasStrace = true; } catch {}
+
+    if (hasStrace) {
+      const straceLog = resolve(sandboxDir, "strace.log");
+      try {
+        const straceCmd = `strace -f -e trace=process,network,file,ipc -o '${straceLog}' timeout ${timeoutSec} '${sandboxPath}' ${binaryArgs} 2>&1`;
+        const r = execSync(straceCmd, { encoding: "utf-8", timeout: (timeoutSec + 10) * 1000, maxBuffer: 1024 * 1024, cwd: tmpDir });
+        const stdout = r.substring(0, 3000);
+        if (stdout.trim()) report.push(`📤 stdout/stderr:\n${stdout}`);
+      } catch (e: any) {
+        const out = e.stdout?.substring(0, 2000) || "";
+        if (out.trim()) report.push(`📤 stdout:\n${out}`);
+      }
+
+      // Parse strace log for interesting syscalls
+      if (existsSync(straceLog)) {
+        const strace = readFileSync(straceLog, "utf-8");
+        const lines = strace.split("\n").filter(Boolean);
+        report.push(`\n📋 Syscalls: ${lines.length} total`);
+
+        // Extract key behaviors
+        const netCalls = lines.filter(l => l.includes("connect(") || l.includes("socket(") || l.includes("bind("));
+        const fileCalls = lines.filter(l => l.includes("open(") || l.includes("openat("));
+        const procCalls = lines.filter(l => l.includes("clone(") || l.includes("fork(") || l.includes("execve("));
+        const ipcCalls = lines.filter(l => l.includes("shmget") || l.includes("semop") || l.includes("msgget"));
+
+        if (netCalls.length) report.push(`🌐 Network: ${netCalls.length} call(s) — possible C2 or beaconing`);
+        if (fileCalls.length) report.push(`📁 File I/O: ${fileCalls.length} call(s)`);
+        if (procCalls.length) report.push(`🔧 Process: ${procCalls.length} fork/execve(s)`);
+        if (ipcCalls.length) report.push(`🔗 IPC: ${ipcCalls.length} call(s)`);
+
+        // Show first 5 interesting lines of each category
+        for (const [cat, arr] of Object.entries({ "Network": netCalls, "File": fileCalls, "Process": procCalls })) {
+          if (arr.length) {
+            const sample = arr.slice(0, 5).map(l => "  " + l.substring(0, 160)).join("\n");
+            report.push(`\n${cat} (sample):\n${sample}`);
+          }
+        }
+      }
+    } else {
+      // Run without strace
+      try {
+        const r = execSync(`timeout ${timeoutSec} '${sandboxPath}' ${binaryArgs} 2>&1`, {
+          encoding: "utf-8", timeout: (timeoutSec + 5) * 1000, maxBuffer: 1024 * 1024, cwd: tmpDir,
+        });
+        const out = r.substring(0, 3000);
+        if (out.trim()) report.push(`📤 Output:\n${out}`);
+        else report.push("📤 (no stdout output)");
+      } catch (e: any) {
+        const out = e.stdout?.substring(0, 2000) || "";
+        const err = e.stderr?.substring(0, 1000) || e.message || "";
+        if (out.trim()) report.push(`📤 stdout:\n${out}`);
+        if (err.trim()) report.push(`📤 stderr:\n${err}`);
+        if (e.status !== null) report.push(`🚦 Exit code: ${e.status}`);
+      }
+    }
+
+    // Cleanup on success
+    report.push(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    report.push(`✅ Sandbox completed. Cleanup: rm -rf ${sandboxDir}`);
+
+    return report.join("\n");
+  } catch (e: any) {
+    return `[Sandbox Error] ${e.message}`;
+  }
+}
+
+// ── PE ANALYZER ────────────────────────────────────────────
+async function peAnalyze(path: string): Promise<string> {
+  try {
+    if (!existsSync(path)) return `[PE] File not found: ${path}`;
+    const buf = readFileSync(path);
+    const magic = buf.slice(0, 2).toString();
+    if (magic !== "MZ") return `[PE] Not a PE file (no MZ magic): ${path}`;
+
+    const lines: string[] = [`📦 PE Analysis: ${path}`, `Size: ${buf.length} bytes`, ``];
+
+    // DOS Header
+    const e_lfanew = buf.readUInt32LE(0x3c); // offset to PE signature
+    lines.push(`DOS Header:`);
+    lines.push(`  e_lfanew (PE offset): 0x${e_lfanew.toString(16)}`);
+
+    // PE Signature
+    const peSig = buf.slice(e_lfanew, e_lfanew + 4).toString();
+    if (peSig !== "PE\0\0") return `[PE] Invalid PE signature at offset 0x${e_lfanew.toString(16)}: ${peSig}`;
+    lines.push(`PE Signature: ${peSig}`);
+
+    // COFF Header
+    const coffOff = e_lfanew + 4;
+    const machine = buf.readUInt16LE(coffOff);
+    const sections = buf.readUInt16LE(coffOff + 2);
+    const timestamp = buf.readUInt32LE(coffOff + 8);
+    const characteristics = buf.readUInt16LE(coffOff + 20);
+
+    const machines: Record<number, string> = {
+      0x14c: "I386", 0x8664: "AMD64", 0x1c0: "ARM", 0xaa64: "ARM64",
+      0x200: "IA64", 0x1c4: "ARMNT", 0x4c: "MIPS", 0x162: "MIPS16",
+    };
+
+    const compileDate = timestamp ? new Date(timestamp * 1000).toISOString() : "N/A";
+
+    lines.push(`\nCOFF Header:`);
+    lines.push(`  Machine: ${machines[machine] || `0x${machine.toString(16)}`}`);
+    lines.push(`  Sections: ${sections}`);
+    lines.push(`  Compile Timestamp: ${compileDate} ${timestamp ? `(0x${timestamp.toString(16)})` : ""}`);
+    lines.push(`  Characteristics: 0x${characteristics.toString(16)}`);
+    if (characteristics & 0x2000) lines.push(`  → DLL`);
+
+    // Optional Header
+    const optHdrOff = coffOff + 24;
+    const optMagic = buf.readUInt16LE(optHdrOff);
+
+    if (optMagic === 0x10b || optMagic === 0x20b) {
+      const isPE32Plus = optMagic === 0x20b;
+      const entryPoint = isPE32Plus ? buf.readUInt32LE(optHdrOff + 16) : buf.readUInt32LE(optHdrOff + 16);
+      const imageBase = isPE32Plus ? buf.readBigUInt64LE(optHdrOff + 24).toString() : `0x${buf.readUInt32LE(optHdrOff + 28).toString(16)}`;
+      const sectionAlign = isPE32Plus ? buf.readUInt32LE(optHdrOff + 32) : buf.readUInt32LE(optHdrOff + 32);
+      const fileAlign = isPE32Plus ? buf.readUInt32LE(optHdrOff + 36) : buf.readUInt32LE(optHdrOff + 36);
+      const imageSize = isPE32Plus ? buf.readUInt32LE(optHdrOff + 56) : buf.readUInt32LE(optHdrOff + 52);
+      const subsystems: Record<number, string> = { 1: "NATIVE", 2: "WINDOWS_GUI", 3: "WINDOWS_CUI", 5: "OS2", 7: "POSIX" };
+      const subsystem = isPE32Plus ? buf.readUInt16LE(optHdrOff + 68) : buf.readUInt16LE(optHdrOff + 68);
+      const dllChars = isPE32Plus ? buf.readUInt16LE(optHdrOff + 70) : buf.readUInt16LE(optHdrOff + 70);
+
+      lines.push(`\nOptional Header (PE${isPE32Plus ? "32+" : "32"}):`);
+      lines.push(`  Entry Point: 0x${entryPoint.toString(16)}`);
+      lines.push(`  Image Base: ${imageBase}`);
+      lines.push(`  Section Align: 0x${sectionAlign.toString(16)}`);
+      lines.push(`  File Align: 0x${fileAlign.toString(16)}`);
+      lines.push(`  Image Size: ${(imageSize / 1024).toFixed(1)} KB (0x${imageSize.toString(16)})`);
+      lines.push(`  Subsystem: ${subsystems[subsystem] || `0x${subsystem.toString(16)}`}`);
+      if (dllChars & 0x40) lines.push(`  ⚠ DLL has TLS callbacks (malware indicator)`);
+
+      // ── Section Table ──
+      const sectionOff = optHdrOff + (isPE32Plus ? 108 : 96);
+      lines.push(`\nSection Table (${sections} sections):`);
+
+      let allSections: string[] = [];
+      const suspiciousSections = [".text", ".data", ".rdata", ".idata", ".rsrc", ".reloc"];
+      for (let i = 0; i < sections; i++) {
+        const sOff = sectionOff + i * 40;
+        const name = buf.slice(sOff, sOff + 8).toString().replace(/\0/g, "");
+        const vsize = buf.readUInt32LE(sOff + 8);
+        const vaddr = buf.readUInt32LE(sOff + 12);
+        const rsize = buf.readUInt32LE(sOff + 16);
+        const roff = buf.readUInt32LE(sOff + 20);
+        const chars = buf.readUInt32LE(sOff + 36);
+
+        const charFlags: string[] = [];
+        if (chars & 0x20) charFlags.push("CODE");
+        if (chars & 0x40) charFlags.push("INIT_DATA");
+        if (chars & 0x80) charFlags.push("UNINIT_DATA");
+        if (chars & 0x20000000) charFlags.push("EXECUTE");
+        if (chars & 0x40000000) charFlags.push("READ");
+        if (chars & 0x80000000) charFlags.push("WRITE");
+
+        const isSuspicious = !suspiciousSections.includes(name) && !name.startsWith(".") && name.length > 0;
+        const hasWriteAndExec = (chars & 0x20000000) && (chars & 0x80000000);
+        const marker = isSuspicious ? " ⚠ non-standard" : hasWriteAndExec ? " ⚠ W+X" : "";
+
+        allSections.push(`  [${i}] ${name.padEnd(10)} VSize: ${(vsize/1024).toFixed(1)}K  VAddr: 0x${vaddr.toString(16).padStart(8, "0")}  Raw: ${(rsize/1024).toFixed(1)}K  Flags: ${charFlags.join("|")}${marker}`);
+      }
+      lines.push(...allSections);
+
+      // ── Data Directories (check for import/export) ──
+      const dataDirOff = optHdrOff + (isPE32Plus ? 112 : 96) + sections * 40;
+      const numDataDirs = isPE32Plus ? buf.readUInt32LE(optHdrOff + 108) : buf.readUInt32LE(optHdrOff + 92);
+
+      if (numDataDirs > 0) {
+        lines.push(`\nData Directories (first 8):`);
+        const dirNames = ["Export", "Import", "Resource", "Exception", "Security", "Relocation", "Debug", "TLS"];
+        for (let i = 0; i < Math.min(8, numDataDirs); i++) {
+          const dOff = dataDirOff + i * 8;
+          const va = buf.readUInt32LE(dOff);
+          const sz = buf.readUInt32LE(dOff + 4);
+          if (va || sz) lines.push(`  ${dirNames[i]?.padEnd(12)} VA: 0x${va.toString(16).padStart(8,"0")}  Size: ${sz}`);
+        }
+      }
+
+      // ── Import Table (basic parse) ──
+      if (numDataDirs > 1) {
+        const importDirRVA = buf.readUInt32LE(dataDirOff + 8);
+        const importDirSize = buf.readUInt32LE(dataDirOff + 12);
+        if (importDirRVA && importDirSize > 0) {
+          lines.push(`\nImport Table (${importDirSize} bytes at RVA 0x${importDirRVA.toString(16)}):`);
+          lines.push(`  (Use a PE parser tool for full import listing)`);
+        }
+      }
+
+    } else {
+      lines.push(`\n⚠ Unknown Optional Header magic: 0x${optMagic.toString(16)}`);
+    }
+
+    // ── Entropy / Suspicious Indicators ──
+    let freq = new Map<number, number>();
+    for (let i = 0; i < buf.length; i++) freq.set(buf[i], (freq.get(buf[i]) || 0) + 1);
+    let entropy = 0;
+    for (const count of freq.values()) { const p = count / buf.length; entropy -= p * Math.log2(p); }
+    lines.push(`\nEntropy: ${entropy.toFixed(4)} ${entropy > 7.2 ? "⚠ SUSPICIOUS (packed/encrypted)" : entropy > 6.5 ? "⚠ High" : "— Normal"}`);
+
+    // Check for suspicious section names
+    const knownBad = [".upx", ".packed", ".themida", ".vmp"];
+    // check all section names
+    const sectionNames: string[] = [];
+    // re-parse section names from section table
+    const optHdrSz = (optMagic === 0x20b) ? 108 : 96;
+    const secOff = optHdrOff + optHdrSz;
+    for (let i = 0; i < sections; i++) {
+      const sOff = secOff + i * 40;
+      const n = buf.slice(sOff, sOff + 8).toString().replace(/\0/g, "");
+      sectionNames.push(n);
+    }
+    const packerMatches = knownBad.filter(b => sectionNames.some(sn => sn.toLowerCase().includes(b)));
+    if (packerMatches.length) lines.push(`⚠ Packer detected: ${packerMatches.join(", ")}`);
+
+    return lines.join("\n");
+  } catch (e: any) {
+    return `[PE Error] ${e.message}`;
+  }
+}
+
+// ── ELF ANALYZER ───────────────────────────────────────────
+async function elfAnalyze(path: string): Promise<string> {
+  try {
+    if (!existsSync(path)) return `[ELF] File not found: ${path}`;
+    const buf = readFileSync(path);
+    if (buf[0] !== 0x7f || buf[1] !== 0x45 || buf[2] !== 0x4c || buf[3] !== 0x46)
+      return `[ELF] Not an ELF file`;
+
+    const is64 = buf[4] === 2; // EI_CLASS
+    const endian = buf[5] === 1 ? "Little Endian" : "Big Endian";
+    const osabi = buf[7];
+    const osabiNames: Record<number, string> = { 0: "UNIX System V", 3: "GNU/Linux", 9: "FreeBSD", 12: "OpenBSD" };
+    const etype = is64 ? buf.readUInt16LE(16) : buf.readUInt16LE(16);
+    const typeNames: Record<number, string> = { 0: "NONE", 1: "REL (Relocatable)", 2: "EXEC (Executable)", 3: "DYN (Shared Object)", 4: "CORE" };
+    const emachine = is64 ? buf.readUInt16LE(18) : buf.readUInt16LE(18);
+    const machineNames: Record<number, string> = { 3: "i386", 62: "x86-64", 40: "ARM", 183: "AArch64", 50: "IA-64", 20: "PowerPC", 21: "PowerPC64", 8: "MIPS", 243: "RISC-V" };
+    const entry = is64 ? buf.readBigUInt64LE(24) : buf.readUInt32LE(24);
+    const phoff = is64 ? Number(buf.readBigUInt64LE(32)) : buf.readUInt32LE(28);
+    const shoff = is64 ? Number(buf.readBigUInt64LE(40)) : buf.readUInt32LE(32);
+    const phnum = is64 ? buf.readUInt16LE(56) : buf.readUInt16LE(44);
+    const shnum = is64 ? buf.readUInt16LE(60) : buf.readUInt16LE(48);
+    const shstrndx = is64 ? buf.readUInt16LE(62) : buf.readUInt16LE(50);
+
+    const lines: string[] = [
+      `🐧 ELF Analysis: ${path}`,
+      `Size: ${buf.length} bytes`,
+      `Class: ${is64 ? "ELF64" : "ELF32"}`,
+      `Byte Order: ${endian}`,
+      `OS/ABI: ${osabiNames[osabi] || `0x${osabi.toString(16)}`}`,
+      `Type: ${typeNames[etype] || `0x${etype.toString(16)}`}`,
+      `Machine: ${machineNames[emachine] || `0x${emachine.toString(16)}`}`,
+      `Entry Point: 0x${entry.toString(16)}`,
+      `Section Headers: ${shnum} (offset 0x${shoff.toString(16)})`,
+      `Program Headers: ${phnum} (offset 0x${phoff.toString(16)})`,
+      ``,
+    ];
+
+    // Program Headers
+    if (phnum > 0 && phoff > 0) {
+      const phent = is64 ? 56 : 32;
+      lines.push(`Program Headers (${phnum}):`);
+      const ptNames: Record<number, string> = { 0: "NULL", 1: "LOAD", 2: "DYNAMIC", 3: "INTERP", 4: "NOTE", 5: "SHLIB", 6: "PHDR", 7: "TLS", 0x6474e550: "GNU_EH_FRAME", 0x6474e551: "GNU_STACK", 0x6474e552: "GNU_RELRO", 0x6474e553: "GNU_PROPERTY" };
+      for (let i = 0; i < phnum; i++) {
+        const off = phoff + i * phent;
+        const ptype = is64 ? buf.readUInt32LE(off) : buf.readUInt32LE(off);
+        const ptypeName = ptNames[ptype] || `0x${ptype.toString(16)}`;
+        const pflags = is64 ? buf.readUInt32LE(off + 4) : buf.readUInt32LE(off + 24);
+        const pvaddr = is64 ? Number(buf.readBigUInt64LE(off + 16)) : buf.readUInt32LE(off + 8);
+        const pmemsz = is64 ? Number(buf.readBigUInt64LE(off + 40)) : buf.readUInt32LE(off + 20);
+        const flagStr = ((pflags & 4) ? "R" : "") + ((pflags & 2) ? "W" : "") + ((pflags & 1) ? "X" : "");
+
+        const isWX = (pflags & 2) && (pflags & 1); // W+X
+        lines.push(`  [${i}] ${ptypeName.padEnd(18)} 0x${pvaddr.toString(16).padStart(8, "0")} memsz=${pmemsz} ${flagStr}${isWX ? " ⚠ W+X" : ""}`);
+      }
+    }
+
+    // ── Dynamic Symbols (imported functions) ──
+    // We look for .dynsym section via section headers
+    if (shnum > 0 && shoff > 0) {
+      const shent = is64 ? 64 : 40;
+      let dynsymOff = 0, dynsymEntSize = 0, dynsymCount = 0;
+      let strtabOff = 0, dynstrOff = 0;
+
+      for (let i = 0; i < shnum; i++) {
+        const sOff = shoff + i * shent;
+        const shName = is64 ? buf.readUInt32LE(sOff) : buf.readUInt32LE(sOff);
+        const shType = is64 ? buf.readUInt32LE(sOff + 4) : buf.readUInt32LE(sOff + 4);
+        const shFlags = is64 ? Number(buf.readBigUInt64LE(sOff + 8)) : buf.readUInt32LE(sOff + 8);
+        const shAddr = is64 ? Number(buf.readBigUInt64LE(sOff + 16)) : buf.readUInt32LE(sOff + 12);
+        const shOffset = is64 ? Number(buf.readBigUInt64LE(sOff + 24)) : buf.readUInt32LE(sOff + 16);
+        const shSize = is64 ? Number(buf.readBigUInt64LE(sOff + 32)) : buf.readUInt32LE(sOff + 20);
+
+        if (shType === 11) { // SHT_DYNSYM
+          dynsymOff = shOffset;
+          dynsymEntSize = is64 ? 24 : 16; // actually from section header
+          dynsymCount = Math.floor(Math.min(shSize, dynsymOff ? 500 : 0) / 24); // rough
+        }
+        if (shType === 3) { // SHT_STRTAB — find .dynstr
+          if (i !== shstrndx) dynstrOff = shOffset;
+        }
+      }
+
+      if (dynsymOff > 0 && dynstrOff > 0) {
+        const symEnt = is64 ? 24 : 16;
+        const count = Math.min(200, Math.floor((buf.length - dynsymOff) / symEnt));
+        lines.push(`\nDynamic Symbols (imported functions, first ${count}):`);
+        let imports = 0;
+        for (let i = 0; i < count; i++) {
+          const sOff = dynsymOff + i * symEnt;
+          const strIdx = is64 ? buf.readUInt32LE(sOff) : buf.readUInt32LE(sOff);
+          const symVal = is64 ? Number(buf.readBigUInt64LE(sOff + 8)) : buf.readUInt32LE(sOff + 4);
+          const symSize = is64 ? Number(buf.readBigUInt64LE(sOff + 16)) : buf.readUInt32LE(sOff + 8);
+
+          if (strIdx > 0 && strIdx < buf.length - dynstrOff) {
+            let name = "";
+            for (let j = dynstrOff + strIdx; j < buf.length && buf[j] !== 0; j++) name += String.fromCharCode(buf[j]);
+            if (name && !name.startsWith("_") && name.length > 1) {
+              if (!name.startsWith("__")) {
+                lines.push(`  ${name}`);
+                imports++;
+              }
+            }
+          }
+        }
+        if (imports === 0) lines.push("  (none or stripped)");
+      }
+    }
+
+    // ── Entropy ──
+    let freq = new Map<number, number>();
+    for (let i = 0; i < buf.length; i++) freq.set(buf[i], (freq.get(buf[i]) || 0) + 1);
+    let entropy = 0;
+    for (const count of freq.values()) { const p = count / buf.length; entropy -= p * Math.log2(p); }
+    lines.push(`\nEntropy: ${entropy.toFixed(4)} ${entropy > 7.2 ? "⚠ SUSPICIOUS (packed/encrypted)" : entropy > 6.5 ? "⚠ High" : "— Normal"}`);
+
+    // Suspicious: INTERP missing for executable, or stack is W+X
+    if (etype === 2) {
+      // Check for stack executability
+      for (let i = 0; i < phnum; i++) {
+        const off = phoff + i * (is64 ? 56 : 32);
+        if ((is64 ? buf.readUInt32LE(off) : buf.readUInt32LE(off)) === 0x6474e551) { // GNU_STACK
+          const flags = is64 ? buf.readUInt32LE(off + 4) : buf.readUInt32LE(off + 24);
+          if (flags & 1) lines.push("⚠ W+X Stack (GNU_STACK executable) — suspicious");
+        }
+      }
+    }
+
+    return lines.join("\n");
+  } catch (e: any) {
+    return `[ELF Error] ${e.message}`;
+  }
+}
+
+// ── MACRO SCAN (Office Documents) ─────────────────────────
+async function macroScan(path: string): Promise<string> {
+  try {
+    if (!existsSync(path)) return `[MacroScan] File not found: ${path}`;
+    const buf = readFileSync(path);
+    const magic = buf.slice(0, 8).toString("hex");
+
+    const isOLE2 = magic.startsWith("d0cf11e0a1b11ae1");
+    const isOOXML = magic.startsWith("504b0304") && (path.endsWith(".docx") || path.endsWith(".xlsx") || path.endsWith(".pptx") || path.endsWith(".xlsm") || path.endsWith(".docm"));
+
+    const lines: string[] = [
+      `📋 Macro Analysis: ${path}`,
+      `Size: ${buf.length} bytes (${(buf.length/1024).toFixed(1)} KB)`,
+    ];
+
+    if (isOLE2) {
+      lines.push(`Format: OLE2 (binary Office document — .doc/.xls/.ppt/.dot)`);
+      // Scan for VBA magic bytes: "VBA" / "Attribut" / "Macro" / "Auto_"
+      let vbaStrings: string[] = [];
+      let suspiciousPatterns: string[] = [];
+
+      // Extract printable strings from the binary
+      let cur = "";
+      for (let i = 0; i < buf.length; i++) {
+        const c = buf[i];
+        if (c >= 32 && c <= 126) { cur += String.fromCharCode(c); }
+        else {
+          if (cur.length >= 4) {
+            const lower = cur.toLowerCase();
+            if (lower.includes("vba") || lower.includes("macro") || lower.includes("auto_") ||
+                lower.includes("attribut") || lower.includes("module")) {
+              vbaStrings.push(cur.substring(0, 200));
+            }
+            if (lower.includes("shell(") || lower.includes("createobject") || lower.includes("wscript") ||
+                lower.includes("exec(") || lower.includes("run(") || lower.includes("eval(") ||
+                lower.includes("mshta") || lower.includes("powershell") || lower.includes("cmd.exe")) {
+              suspiciousPatterns.push(cur.substring(0, 200));
+            }
+          }
+          cur = "";
+        }
+      }
+      if (cur.length >= 4) {
+        const lower = cur.toLowerCase();
+        if (lower.includes("vba") || lower.includes("macro") || lower.includes("auto_")) vbaStrings.push(cur.substring(0, 200));
+        if (lower.includes("shell(") || lower.includes("createobject")) suspiciousPatterns.push(cur.substring(0, 200));
+      }
+
+      if (vbaStrings.length) {
+        lines.push(`\n✅ VBA/Macros detected! (${vbaStrings.length} string(s))`);
+        lines.push(...vbaStrings.slice(0, 20).map(s => `  📝 ${s}`));
+      } else {
+        lines.push(`\nℹ️ No obvious VBA macros found (may be encrypted/stored differently)`);
+      }
+
+      if (suspiciousPatterns.length) {
+        lines.push(`\n🚨 Suspicious patterns detected! (${suspiciousPatterns.length}):`);
+        lines.push(...suspiciousPatterns.slice(0, 15).map(s => `  ⚠ ${s}`));
+      } else {
+        lines.push(`\n✅ No suspicious macro patterns detected.`);
+      }
+
+      // Check for Auto macros
+      const autoMacros = ["auto_open", "auto_close", "document_open", "autoexec", "autonew"];
+      const foundAuto = autoMacros.filter(a => {
+        const lc = buf.toString("latin1").toLowerCase();
+        return lc.includes(a);
+      });
+      if (foundAuto.length) {
+        lines.push(`\n⚠ Auto-executing macros found: ${foundAuto.join(", ")}`);
+      }
+
+    } else if (isOOXML) {
+      lines.push(`Format: OOXML (ZIP-based — .docx/.xlsx/.pptx)`);
+      // Try to find vbaProject.bin inside the ZIP
+      const zipMagic = "PK";
+      // Simple ZIP central directory scan for vbaProject.bin
+      const haystack = buf.toString("latin1");
+      if (haystack.includes("vbaProject.bin")) {
+        lines.push(`\n✅ VBA project found (vbaProject.bin embedded)`);
+        // Scan for suspicious patterns in the vba stream
+        const cur = haystack.substring(haystack.indexOf("vbaProject.bin") - 200, Math.min(haystack.length, haystack.indexOf("vbaProject.bin") + 500));
+        const suspicious = ["Auto_Open", "Shell(", "CreateObject", "WScript", "PowerShell", "cmd.exe", "MSHTA", "Eval(", "Exec("];
+        const hits = suspicious.filter(s => haystack.toLowerCase().includes(s.toLowerCase()));
+        if (hits.length) {
+          lines.push(`\n🚨 Suspicious VBA patterns: ${hits.join(", ")}`);
+        }
+      } else {
+        lines.push(`ℹ️ No embedded VBA project found`);
+      }
+    } else if (path.endsWith(".vba") || path.endsWith(".vbs") || path.endsWith(".bas")) {
+      lines.push(`Format: Raw VBA/VBS script`);
+      const content = buf.toString("latin1");
+      const suspicious = ["Shell(", "CreateObject(\"WScript.Shell\")", "CreateObject(\"Shell.Application\")", "PowerShell", "cmd.exe", "MSHTA", "Eval(", "Exec(", "WScript.Run", "FileSystemObject", "RegWrite", "HTTPRequest"];
+      const hits = suspicious.filter(s => content.includes(s));
+      lines.push(`\nLength: ${content.length} chars`);
+      if (hits.length) {
+        lines.push(`\n🚨 ${hits.length} suspicious patterns:`);
+        hits.forEach(h => {
+          const idx = content.indexOf(h);
+          const ctx = content.substring(Math.max(0, idx - 30), idx + h.length + 60).replace(/\n/g, "\\n").substring(0, 150);
+          lines.push(`  ⚠ ${h}: ...${ctx}...`);
+        });
+      } else {
+        lines.push(`✅ No suspicious patterns`);
+      }
+      lines.push(`\n── Source (first 30 lines) ──`);
+      lines.push(content.split("\n").slice(0, 30).join("\n"));
+    } else {
+      lines.push(`\nℹ️ Unknown format. Supported: .doc, .xls, .ppt (OLE2), .docx, .xlsm, .docm (OOXML), .vba, .vbs, .bas`);
+    }
+
+    return lines.join("\n");
+  } catch (e: any) {
+    return `[MacroScan Error] ${e.message}`;
+  }
+}
+
+// ── DEEP STRINGS (Categorized) ────────────────────────────
+async function stringsDeep(path: string): Promise<string> {
+  try {
+    if (!existsSync(path)) return `[StringsDeep] File not found: ${path}`;
+    const buf = readFileSync(path);
+    const size = buf.length;
+
+    // Extract all printable strings >= 4 chars
+    const allStrings: string[] = [];
+    let cur = "";
+    for (let i = 0; i < buf.length; i++) {
+      const c = buf[i];
+      if (c >= 32 && c <= 126) { cur += String.fromCharCode(c); }
+      else {
+        if (cur.length >= 4) allStrings.push(cur);
+        cur = "";
+      }
+    }
+    if (cur.length >= 4) allStrings.push(cur);
+
+    // Classify
+    const ipv4Re = /\b(?:\d{1,3}\.){3}\d{1,3}\b/;
+    const domainRe = /\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b/;
+    const urlRe = /https?:\/\/[^\s"']+/;
+    const emailRe = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/;
+    const filepathRe = /(?:[a-zA-Z]:\\[^\s"<>|:]+|\/[^\s"<>|:]+)/;
+    const cryptoKeyRe = /(?:key|secret|token|cert|private).{0,20}=.{0,80}/i;
+
+    const ips = new Set<string>();
+    const domains = new Set<string>();
+    const urls = new Set<string>();
+    const emails = new Set<string>();
+    const paths = new Set<string>();
+    const cryptos: string[] = [];
+    const others: string[] = [];
+
+    for (const s of allStrings) {
+      const trimmed = s.trim();
+      if (trimmed.length > 200) { others.push(trimmed.substring(0, 200) + "..."); continue; }
+      if (trimmed.startsWith("http") && urlRe.test(trimmed)) {
+        try { urls.add(new URL(trimmed).href); } catch { urls.add(trimmed); }
+      } else if (emailRe.test(trimmed)) emails.add(trimmed);
+      else if (ipv4Re.test(trimmed) && !trimmed.startsWith("0.")) {
+        const ip = trimmed.match(ipv4Re)![0];
+        if (!ip.startsWith("127.") && !ip.startsWith("0.")) ips.add(ip);
+      } else if (domainRe.test(trimmed) && !trimmed.includes("/")) {
+        const d = trimmed.match(domainRe)![0];
+        if (!d.endsWith(".local") && !d.endsWith(".lan") && !d.endsWith(".localhost")) domains.add(d);
+      } else if (filepathRe.test(trimmed)) paths.add(trimmed);
+      else if (cryptoKeyRe.test(trimmed)) cryptos.push(trimmed.substring(0, 150));
+      else if (trimmed.length >= 8 && trimmed.length <= 64) others.push(trimmed);
+    }
+
+    const lines: string[] = [
+      `🔍 Deep String Analysis: ${path}`,
+      `Total strings (≥4 chars): ${allStrings.length}`,
+      `Total file size: ${(size/1024).toFixed(1)} KB`,
+      ``,
+    ];
+
+    if (urls.size) lines.push(`🌐 URLs (${urls.size}):`, ...Array.from(urls).slice(0, 15).map(u => `  ${u}`), "");
+    if (emails.size) lines.push(`📧 Emails (${emails.size}):`, ...Array.from(emails).slice(0, 10).map(e => `  ${e}`), "");
+    if (ips.size) lines.push(`🌍 IP Addresses (${ips.size}):`, ...Array.from(ips).slice(0, 15).map(i => `  ${i}`), "");
+    if (domains.size) lines.push(`🌐 Domains (${domains.size}):`, ...Array.from(domains).slice(0, 15).map(d => `  ${d}`), "");
+    if (paths.size) lines.push(`📁 File Paths (${paths.size}):`, ...Array.from(paths).slice(0, 10).map(p => `  ${p}`), "");
+    if (cryptos.length) lines.push(`🔑 Potential Secrets (${cryptos.length}):`, ...cryptos.slice(0, 10).map(c => `  ⚠ ${c}`), "");
+
+    // Entropy
+    let freq = new Map<number, number>();
+    for (let i = 0; i < buf.length; i++) freq.set(buf[i], (freq.get(buf[i]) || 0) + 1);
+    let entropy = 0;
+    for (const count of freq.values()) { const p = count / buf.length; entropy -= p * Math.log2(p); }
+    lines.push(`\nEntropy: ${entropy.toFixed(4)} ${entropy > 7.2 ? "⚠ PACKED" : entropy > 6.5 ? "⚠ High" : "— Normal"}`);
+
+    return lines.join("\n");
+  } catch (e: any) {
+    return `[StringsDeep Error] ${e.message}`;
+  }
+}
+
+// ── HEX DUMP ───────────────────────────────────────────────
+async function hexDump(input: string): Promise<string> {
+  try {
+    const parts = input.split("|").map(s => s.trim());
+    const path = parts[0];
+    const offset = parseInt(parts[1]) || 0;
+    const limit = Math.min(parseInt(parts[2]) || 512, 4096);
+
+    if (!existsSync(path)) return `[HexDump] File not found: ${path}`;
+    const buf = readFileSync(path);
+    const size = buf.length;
+
+    const lines: string[] = [
+      `⎔ Hex Dump: ${path}`,
+      `Size: ${size} bytes (${(size/1024).toFixed(1)} KB)`,
+      `Range: 0x${offset.toString(16)} — 0x${Math.min(offset + limit, size).toString(16)} (${limit} bytes)`,
+      `───┬──────────┬──────────────────────────────┬────────────────────`,
+      `OFF│ 0  1  2  3   4  5  6  7   8  9  A  B   C  D  E  F │ ASCII`,
+      `───┴──────────┴──────────────────────────────┴────────────────────`,
+    ];
+
+    const end = Math.min(offset + limit, size);
+    for (let i = offset; i < end; i += 16) {
+      const addr = `0x${i.toString(16).padStart(8, "0")}`;
+      const hexParts: string[] = [];
+      const asciiParts: string[] = [];
+      for (let j = 0; j < 16 && i + j < end; j++) {
+        const byte = buf[i + j];
+        hexParts.push(byte.toString(16).padStart(2, "0"));
+        if (j === 7) hexParts.push(" ");
+        asciiParts.push(byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : ".");
+      }
+      const hexStr = hexParts.join(" ").padEnd(51);
+      const asciiStr = asciiParts.join("");
+      lines.push(`${addr}│ ${hexStr}│ ${asciiStr}`);
+    }
+
+    lines.push(`───┴──────────┴──────────────────────────────┴────────────────────`);
+    lines.push(`Use: @hex_dump|path|offset|length (default: offset=0, length=512)`);
+
+    return lines.join("\n");
+  } catch (e: any) {
+    return `[HexDump Error] ${e.message}`;
+  }
+}
+
+// ── IOC EXTRACTOR ──────────────────────────────────────────
+async function extractIoc(input: string): Promise<string> {
+  try {
+    const parts = input.split("|").map(s => s.trim());
+    const source = parts[0];
+
+    let text: string;
+    let sourceName = "text";
+
+    if (existsSync(source)) {
+      text = readFileSync(source, "utf-8");
+      sourceName = source;
+    } else {
+      text = input;
+      sourceName = "inline text";
+    }
+
+    // Extract IOCs with regex
+    const ipv4Re = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+    const domainRe = /\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b/g;
+    const urlRe = /https?:\/\/[^\s<>"')\]]+/g;
+    const emailRe = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+    const md5Re = /\b[a-fA-F0-9]{32}\b/g;
+    const sha1Re = /\b[a-fA-F0-9]{40}\b/g;
+    const sha256Re = /\b[a-fA-F0-9]{64}\b/g;
+    const filePathRe = /(?:[a-zA-Z]:\\[^\s<>"|:]+|\/[^\s<>"|:]+)/g;
+
+    const results: Record<string, string[]> = {
+      "IPv4": [...new Set((text.match(ipv4Re) || []).filter(ip => !ip.startsWith("127.") && !ip.startsWith("0.") && !ip.startsWith("10.") && !ip.startsWith("192.168.") && !ip.startsWith("172.1")))],
+      "URLs": [...new Set(text.match(urlRe) || []).values()].map(u => u.replace(/[.,;:!?)]+$/, "")),
+      "Domains": [...new Set((text.match(domainRe) || []).filter(d => !d.startsWith("http") && !d.includes("/") && !d.startsWith("www.")))],
+      "Emails": [...new Set(text.match(emailRe) || [])],
+      "MD5": [...new Set(text.match(md5Re) || [])],
+      "SHA1": [...new Set(text.match(sha1Re) || [])],
+      "SHA256": [...new Set(text.match(sha256Re) || [])],
+    };
+
+    // Filter URLs to valid
+    results["URLs"] = results["URLs"].filter(u => {
+      try { new URL(u); return true; } catch { return false; }
+    });
+
+    // Filter domains to exclude IPs and URLs
+    const ipSet = new Set(results["IPv4"]);
+    results["Domains"] = results["Domains"].filter(d =>
+      !ipSet.has(d) && d.includes(".") && !d.match(/^\d/) && d.length > 3
+    );
+
+    const totalIocs = Object.values(results).reduce((sum, arr) => sum + arr.length, 0);
+
+    const lines: string[] = [
+      `🎯 IOC Extraction from ${sourceName}`,
+      `Total IOCs found: ${totalIocs}`,
+      `Text length: ${text.length} chars`,
+      ``,
+    ];
+
+    for (const [type, iocs] of Object.entries(results)) {
+      if (iocs.length) {
+        lines.push(`${type} (${iocs.length}):`);
+        lines.push(...iocs.slice(0, 20).map(ioc => `  ${ioc}`));
+        if (iocs.length > 20) lines.push(`  ... and ${iocs.length - 20} more`);
+        lines.push(``);
+      }
+    }
+
+    // Dedup all IOCs for summary
+    if (totalIocs === 0) lines.push("(no IOCs found)");
+
+    return lines.join("\n");
+  } catch (e: any) {
+    return `[IOC Error] ${e.message}`;
+  }
+}
+
+// ── PROCESS FORENSICS ─────────────────────────────────────
+async function procAnalyze(input: string): Promise<string> {
+  try {
+    const pid = parseInt(input.trim());
+    if (isNaN(pid)) return `[ProcAnalyze] Usage: proc_analyze|PID\nExample: @proc_analyze|1234`;
+    const procDir = `/proc/${pid}`;
+    if (!existsSync(procDir)) return `[ProcAnalyze] Process ${pid} not found`;
+
+    const lines: string[] = [
+      `🔍 Process Analysis: PID ${pid}`,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+    ];
+
+    // ── Basic Info ──
+    try {
+      const status = readFileSync(`${procDir}/status`, "utf-8");
+      const name = status.match(/Name:\s*(.+)/)?.[1] || "?";
+      const state = status.match(/State:\s*(.+)/)?.[1] || "?";
+      const ppid = status.match(/PPid:\s*(.+)/)?.[1] || "?";
+      const uid = status.match(/Uid:\s*(.+)/)?.[1] || "?";
+      const threads = status.match(/Threads:\s*(.+)/)?.[1] || "?";
+      const vmRSS = status.match(/VmRSS:\s*(.+)/)?.[1] || "?";
+      const vmSize = status.match(/VmSize:\s*(.+)/)?.[1] || "?";
+      lines.push(`  Name: ${name}`);
+      lines.push(`  State: ${state}`);
+      lines.push(`  PPID: ${ppid}`);
+      lines.push(`  UID: ${uid}`);
+      lines.push(`  Threads: ${threads}`);
+      lines.push(`  RSS: ${vmRSS}`);
+      lines.push(`  VM: ${vmSize}`);
+    } catch {}
+
+    // ── Command Line ──
+    try {
+      const cmdline = readFileSync(`${procDir}/cmdline`, "utf-8").replace(/\0/g, " ");
+      if (cmdline.trim()) lines.push(`  Cmdline: ${cmdline.substring(0, 500)}`);
+    } catch {}
+
+    // ── CWD ──
+    try {
+      const cwd = execSync(`readlink -f ${procDir}/cwd 2>/dev/null`, { encoding: "utf-8", timeout: 3000 }).trim();
+      if (cwd) lines.push(`  CWD: ${cwd}`);
+    } catch {}
+    try {
+      const exe = execSync(`readlink -f ${procDir}/exe 2>/dev/null`, { encoding: "utf-8", timeout: 3000 }).trim();
+      if (exe) lines.push(`  Exe: ${exe}`);
+    } catch {}
+
+    // ── Environment ──
+    try {
+      const env = readFileSync(`${procDir}/environ`, "utf-8").replace(/\0/g, "\n").trim();
+      const envLines = env.split("\n").filter(Boolean);
+      const sensitive = envLines.filter(e =>
+        /key|secret|token|pass|cert|credential|api_key|auth/i.test(e)
+      );
+      lines.push(`  Env vars: ${envLines.length} total`);
+      if (sensitive.length) {
+        lines.push(`  ⚠ Sensitive env vars (${sensitive.length}):`);
+        sensitive.forEach(s => lines.push(`    ⚠ ${s.substring(0, 120)}`));
+      }
+    } catch {}
+
+    // ── Open File Descriptors ──
+    try {
+      const fds = readdirSync(`${procDir}/fd`);
+      const sockets: string[] = [];
+      const pipes: string[] = [];
+      const regFiles: string[] = [];
+      for (const fd of fds) {
+        try {
+          const link = execSync(`readlink ${procDir}/fd/${fd} 2>/dev/null`, { encoding: "utf-8", timeout: 2000 }).trim();
+          if (link.includes("socket:")) sockets.push(link);
+          else if (link.includes("pipe:")) pipes.push(link);
+          else if (link) regFiles.push(link);
+        } catch {}
+      }
+      lines.push(`  Open FDs: ${fds.length} (${sockets.length} sockets, ${pipes.length} pipes, ${regFiles.length} files)`);
+      if (sockets.length) lines.push(...sockets.slice(0, 10).map(s => `    🔌 ${s}`));
+      if (regFiles.length) lines.push(...regFiles.slice(0, 8).map(f => `    📄 ${f}`));
+    } catch {}
+
+    // ── Network Connections ──
+    try {
+      for (const proto of ["tcp", "tcp6", "udp", "udp6"]) {
+        const netPath = `${procDir}/net/${proto}`;
+        if (existsSync(netPath)) {
+          const content = readFileSync(netPath, "utf-8");
+          const conns = content.split("\n").slice(1).filter(Boolean);
+          if (conns.length) {
+            lines.push(`  Net/${proto}: ${conns.length} connection(s)`);
+            for (const conn of conns.slice(0, 8)) {
+              const parts2 = conn.trim().split(/\\s+/);
+              if (parts2.length >= 4) {
+                const localHex = parts2[1]?.split(":")?.[0] || "?";
+                const localPort = parseInt(parts2[1]?.split(":")?.[1] || "0", 16);
+                const remHex = parts2[2]?.split(":")?.[0] || "?";
+                const remPort = parseInt(parts2[2]?.split(":")?.[1] || "0", 16);
+                const state = parts2[3] || "?";
+                const stateNames: Record<string, string> = { "01":"ESTAB","02":"SYN_SENT","03":"SYN_RECV","04":"FIN_WAIT","05":"TIMEWAIT","06":"CLOSE","07":"CLOSE_WAIT","0A":"LISTEN","0B":"CLOSING"};
+                const stateName = stateNames[state] || state;
+                lines.push(`    ${localHex}:${localPort} → ${remHex}:${remPort} [${stateName}]`);
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+
+    // ── Memory Maps ──
+    try {
+      const maps = readFileSync(`${procDir}/maps`, "utf-8");
+      const mapLines = maps.split("\n").filter(Boolean);
+      lines.push(`  Memory maps: ${mapLines.length} regions`);
+
+      // Check for suspicious mappings (rwx)
+      const rwxMaps = mapLines.filter(l => l.includes("rwx"));
+      if (rwxMaps.length) {
+        lines.push(`  ⚠ RWX memory regions (${rwxMaps.length}):`);
+        rwxMaps.slice(0, 5).forEach(m => lines.push(`    ⚠ ${m.substring(0, 120)}`));
+      }
+    } catch {}
+
+    return lines.join("\n");
+  } catch (e: any) {
+    return `[ProcAnalyze Error] ${e.message}`;
+  }
+}
+
+// ── WEB CLICKERS ──────────────────────────────────────────
+
+async function webClick(input: string): Promise<string> {
+  try {
+    const parts = input.split("|").map(s=>s.trim());
+    const url = parts[0];
+    if (!url) return `[Web Click] Usage: url|selector|method. method: index (click Nth link), text (by link text), selector (URL)`;
+    const r = await fetch(url, {signal: AbortSignal.timeout(15000)});
+    const html = await r.text();
+    const title = (html.match(/<title[^>]*>([^<]+)<\/title>/i)||[])[1]||"";
+    const links = [...html.matchAll(/<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+    const clean = links.map(([,h,t]:any)=>[h,t.replace(/<[^>]+>/g,"").trim()]).filter(([h]:any)=>h&&!h.startsWith("#")&&!h.startsWith("javascript:"));
+    const selector = parts[1]||"0"; const method = parts[2]||"index";
+    if (method==="index") {
+      const idx = parseInt(selector)||0;
+      if (idx<0||idx>=clean.length) return `[Web Click] Index ${idx} out of range (0-${clean.length-1})`;
+      const [href,text] = clean[idx]; const fullUrl = href.startsWith("http")?href:new URL(href,url).href;
+      const r2 = await fetch(fullUrl,{signal:AbortSignal.timeout(15000)}); const h2 = await r2.text();
+      const t2 = (h2.match(/<title[^>]*>([^<]+)<\/title>/i)||[])[1]||"";
+      const body = h2.replace(/<script[^>]*>[\s\S]*?<\/script>/gi,"").replace(/<style[^>]*>[\s\S]*?<\/style>/gi,"").replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
+      return [`🌐 Web Click: ${url}`,`Title: ${title}`,`Click [${idx}]: ${text||href} → ${fullUrl}`,`→ Title: ${t2}`,`→ Content: ${body.substring(0,2000)}`].join("\n");
+    } else if (method==="text") {
+      const m = clean.filter(([,t]:any)=>t.toLowerCase().includes(selector.toLowerCase()));
+      if (!m.length) return `[Web Click] No links with text: "${selector}"`;
+      const [href,text] = m[0]; const fullUrl = href.startsWith("http")?href:new URL(href,url).href;
+      const r2 = await fetch(fullUrl,{signal:AbortSignal.timeout(15000)}); const h2 = await r2.text();
+      const t2 = (h2.match(/<title[^>]*>([^<]+)<\/title>/i)||[])[1]||"";
+      const body = h2.replace(/<script[^>]*>[\s\S]*?<\/script>/gi,"").replace(/<style[^>]*>[\s\S]*?<\/style>/gi,"").replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
+      return [`🌐 Web Click: ${url}`,`Title: ${title}`,`Click "${text}" → ${fullUrl}`,`→ Title: ${t2}`,`→ Content: ${body.substring(0,2000)}`].join("\n");
+    } else {
+      const r2 = await fetch(selector,{signal:AbortSignal.timeout(15000)}); const h2 = await r2.text();
+      const t2 = (h2.match(/<title[^>]*>([^<]+)<\/title>/i)||[])[1]||"";
+      const body = h2.replace(/<script[^>]*>[\s\S]*?<\/script>/gi,"").replace(/<style[^>]*>[\s\S]*?<\/style>/gi,"").replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
+      return [`🌐 Web Click: ${url} → ${selector}`,`→ Title: ${t2}`,`→ Content: ${body.substring(0,2000)}`].join("\n");
+    }
+  } catch(e: any) { return `[Web Click Error] ${e.message}`; }
+}
+
+async function webLinks(url: string): Promise<string> {
+  try {
+    if (!url) return `[Web Links] Usage: url`;
+    const r = await fetch(url,{signal:AbortSignal.timeout(15000)}); const html = await r.text();
+    const base = (html.match(/<base[^>]*href=["']([^"']+)/i)||[])[1]||url;
+    const links = [...html.matchAll(/<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+    const imgs = [...html.matchAll(/<img[^>]*src=["']([^"']+)["'][^>]*>/gi)];
+    const scripts = [...html.matchAll(/<script[^>]*src=["']([^"']+)["'][^>]*>/gi)];
+    const res = (l:string)=>l.startsWith("http")?l:l.startsWith("//")?"https:"+l:new URL(l,base).href;
+    const all = links.map(([,h,t]:any)=>[res(h),t.replace(/<[^>]+>/g,"").trim()]).filter(([h]:any)=>h);
+    const internal = all.filter(([h]:any)=>h.startsWith(url.replace(/\/$/,"")));
+    const external = all.filter(([h]:any)=>!h.startsWith(url.replace(/\/$/,"")));
+    const resources = [...imgs.map(m=>res(m[1])),...scripts.map(m=>res(m[1]))].filter(Boolean);
+    const title = (html.match(/<title[^>]*>([^<]+)<\/title>/i)||[])[1]||"";
+    return [`🔗 Web Links: ${url}`,`Title: ${title}`,
+      `\nLinks: ${all.length} (int=${internal.length}, ext=${external.length})`,
+      internal.length?`\nInternal:\n${internal.slice(0,20).map(([h,t]:any)=>`  · ${t||h}`).join("\n")}`:"",
+      external.length?`\nExternal:\n${external.slice(0,20).map(([h,t]:any)=>`  · ${t||h}`).join("\n")}`:"",
+      resources.length?`\n📦 Resources:\n${resources.slice(0,15).join("\n")}`:"",
+    ].filter(Boolean).join("\n");
+  } catch(e: any) { return `[Web Links Error] ${e.message}`; }
+}
+
+async function webForm(input: string): Promise<string> {
+  try {
+    const parts = input.split("|").map(s=>s.trim()); const url = parts[0];
+    if (!url) return `[Web Form] Usage: url|field1=val1`;
+    const r = await fetch(url,{signal:AbortSignal.timeout(15000)}); const html = await r.text();
+    const forms = [...html.matchAll(/<form[^>]*action=["']([^"']*)["'][^>]*(?:method=["']([^"']*)["'])?[^>]*>([\s\S]*?)<\/form>/gi)];
+    const title = (html.match(/<title[^>]*>([^<]+)<\/title>/i)||[])[1]||"";
+    if (!forms.length) return `📋 Web Form: ${url}\nTitle: ${title}\n(no forms found)`;
+    const res = [`📋 Web Form: ${url}`,`Title: ${title}`,`Forms: ${forms.length}`];
+    for (const [action,method,inner] of forms) {
+      const fields = [...inner.matchAll(/<input[^>]*name=["']([^"']+)["'][^>]*(?:value=["']([^"']*)["'])?[^>]*>/gi)];
+      res.push(`\nForm: "${action||url}" ${(method||"GET").toUpperCase()}`);
+      fields.forEach(([,n,v]:any)=>res.push(`  ${n}=${v||""}`));
+      const userFields = parts.slice(1).filter(p=>p.includes("="));
+      if (userFields.length>0) {
+        const params = new URLSearchParams(); userFields.forEach(p=>{const[k,v]=p.split("=",2);if(k)params.set(k,v||"")});
+        const isPost = (method||"GET").toUpperCase()==="POST";
+        const submitUrl = isPost?url:`${action||url}?${params.toString()}`;
+        const r2 = await fetch(submitUrl,{method:isPost?"POST":"GET",body:isPost?params:undefined,headers:isPost?{"Content-Type":"application/x-www-form-urlencoded"}:{},signal:AbortSignal.timeout(15000)});
+        const h2 = await r2.text(); const t2 = (h2.match(/<title[^>]*>([^<]+)<\/title>/i)||[])[1]||"";
+        const body = h2.replace(/<script[^>]*>[\s\S]*?<\/script>/gi,"").replace(/<style[^>]*>[\s\S]*?<\/style>/gi,"").replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
+        res.push(`→ ${r2.status} ${t2} ${body.substring(0,1000)}`);
+      }
+    }
+    return res.join("\n");
+  } catch(e: any) { return `[Web Form Error] ${e.message}`; }
+}
+
+async function webSnapshot(url: string): Promise<string> {
+  try {
+    if (!url) return `[Web Snapshot] Usage: url`;
+    const r = await fetch(url,{signal:AbortSignal.timeout(15000)}); const html = await r.text();
+    const title = (html.match(/<title[^>]*>([^<]+)<\/title>/i)||[])[1]||"";
+    const h1 = [...html.matchAll(/<h1[^>]*>([\s\S]*?)<\/h1>/gi)].map(m=>m[1].replace(/<[^>]+>/g,"").trim());
+    const bodyText = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi,"").replace(/<style[^>]*>[\s\S]*?<\/style>/gi,"").replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
+    return `📸 Web Snapshot: ${url}\nTitle: ${title}\nH1: ${h1.slice(0,5).join(" | ")}\n\nPreview:\n${bodyText.substring(0,3000)}`;
+  } catch(e: any) { return `[Web Snapshot Error] ${e.message}`; }
+}
+
+// ── WORKSPACE (Project Management) ─────────────────────────
+
+async function projectCreate(name: string): Promise<string> {
+  if (!name) return `[Project] Usage: project_create <name>`;
+  try {
+    const {mkdirSync,writeFileSync,existsSync} = await import("fs");
+    const dir = `${process.env.HOME||"/root"}/.config/phantom/projects/${name.replace(/[^a-z0-9_-]/gi,"_")}`;
+    if (existsSync(dir)) return `[Project] "${name}" exists.`;
+    mkdirSync(dir,{recursive:true});
+    writeFileSync(`${dir}/project.json`,JSON.stringify({name,created:new Date().toISOString(),updated:new Date().toISOString(),files:[],notes:[],toolCount:0},null,2));
+    return `✅ Project "${name}" created.\n  ${dir}/`;
+  } catch(e: any) { return `[Project Error] ${e.message}`; }
+}
+
+async function projectList(): Promise<string> {
+  try {
+    const {readdirSync,existsSync,readFileSync} = await import("fs");
+    const dir = `${process.env.HOME||"/root"}/.config/phantom/projects`;
+    if (!existsSync(dir)) return `[Projects] None yet.`;
+    const dirs = readdirSync(dir,{withFileTypes:true}).filter(d=>d.isDirectory()).map(d=>d.name);
+    if (!dirs.length) return `[Projects] None yet.`;
+    const lines = [`📁 PROJECTS (${dirs.length})`];
+    for (const d of dirs.sort()) {
+      try {
+        const m = JSON.parse(readFileSync(`${dir}/${d}/project.json`,"utf-8"));
+        lines.push(`  ${d}  ${m.files?.length||0} files · ${m.notes?.length||0} notes · ${Math.floor((Date.now()-new Date(m.created).getTime())/86400000)}d`);
+      } catch { lines.push(`  ${d}`); }
+    }
+    return lines.join("\n");
+  } catch(e: any) { return `[Projects Error] ${e.message}`; }
+}
+
+async function projectInfo(name: string): Promise<string> {
+  try {
+    const {readFileSync,existsSync,readdirSync} = await import("fs");
+    if (!name) return `[Project] Usage: project_info <name>`;
+    const dir = `${process.env.HOME||"/root"}/.config/phantom/projects/${name.replace(/[^a-z0-9_-]/gi,"_")}`;
+    if (!existsSync(dir)) return `[Project] "${name}" not found.`;
+    const meta = JSON.parse(readFileSync(`${dir}/project.json`,"utf-8"));
+    const files = existsSync(`${dir}/files`)?readdirSync(`${dir}/files`):[];
+    const lines = [`📁 Project: ${meta.name||name}`,`  Created: ${new Date(meta.created).toLocaleString()}`,`  Files: ${files.length}`];
+    if (meta.notes?.length) meta.notes.slice(-5).forEach((n:string,i:number)=>lines.push(`  Note ${i+1}: ${n.substring(0,120)}`));
+    return lines.join("\n");
+  } catch(e: any) { return `[Project Error] ${e.message}`; }
+}
+
+async function projectFileAdd(input: string): Promise<string> {
+  try {
+    const {existsSync,copyFileSync,mkdirSync,readFileSync,writeFileSync} = await import("fs");
+    const [name,filePath] = input.split("|").map(s=>s.trim());
+    if (!name||!filePath) return `[Project File] Usage: project_file_add <project>|<filepath>`;
+    const dir = `${process.env.HOME||"/root"}/.config/phantom/projects/${name.replace(/[^a-z0-9_-]/gi,"_")}`;
+    if (!existsSync(dir)) return `[Project File] Not found: "${name}"`;
+    const meta = JSON.parse(readFileSync(`${dir}/project.json`,"utf-8"));
+    if (!existsSync(`${dir}/files`)) mkdirSync(`${dir}/files`,{recursive:true});
+    const base = filePath.split("/").pop()||filePath;
+    copyFileSync(filePath,`${dir}/files/${base}`);
+    meta.files = meta.files||[]; meta.files.push({name:base,source:filePath,added:new Date().toISOString()});
+    meta.updated = new Date().toISOString();
+    writeFileSync(`${dir}/project.json`,JSON.stringify(meta,null,2));
+    return `✅ Added ${base} to "${name}".`;
+  } catch(e: any) { return `[Project File Error] ${e.message}`; }
+}
+
+async function projectNote(input: string): Promise<string> {
+  try {
+    const {existsSync,readFileSync,writeFileSync} = await import("fs");
+    const parts = input.split("|").map(s=>s.trim()); const name = parts[0]; const note = parts.slice(1).join("|").trim();
+    if (!name) return `[Project Note] Usage: project_note <project>|<text>`;
+    const dir = `${process.env.HOME||"/root"}/.config/phantom/projects/${name.replace(/[^a-z0-9_-]/gi,"_")}`;
+    if (!existsSync(dir)) return `[Project Note] Not found: "${name}"`;
+    const meta = JSON.parse(readFileSync(`${dir}/project.json`,"utf-8"));
+    if (!note) { return `📝 Notes: ${(meta.notes||[]).map((n:string,i:number)=>`\n  ${i+1}. ${n.substring(0,200)}`).join("")||"(none)"}`; }
+    meta.notes = meta.notes||[]; meta.notes.push(`[${new Date().toISOString().substring(0,10)}] ${note}`);
+    writeFileSync(`${dir}/project.json`,JSON.stringify(meta,null,2));
+    return `✅ Note added to "${name}".`;
+  } catch(e: any) { return `[Project Note Error] ${e.message}`; }
+}
+
+async function projectSwitch(name: string): Promise<string> {
+  if (!name) return `[Project] Usage: project_switch <name>`;
+  try {
+    const {existsSync,readFileSync,writeFileSync} = await import("fs");
+    const dir = `${process.env.HOME||"/root"}/.config/phantom/projects/${name.replace(/[^a-z0-9_-]/gi,"_")}`;
+    if (!existsSync(dir)) return `[Project] "${name}" not found.`;
+    const meta = JSON.parse(readFileSync(`${dir}/project.json`,"utf-8"));
+    writeFileSync(`${process.env.HOME||"/root"}/.config/phantom/projects/.active`,name.replace(/[^a-z0-9_-]/gi,"_"));
+    return `🔀 Active: ${meta.name||name} (${meta.files?.length||0} files, ${meta.notes?.length||0} notes)`;
+  } catch(e: any) { return `[Project Error] ${e.message}`; }
+}
+
+// ── END NEW TOOLS ─────────────────────────────────────────
+
 async function whois(domain: string): Promise<string> {
   try {
     const r = execSync(`whois ${domain}`, { encoding: "utf-8", timeout: 15000, maxBuffer: 1024 * 1024 });
@@ -1903,6 +2953,47 @@ export const hackerTools: Record<string, HackerTool> = {
       "Modify a playbook: edit steps, change description, or append new steps. Format: name|step_num|tool|args|desc or name|desc|new_description or name|add|tool|args|desc.",
     execute: playbookEdit,
   },
+  // ── NEW TOOLS ──
+  sandbox: {
+    description:
+      "SAFELY RUN a suspicious binary in an isolated sandbox environment. Creates temp directory, strace-monitor if available, captures syscalls (network/file/process), stdout/stderr, exit code, and SHA256 hash. Detects PE vs ELF vs script. Use for: malware dynamic analysis, behavioral testing, I/O monitoring. Format: path|args|timeout(seconds). Example: @sandbox|/tmp/suspicious.bin||30",
+    execute: sandboxExec,
+  },
+  pe_analyze: {
+    description:
+      "Deep PE (Portable Executable) format analysis: DOS header, COFF header (machine/compile time/sections), optional header (entry point/image base/subsystem), section table with W+X detection, data directories, entropy calculation, packer detection (UPX/Themida/VMP). Use for: static malware analysis of Windows binaries, unpacking detection. Input: absolute path to PE file.",
+    execute: peAnalyze,
+  },
+  elf_analyze: {
+    description:
+      "Deep ELF format analysis: class (32/64-bit), byte order, OS/ABI, type (EXEC/DYN/REL), machine arch, entry point, program headers with W+X detection, dynamic symbols (imported functions), entropy calculation, GNU_STACK checks. Use for: static analysis of Linux binaries, packer/reverse engineering. Input: absolute path to ELF file.",
+    execute: elfAnalyze,
+  },
+  macro_scan: {
+    description:
+      "Analyze Office documents for malicious macros/VBA code. Scans OLE2 (.doc/.xls/.ppt), OOXML (.docx/.xlsm/.docm), and raw VBA/VBS scripts. Detects Auto-executing macros (Auto_Open, Document_Open), suspicious patterns (Shell, CreateObject, WScript, PowerShell, cmd.exe). Use for: phishing analysis, malware document triage. Input: path to document or script.",
+    execute: macroScan,
+  },
+  strings_deep: {
+    description:
+      "Advanced string extraction with AI-style categorization. Extracts all printable strings (≥4 chars) and classifies into: URLs, email addresses, IP addresses, domains, file paths, potential secrets/keys, and other strings. Includes entropy calculation for packed file detection. Use for: malware string analysis, IOC discovery, binary triage. Input: absolute file path.",
+    execute: stringsDeep,
+  },
+  hex_dump: {
+    description:
+      "Classic hex dump viewer with ASCII sidebar. Shows offset (hex), 16 bytes per row in hex format, and ASCII representation. Configurable offset and length. Use for: manual binary analysis, file header inspection, pattern matching. Format: path|offset|length. Default: offset=0, length=512 bytes (max 4096).",
+    execute: hexDump,
+  },
+  extract_ioc: {
+    description:
+      "Extract Indicators of Compromise (IOCs) from text or files. Detects: IPv4 addresses, domains, URLs, email addresses, MD5/SHA1/SHA256 hashes, file paths. Filters private/local IPs and deduplicates. Use for: threat intelligence, log analysis, malware report parsing. Input: file path (auto-detected) or raw text.",
+    execute: extractIoc,
+  },
+  proc_analyze: {
+    description:
+      "Deep process forensics inspection. Shows: process name/state/PPID/UID/threads, command line, working directory, executable, environment variables (with secrets detection), open file descriptors (sockets/pipes/files), network connections (TCP/UDP with state), memory regions (with RWX detection). Use for: live malware analysis, process investigation, incident response. Input: PID number.",
+    execute: procAnalyze,
+  },
 
   // ── RECON TOOLS ──
   geoip: {
@@ -2024,5 +3115,49 @@ export const hackerTools: Record<string, HackerTool> = {
     description:
       "Export a saved markdown report to styled dark-themed HTML. Open in browser → Ctrl+P → Save as PDF. Use for: sharing findings, report formatting. Input: report name (without .md).",
     execute: reportExport,
+  },
+
+  // ── WEB CLICKERS ──
+  web_click: {
+    description: "Navigate and click web page elements by index, link text, or URL. method: index (click Nth link), text (by link text), selector (URL). Input: url|selector|method.",
+    execute: webClick,
+  },
+  web_links: {
+    description: "Extract and categorize all links from a page (internal/external/resources). Input: URL.",
+    execute: webLinks,
+  },
+  web_form: {
+    description: "Extract HTML forms and submit with custom field values. Input: url|field1=val1|field2=val2.",
+    execute: webForm,
+  },
+  web_snapshot: {
+    description: "Get structured text snapshot of a page: headings, meta, links, content. Input: URL.",
+    execute: webSnapshot,
+  },
+
+  // ── WORKSPACE (Project Management) ──
+  project_create: {
+    description: "Create a new project workspace. Stores metadata in ~/.config/phantom/projects/. Input: project name.",
+    execute: projectCreate,
+  },
+  project_list: {
+    description: "List all projects with file/note counts and age. Input: none.",
+    execute: projectList,
+  },
+  project_info: {
+    description: "Show project details: created date, files, notes, tools used. Input: project name.",
+    execute: projectInfo,
+  },
+  project_file_add: {
+    description: "Add a file to a project by copying it into the project directory. Input: project|filepath.",
+    execute: projectFileAdd,
+  },
+  project_note: {
+    description: "Add or list project notes. Format: project|note_text (or just project name to list). Input: project|note.",
+    execute: projectNote,
+  },
+  project_switch: {
+    description: "Set active project for context. Input: project name.",
+    execute: projectSwitch,
   },
 };
