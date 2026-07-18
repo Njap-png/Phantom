@@ -9,12 +9,14 @@
   },
   "scripts": {
     "start": "node phantom.mjs",
-    "run": "bash run.sh",
     "build": "tsc",
     "dashboard": "node phantom.mjs --gui",
     "dev": "tsx src/index.ts",
     "dev:build": "node dist/index.js",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "node --test test/*.test.mjs",
+    "quiet": "node phantom.mjs --quiet",
+    "run": "node phantom.mjs"
   },
   "keywords": [
     "agent",

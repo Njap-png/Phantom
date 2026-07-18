@@ -38,6 +38,9 @@ jobs:
       - name: Verify CLI starts
         run: timeout 5 node phantom.mjs --list 2>&1 | grep -q '🔧' || true
 
+      - name: Run tests
+        run: npm test
+
       - name: Verify tool count
         run: |
           COUNT=$(timeout 5 node phantom.mjs --list 2>&1 | wc -l)

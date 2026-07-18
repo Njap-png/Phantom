@@ -12,6 +12,7 @@ const $r = createRequire(import.meta.url);
 
 import { BASE_DIR, MEMORY_DIR, KNOWLEDGE_DIR, TOOLS_DIR, REPORTS_DIR, PLAYBOOKS_DIR, PHANTOM_VERSION } from "./lib/config.mjs";
 import { __r, runTool, runPipe, runScheduledScan } from "./lib/runtime.mjs";
+import { log } from "./lib/logger.mjs";
 import { hackerTools } from "./lib/tools.mjs";
 import { initApiDeps, startApiServer, startGuiDashboard } from "./lib/server.mjs";
 
@@ -1129,7 +1130,7 @@ class DesktopUI {
     this.running = false;
     raw(false);
     process.stdout.write(cls + home + show);
-    console.log(`${c("green")}Phantom terminated.${R}`);
+    log.ok(`${c("green")}Phantom terminated.${R}`);
     process.exit(0);
   }
 
@@ -1294,7 +1295,15 @@ class TermuxUI {
 
   prompt() {
     if (!this.running) return;
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true,
+      completer: (line) => {
+        const hits = Object.keys(hackerTools).filter(t => t.startsWith(line.replace(/^@/, "").toLowerCase()));
+        return [hits.length ? hits.map(t => `@${t}|`) : [], line];
+      }
+    });
     rl.question(`${c("cyan")}⚡${R} `, (ans) => {
       rl.close();
       if (ans.trim()) this.handleCommand(ans.trim());
@@ -1304,7 +1313,7 @@ class TermuxUI {
 
   stop() {
     this.running = false;
-    console.log(`\n${c("green")}Phantom terminated.${R}`);
+    log.ok(`\n${c("green")}Phantom terminated.${R}`);
     process.exit(0);
   }
 
@@ -1379,7 +1388,15 @@ class MinimalUI {
   }
   prompt() {
     if (!this.running) return;
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true,
+      completer: (line) => {
+        const hits = Object.keys(hackerTools).filter(t => t.startsWith(line.replace(/^@/, "").toLowerCase()));
+        return [hits.length ? hits.map(t => `@${t}|`) : [], line];
+      }
+    });
     rl.question(`${c("cyan")}⚡${R} `, (ans) => {
       rl.close();
       if (ans.trim()) this.handleCommand(ans.trim());
@@ -1391,12 +1408,12 @@ class MinimalUI {
     const op = p[0]?.toLowerCase(), args = p.slice(1);
     switch (op) {
       case "spawn": case "s": this.am.spawn(args[0], args[1], args.slice(2).join(" ")); break;
-      case "list": case "ls": console.log(`Agents: ${this.am.list.map(a => `${a.name}[${this.am.agents.get(a.id).status}]`).join(", ")}`); break;
+      case "list": case "ls": log.info(`Agents: ${this.am.list.map(a => `${a.name}[${this.am.agents.get(a.id).status}]`).join(", ")}`); break;
       case "broadcast": case "b": { const f = this.am.list[0]?.id; if (f) this.am.broadcast(f, args.join(" ")); break; }
       case "debate": case "d": this.am.debate(args.join(" ") || "what should we build?"); break;
       case "evolve": case "e": this.am.evolveAll(); break;
       case "clear": case "c": this.log = []; break;
-      case "quit": case "q": this.running = false; console.log("Bye."); process.exit(0);
+      case "quit": case "q": this.running = false; log.ok("Bye."); process.exit(0);
       default: console.log(`? ${cmd}`);
     }
     if (this.running) this.prompt();
@@ -1790,7 +1807,7 @@ class ConversationalUI {
 
       case "tools": {
         const names = Object.keys(hackerTools).sort();
-        console.log(`\n${B}${c("green")}PHANTOM TOOLS (${names.length})${R}`);
+        log.art(`\n${B}${c("green")}PHANTOM TOOLS (${names.length})${R}`);
         const cols = 4;
         for (let i = 0; i < names.length; i += cols) {
           const row = names.slice(i, i + cols);
@@ -1953,7 +1970,7 @@ class ConversationalUI {
     raw(false);
     try { if (this.inputHandler) process.stdin.removeListener("data", this.inputHandler); } catch {}
     process.stdout.write(show);
-    console.log(`\n${c("green")}Phantom terminated.${R}`);
+    log.ok(`\n${c("green")}Phantom terminated.${R}`);
     process.exit(0);
   }
 }
@@ -1969,11 +1986,11 @@ function selectUI(am) {
   if (e.isWSL) info.push("WSL");
   if (e.isWindows) info.push("Windows");
   if (e.isProot) info.push("PRoot");
-  if (info.length) console.error(`${D}${info.join("/")} mode${R}`);
+  if (info.length) log.error(`${D}${info.join("/")} mode${R}`);
 
   // Non-interactive: minimal
   if (!e.interactive) {
-    console.error(`${D}Non-interactive mode${R}`);
+    log.error(`${D}Non-interactive mode${R}`);
     return new MinimalUI(am);
   }
 
@@ -1982,7 +1999,7 @@ function selectUI(am) {
   try {
     return new ConversationalUI(am);
   } catch (err) {
-    console.error(`${D}Conversational UI unavailable, falling back: ${err.message}${R}`);
+    log.error(`${D}Conversational UI unavailable, falling back: ${err.message}${R}`);
     return new TermuxUI(am);
   }
 }
@@ -2008,7 +2025,7 @@ if (args.length > 0 && !args[0].startsWith("--")) {
   const input = args.slice(1).join(" ") || "";
 
   if (flag === "help" || flag === "h") {
-    console.log(`Phantom — Cybersecurity AI Assistant
+    log.cli(`Phantom — Cybersecurity AI Assistant
 
 Usage:
   phantom                               Conversational REPL (default)
@@ -2032,12 +2049,12 @@ Examples:
 
   if (flag === "list" || flag === "l") {
     const names = Object.keys(hackerTools).sort();
-    console.log(`Phantom — ${names.length} tools:\n`);
+    log.cli(`Phantom — ${names.length} tools:\n`);
     for (const name of names) {
       const desc = typeof hackerTools[name] === "function" ? "" : "";
-      console.log(`  ${name.padEnd(22)}`);
+      log.cli(`  ${name.padEnd(22)}`);
     }
-    console.log(`\nUse --tool <name> [input] to run a tool.`);
+    log.cli(`\nUse --tool <name> [input] to run a tool.`);
     process.exit(0);
   }
 
@@ -2072,25 +2089,25 @@ __r.llmInstance = llmInstance;
     const toolName = toolArgs[0];
     const toolInput = toolArgs.slice(1).join(" ");
     if (!toolName) {
-      console.error(`Usage: phantom --tool <name> [input]\n  --json     JSON output\n  --pipe     Pipe tool output to next tool (use | in input)\nAvailable: ${Object.keys(hackerTools).sort().join(", ")}`);
+      log.error(`Usage: phantom --tool <name> [input]\n  --json     JSON output\n  --pipe     Pipe tool output to next tool (use | in input)\nAvailable: ${Object.keys(hackerTools).sort().join(", ")}`);
       process.exit(1);
     }
     if (pipeMode && toolInput.includes(" | ")) {
       // Chained pipe mode — use " | " as segment separator
       const result = await runPipe(hackerTools, toolInput, { json: jsonMode });
       if (jsonMode) {
-        console.log(result);
+        log.output(result);
       } else {
-        console.log(`🔗 ${toolInput}`);
-        console.log(result);
+        log.output(`🔗 ${toolInput}`);
+        log.output(result);
       }
     } else if (!toolName) {
-      console.error(`Usage: phantom --tool <name> [input]\n  --json     JSON output\n  --pipe     Pipe tool output to next tool (use | in input)\nAvailable: ${Object.keys(hackerTools).sort().join(", ")}`);
+      log.error(`Usage: phantom --tool <name> [input]\n  --json     JSON output\n  --pipe     Pipe tool output to next tool (use | in input)\nAvailable: ${Object.keys(hackerTools).sort().join(", ")}`);
       process.exit(1);
     } else {
       const result = await runTool(hackerTools, toolName, toolInput || "", { json: jsonMode });
-      if (!jsonMode) console.log(`🔧 ${toolName} ${toolInput ? `— ${toolInput}` : ""}`);
-      console.log(result);
+      if (!jsonMode) log.output(`🔧 ${toolName} ${toolInput ? `— ${toolInput}` : ""}`);
+      log.output(result);
       if (!jsonMode) process.exit(0);
       // In JSON mode, exit only on error (success JSON is already printed)
       try {
@@ -2103,10 +2120,10 @@ __r.llmInstance = llmInstance;
   }
 
   if (flag === "recon" || flag === "r") {
-    if (!input) { console.error("Usage: node phantom.mjs --recon <domain>"); process.exit(1); }
-    console.log(`🎯 Phantom Recon — ${input}\n`);
+    if (!input) { log.error("Usage: node phantom.mjs --recon <domain>"); process.exit(1); }
+    log.output(`🎯 Phantom Recon — ${input}\n`);
     const result = await hackerTools.recon(input);
-    console.log(result);
+    log.output(result);
     process.exit(0);
   }
 
@@ -2119,12 +2136,12 @@ __r.llmInstance = llmInstance;
     const result = await runTool(hackerTools, toolName, input || "");
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
     console.log(`\r${result ? result.slice(0, 10000) : "(empty)"}`);
-    if (result && result.length > 10000) console.log(`...[truncated ${result.length} total chars]`);
-    if (elapsed > 0.5) console.log(`⏱ ${elapsed}s`);
+    if (result && result.length > 10000) log.output(`...[truncated ${result.length} total chars]`);
+    if (elapsed > 0.5) log.info(`⏱ ${elapsed}s`);
     process.exit(0);
   }
 
-  console.error(`Unknown flag: --${flag}. Use --help for usage.`);
+  log.error(`Unknown flag: --${flag}. Use --help for usage.`);
   process.exit(1);
 }
 
