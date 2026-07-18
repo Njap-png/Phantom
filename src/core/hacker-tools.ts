@@ -1290,6 +1290,86 @@ async function scope(input: string): Promise<string> {
   return `[Scope] Commands: add <target>, remove <target|#id>, check <target>, clear, export.`;
 }
 
+async function katana(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[katana] Usage: @katana|<url> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    const parts = input.trim().split(/\s+/);
+    const url = parts[0]; const extra = parts.slice(1);
+    try { execFileSync("which",["katana"],{encoding:"utf-8",timeout:5000}); } catch { return `[katana] NOT INSTALLED`; }
+    const out = execFileSync("katana", ["-u",url,"-silent","-o","/dev/stdout",...extra], {encoding:"utf-8",timeout:60000,maxBuffer:2*1024*1024});
+    const lines = out.trim().split("\n").filter(Boolean);
+    if (!lines.length) return `[katana] 0 URLs for ${url}`;
+    const unique = [...new Set(lines)];
+    const result = [`🔎 Katana Crawl: ${url}`, `URLs: ${unique.length}`];
+    const display = unique.slice(0, 50);
+    result.push(...display.map((u:string)=>`  ${u}`));
+    if (unique.length > 50) result.push(`  ... and ${unique.length - 50} more`);
+    return result.join("\n");
+  } catch(e: any) { return `[katana Error] ${e.message}`; }
+}
+
+async function subfinder(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[subfinder] Usage: @subfinder|<domain> [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    const parts = input.trim().split(/\s+/);
+    const domain = parts[0]; const extra = parts.slice(1);
+    try { execFileSync("which",["subfinder"],{encoding:"utf-8",timeout:5000}); } catch { return `[subfinder] NOT INSTALLED`; }
+    const out = execFileSync("subfinder", ["-d",domain,"-oJ",...extra], {encoding:"utf-8",timeout:120000,maxBuffer:2*1024*1024});
+    const lines = out.trim().split("\n").filter(Boolean);
+    if (!lines.length) return `[subfinder] 0 subs for ${domain}`;
+    const subs = lines.map((l:string)=>{ try{return JSON.parse(l).host||l;}catch{return l;} });
+    const unique = [...new Set(subs)].sort();
+    const result = [`🔎 Subfinder: ${domain}`, `Subdomains: ${unique.length}`];
+    const display = unique.slice(0, 100);
+    result.push(...display.map((s:string)=>`  ${s}`));
+    if (unique.length > 100) result.push(`  ... and ${unique.length - 100} more`);
+    return result.join("\n");
+  } catch(e: any) { return `[subfinder Error] ${e.message}`; }
+}
+
+async function ffuf(input: string): Promise<string> {
+  if (!input || !input.trim()) return `[ffuf] Usage: @ffuf|-u URL -w wordlist [options]`;
+  try {
+    const { execFileSync } = await import("child_process");
+    const parts = input.trim().split(/\s+/);
+    try { execFileSync("which",["ffuf"],{encoding:"utf-8",timeout:5000}); } catch { return `[ffuf] NOT INSTALLED`; }
+    const WORDLISTS: Record<string,string> = {
+      common:"admin,backup,config,...", admin:"admin,administrator,...", backup:".git/config,.env,...",
+      params:"id,page,file,...", php:"index.php,config.php,...", asp:"default.asp,...", jsp:"index.jsp,...",
+    };
+    const args = parts;
+    const wIdx = args.indexOf("-w");
+    if (wIdx >= 0 && wIdx + 1 < args.length && WORDLISTS[args[wIdx+1].toLowerCase()]) {
+      args[wIdx+1] = WORDLISTS[args[wIdx+1].toLowerCase()];
+      args.push("-fc","404");
+    }
+    if (!args.includes("-o")) args.push("-o","/dev/stdout","-of","json");
+    args.push("-s");
+    const out = execFileSync("ffuf", args, {encoding:"utf-8",timeout:120000,maxBuffer:2*1024*1024});
+    const parsed = JSON.parse(out);
+    const results = parsed.results || [];
+    if (!results.length) return `[ffuf] No results`;
+    const lines = [`⚡ FFUF — ${results[0]?.input?.FUZZ||""}`, `Results: ${parsed.total||results.length} | ${((parsed.time||0)/1000).toFixed(1)}s`];
+    const byStatus: Record<string,any[]> = {};
+    for (const r of results) {
+      const sc = (r.status||0).toString();
+      if (!byStatus[sc]) byStatus[sc] = [];
+      if (byStatus[sc].length < 15) byStatus[sc].push(r);
+    }
+    for (const [sc,items] of Object.entries(byStatus).sort((a,b)=>parseInt(a[0])-parseInt(b[0]))) {
+      lines.push(`\n  ${sc} (${items.length}+):`);
+      for (const r of items) {
+        const len = r.content_length ? ` [${(r.content_length/1024).toFixed(1)}K]` : "";
+        const redir = r.redirect ? ` → ${r.redirect}` : "";
+        lines.push(`    ${r.input?.FUZZ||r.url?.slice(0,80)||""}${len}${redir}`);
+      }
+    }
+    return lines.join("\n");
+  } catch(e: any) { return `[ffuf Error] ${e.message}`; }
+}
+
 // ── END NEW TOOLS ─────────────────────────────────────────
 
 async function whois(domain: string): Promise<string> {
@@ -3180,5 +3260,17 @@ export const hackerTools: Record<string, HackerTool> = {
   scope: {
     description: "Manage authorized target scope for bug bounty / pentesting. Commands: add <target>, remove <target|#id>, check <target>, clear, export. Input: command + args.",
     execute: scope,
+  },
+  katana: {
+    description: "External: ProjectDiscovery katana — fast web crawler for URL discovery. Input: url [options]. Requires katana binary.",
+    execute: katana,
+  },
+  subfinder: {
+    description: "External: ProjectDiscovery subfinder — passive subdomain enumeration. Input: domain [options]. Requires subfinder binary.",
+    execute: subfinder,
+  },
+  ffuf: {
+    description: "External: ffuf — blazing-fast web fuzzer. Discovers paths, params, vhosts. Input: ffuf args. Requires ffuf binary.",
+    execute: ffuf,
   },
 };

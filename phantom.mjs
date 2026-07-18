@@ -431,6 +431,9 @@ class Agent {
       project_note: "Add or list project notes. Format: project|note_text (or just project name to list). Input: project|note.",
       project_switch: "Set active project for context. Input: project name.",
       scope: "Manage authorized target scope for bug bounty / pentesting. Commands: add <target>, remove <target|#id>, check <target>, clear, export. Use 'scope' alone to list all scoped targets. Input: command + args.",
+      katana: "External: ProjectDiscovery katana — fast web crawler for URL discovery. Supports depth, rate-limit, JS extraction. Input: url [options]. Requires katana binary installed.",
+      subfinder: "External: ProjectDiscovery subfinder — passive subdomain enumeration using multiple sources (crt.sh, certspotter, hackertarget, etc.). Input: domain [options]. Requires subfinder binary.",
+      ffuf: "External: ffuf — blazing-fast web fuzzer by Joohansson. Discovers hidden paths, parameters, vhosts. Supports built-in wordlists. Input: ffuf args. Requires ffuf binary.",
     };
     for (const [name, desc] of Object.entries(toolList)) {
       if (name === "delegate") {
