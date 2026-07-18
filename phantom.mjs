@@ -13,6 +13,7 @@ const $r = createRequire(import.meta.url);
 import { BASE_DIR, MEMORY_DIR, KNOWLEDGE_DIR, TOOLS_DIR, REPORTS_DIR, PLAYBOOKS_DIR, PHANTOM_VERSION } from "./lib/config.mjs";
 import { __r, runTool, runPipe, runScheduledScan } from "./lib/runtime.mjs";
 import { log } from "./lib/logger.mjs";
+import { renderLogo, renderBanner, prompt, icons } from "./lib/visual.mjs";
 import { hackerTools } from "./lib/tools.mjs";
 import { initApiDeps, startApiServer, startGuiDashboard } from "./lib/server.mjs";
 
@@ -1319,9 +1320,9 @@ class TermuxUI {
 
   start() {
     process.stdout.write(cls + home);
-    console.log(`${B}${c("green")}╔══════════════════════════════════════╗${R}`);
-    console.log(`${B}${c("green")}║${R}  ${B}PHANTOM${R} ${D}space evolving terminal${R}  ${B}${c("green")}║${R}`);
-    console.log(`${B}${c("green")}╚══════════════════════════════════════╝${R}\n`);
+    const toolCount = Object.keys(hackerTools).length;
+    const isWide = process.stdout.columns >= 100;
+    log.art(renderLogo({ wide: isWide, tools: toolCount }));
 
     this.am.spawnDefaults();
 
@@ -1361,22 +1362,10 @@ class MinimalUI {
   w(msg) { this.log.push(msg); if (this.log.length > 100) this.log.shift(); }
   flush() { if (this.log.length > 0) console.log(this.log[this.log.length - 1]); }
   start() {
-    console.log(`\n${c("magenta")}${c("dim")}·   ·   ·   ·   ·   ·   ${R}`);
-    console.log(`${c("cyan")} ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄ ${R}`);
-    console.log(`${c("cyan")} ▐█${R}                     ${c("cyan")}█▌${R}`);
-    console.log(`${c("cyan")} ▐█${R}      ${c("green")}◉${R}     ${c("green")}◉${R}       ${c("cyan")}█▌${R}`);
-    console.log(`${c("cyan")} ▐█${R}                     ${c("cyan")}█▌${R}`);
-    console.log(`${c("cyan")} ▐█${R}      ${c("green")}${D}═══════${R}       ${c("cyan")}█▌${R}`);
-    console.log(`${c("cyan")} ▐█${R}                     ${c("cyan")}█▌${R}`);
-    console.log(`${c("cyan")} ▐██▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄██${R}${c("cyan")}▌${R}`);
-    console.log(`   ${c("cyan")}█${R}${B}┌─────────────────┐${R}${c("cyan")}█${R}  `);
-    console.log(`   ${c("cyan")}█${R}${B}│${R} ${c("cyan")}█${R}             ${c("cyan")}█${R} ${B}│${R}${c("cyan")}█${R}  `);
-    console.log(`   ${c("cyan")}█${R}${B}│${R} ${c("cyan")}█${R}      ${c("green")}●${R}      ${c("cyan")}█${R} ${B}│${R}${c("cyan")}█${R}  `);
-    console.log(`   ${c("cyan")}█${R}${B}│${R} ${c("cyan")}█${R}     ${c("green")}${D}═══${R}     ${c("cyan")}█${R} ${B}│${R}${c("cyan")}█${R}  `);
-    console.log(`   ${c("cyan")}█${R}${B}└─────────────────┘${R}${c("cyan")}█${R}  `);
-    console.log(`${c("cyan")}  ▐▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄${R}${c("cyan")}▌${R}`);
-    console.log(`    ${c("magenta")}${B}P H A N T O M${R}`);
-    console.log(`  ${c("dim")}non-interactive mode${R}`);
+    const toolCount = Object.keys(hackerTools).length;
+    const isWide = process.stdout.columns >= 100;
+    log.art(renderLogo({ wide: isWide, tools: toolCount }));
+
     this.am.spawnDefaults();
     if (!this.am.llm?.hasLLM) console.log(`${D}No LLM. Use @llm_config to set up a provider.${R}`);
     if (!ENV.interactive) {
@@ -1488,20 +1477,9 @@ class ConversationalUI {
 
   async start() {
     process.stdout.write(cls + home);
-    console.log(`\n${c("magenta")}${c("dim")}·   ·   ·   ·   ·   ·   ${R}`);
-    console.log(`${c("cyan")}  ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄${R}`);
-    console.log(`${c("cyan")} █${c("magenta")} ═══ ═══ ═══ ═══ ═══${c("cyan")} █${R}`);
-    console.log(`${c("cyan")}▐█${c("magenta")} ·   ·   ·   ·   ·${c("cyan")} █▌${R}`);
-    console.log(`${c("cyan")}▐█   ${c("magenta")}╔═══════════╗${c("cyan")}   █▌${R}`);
-    console.log(`${c("cyan")}▐█   ${c("magenta")}║ ${c("green")}◈     ◈${c("magenta")} ║${c("cyan")}   █▌${R}`);
-    console.log(`${c("cyan")}▐█   ${c("magenta")}║${c("dim")}  ╔═══╗${c("magenta")}   ║${c("cyan")}   █▌${R}`);
-    console.log(`${c("cyan")}▐█   ${c("magenta")}╚═══════════╝${c("cyan")}   █▌${R}`);
-    console.log(`${c("cyan")} █   ${c("magenta")}┊ ${c("dim")}║${c("magenta")}   ${c("dim")}║${c("magenta")} ┊${c("cyan")}   █${R}`);
-    console.log(`${c("cyan")} █   ${c("magenta")}┊ ${c("dim")}║${c("magenta")} ● ${c("dim")}║${c("magenta")} ┊${c("cyan")}   █${R}`);
-    console.log(`${c("cyan")} ▀▄  ${c("dim")}║${c("magenta")} ═══ ${c("dim")}║${c("cyan")}  ▄▀${R}`);
-    console.log(`  ${c("magenta")}${B}P H A N T O M${R}`);
     const toolCount = Object.keys(hackerTools).length;
-    console.log(`  ${c("dim")}cybersecurity AI · ${toolCount} tools${R}`);
+    const isWide = process.stdout.columns >= 100;
+    log.art(renderLogo({ wide: isWide, tools: toolCount }));
 
     // Spawn single agent
     if (this.am.count === 0) {
@@ -1571,7 +1549,7 @@ class ConversationalUI {
     this.cursorPos = 0;
     this.inputLines = [];
 
-    process.stdout.write(`\n${c("green")}👻${R} `);
+    process.stdout.write(`${prompt.ghost}`);
 
     raw(true);
     this.inputHandler = (buf) => this.onKey(buf);
