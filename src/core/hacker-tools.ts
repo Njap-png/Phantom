@@ -186,7 +186,7 @@ async function dnsLookup(domain: string): Promise<string> {
           if (label === "MX")
             results.push(
               `  MX: ${val
-                .map((m: any) => `${m.exchange} (prio ${m.priority})`)
+                .map((m: Record<string, any>) => `${m.exchange} (prio ${m.priority})`)
                 .join(", ")}`
             );
           else if (label === "TXT")
@@ -2063,7 +2063,7 @@ async function cveSearch(query: string): Promise<string> {
     for (const v of vulns.slice(0, 15)) {
       const c = v.cve || {};
       const id = c.id || "N/A";
-      const desc = c.descriptions?.find((d: any) => d.lang === "en")?.value || "";
+      const desc = c.descriptions?.find((d: Record<string, any>) => d.lang === "en")?.value || "";
       const cvss = c.metrics?.cvssMetricV31?.[0]?.cvssData;
       const cvss2 = c.metrics?.cvssMetricV2?.[0]?.cvssData;
       const score = cvss?.baseScore ?? cvss2?.baseScore ?? "?";
@@ -2333,7 +2333,7 @@ async function fileList(path: string): Promise<string> {
 // ── SELF TOOLS ────────────────────────────────────────────
 async function selfInfo(): Promise<string> {
   try {
-    const pkg: any = existsSync(resolve(PHANTOM_DIR, "package.json"))
+    const pkg: Record<string, any> = existsSync(resolve(PHANTOM_DIR, "package.json"))
       ? JSON.parse(readFileSync(resolve(PHANTOM_DIR, "package.json"), "utf-8"))
       : {};
     const toolNames = Object.keys(hackerTools).sort();
@@ -2800,14 +2800,14 @@ async function dnsZoneTransfer(input: string): Promise<string> {
     // Get NS records
     const nsResp = await fetch(`https://dns.google/resolve?name=${domain}&type=NS`, { signal: AbortSignal.timeout(8000) });
     const nsData = await nsResp.json() as any;
-    const nsList = nsData?.Answer?.map((a: any) => a.data.replace(/\.$/, "")) || [];
+    const nsList = nsData?.Answer?.map((a: Record<string, any>) => a.data.replace(/\.$/, "")) || [];
     if (nsList.length === 0) return "[DNS Zone] No NS records found";
     const results: string[] = [`Testing ${nsList.length} name servers for zone transfer on ${domain}:`, ``];
     for (const ns of nsList) {
       try {
         const r = await fetch(`https://dns.google/resolve?name=${domain}&type=AXFR&nameserver=${ns}`, { signal: AbortSignal.timeout(10000) });
         const data = await r.json() as any;
-        if (data?.Answer?.length > 0) { results.push(`⚠ VULNERABLE: ${ns} returned ${data.Answer.length} records!`); data.Answer.forEach((a: any) => results.push(`  ${a.name} ${a.type} ${a.data}`)); }
+        if (data?.Answer?.length > 0) { results.push(`⚠ VULNERABLE: ${ns} returned ${data.Answer.length} records!`); data.Answer.forEach((a: Record<string, any>) => results.push(`  ${a.name} ${a.type} ${a.data}`)); }
         else results.push(`✅ ${ns} — zone transfer denied`);
       } catch { results.push(`⏰ ${ns} — timeout/error`); }
     }
@@ -2861,9 +2861,9 @@ async function emailVerify(input: string): Promise<string> {
     // Check MX records via DNS Google
     const r = await fetch(`https://dns.google/resolve?name=${domain}&type=MX`, { signal: AbortSignal.timeout(8000) });
     const data = await r.json() as any;
-    const mxRecords = data?.Answer?.filter((a: any) => a.type === 15) || [];
+    const mxRecords = data?.Answer?.filter((a: Record<string, any>) => a.type === 15) || [];
     if (mxRecords.length === 0) return `[Email] ✅ Format valid, but no MX records for ${domain} — domain may not accept mail`;
-    const mxList = mxRecords.map((a: any) => a.data.replace(/\.$/, "")).join(", ");
+    const mxList = mxRecords.map((a: Record<string, any>) => a.data.replace(/\.$/, "")).join(", ");
     return `✅ ${email}\nDomain: ${domain}\nMX servers: ${mxList}\nMail delivery likely: YES`;
   } catch (e: any) { return `[Email Error] ${e.message}`; }
 }
@@ -2874,7 +2874,7 @@ async function reverseDns(input: string): Promise<string> {
     const ip = input.trim();
     const r = await fetch(`https://dns.google/resolve?name=${ip}&type=PTR`, { signal: AbortSignal.timeout(8000) });
     const d = await r.json() as any;
-    const ptrs = d?.Answer?.filter((a: any) => a.type === 12).map((a: any) => a.data) || [];
+    const ptrs = d?.Answer?.filter((a: Record<string, any>) => a.type === 12).map((a: Record<string, any>) => a.data) || [];
     return ptrs.length ? `🔁 PTR for ${ip}:\n${ptrs.join("\n")}` : `[Reverse DNS] No PTR for ${ip}`;
   } catch (e: any) { return `[Reverse DNS Error] ${e.message}`; }
 }
@@ -3042,7 +3042,7 @@ async function shodanSearch(input: string): Promise<string> {
     const r = await fetch(`https://api.shodan.io/shodan/host/search?key=${key}&query=${q}&limit=10`, { signal: AbortSignal.timeout(15000) });
     const d = await r.json() as any;
     if (!d.matches?.length) return `[Shodan] No results for "${input}"`;
-    const lines = d.matches.slice(0, 10).map((m: any) => `  ${m.ip_str}:${m.port} ${m.transport||""} ${(m.product||m.data||"").substring(0, 50)}`);
+    const lines = d.matches.slice(0, 10).map((m: Record<string, any>) => `  ${m.ip_str}:${m.port} ${m.transport||""} ${(m.product||m.data||"").substring(0, 50)}`);
     return `🌐 Shodan — ${d.total} result(s) for "${input}"\n${lines.join("\n")}`;
   } catch (e: any) { return `[Shodan Error] ${e.message}`; }
 }
@@ -3061,7 +3061,7 @@ async function emailBreach(input: string): Promise<string> {
     if (r.status === 404) return `🔒 ${email} — No known breaches ✅`;
     if (r.status === 200) {
       const breaches = await r.json() as any[];
-      return `⚠️ ${email} — ${breaches.length} breach(es)\n${breaches.slice(0, 10).map((b: any) => `  🔴 ${b.Name} (${b.BreachDate||"?"})`).join("\n")}`;
+      return `⚠️ ${email} — ${breaches.length} breach(es)\n${breaches.slice(0, 10).map((b: Record<string, any>) => `  🔴 ${b.Name} (${b.BreachDate||"?"})`).join("\n")}`;
     }
     return `[EmailBreach] HTTP ${r.status}`;
   } catch (e: any) { return `[EmailBreach Error] ${e.message}`; }
@@ -3078,7 +3078,7 @@ async function githubDork(input: string): Promise<string> {
     if (r.status === 403) return `[GitHubDork] Rate limited. Authenticated: 30 req/min, unauthenticated: 10. Try again.`;
     const d = await r.json() as any;
     if (!d.items?.length) return `[GitHubDork] No results for "${input}"`;
-    return `🔍 GitHub Dork — ${d.total_count} result(s) for "${input}"\n${d.items.slice(0, 10).map((i: any) => `  📄 ${i.repository?.full_name||"?"}/${i.name}`).join("\n")}`;
+    return `🔍 GitHub Dork — ${d.total_count} result(s) for "${input}"\n${d.items.slice(0, 10).map((i: Record<string, any>) => `  📄 ${i.repository?.full_name||"?"}/${i.name}`).join("\n")}`;
   } catch (e: any) { return `[GitHubDork Error] ${e.message}`; }
 }
 
@@ -3088,7 +3088,7 @@ async function subTakeover(input: string): Promise<string> {
     const domain = input.replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
     const r = await fetch(`https://dns.google/resolve?name=${domain}&type=CNAME`, { signal: AbortSignal.timeout(8000) });
     const d = await r.json() as any;
-    const cnames = d?.Answer?.filter((a: any) => a.type === 5).map((a: any) => a.data) || [];
+    const cnames = d?.Answer?.filter((a: Record<string, any>) => a.type === 5).map((a: Record<string, any>) => a.data) || [];
     if (!cnames.length) return `[SubTakeover] No CNAME records for ${domain}`;
     const svcs: Record<string, string> = {
       "cloudfront.net":"AWS CloudFront","s3.amazonaws.com":"AWS S3","github.io":"GitHub Pages",
