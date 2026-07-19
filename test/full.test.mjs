@@ -143,6 +143,23 @@ describe("batch tool", () => {
   });
 });
 
+describe("install tool", () => {
+  it("shows usage for empty input", async () => {
+    const r = await tools.install("");
+    assert.match(r, /Usage|@install/i);
+  });
+
+  it("shows tool list on empty input", async () => {
+    const r = await tools.install("");
+    assert.match(r, /nmap/);
+  });
+
+  it("all keyword starts bulk install", async () => {
+    const r = await tools.install("all");
+    assert.match(r, /Bulk installing|Done/);
+  });
+});
+
 // ── runTool wrapper ─────────────────────────────────────
 
 describe("runTool extras", () => {
