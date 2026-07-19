@@ -1101,9 +1101,11 @@ class DesktopUI {
         break;
       }
       case "help":
-      case "h": {
+      case "h":
+      case "command": {
         const helpText = [
           `${B}COMMANDS${R}`,
+          `  ${c("green")}help${R} / ${c("green")}command${R}              ${D}show commands${R}`,
           `  ${c("green")}spawn${R} [name] [role] [persona]  ${D}create agent${R}`,
           `  ${c("green")}list${R}                          ${D}list agents${R}`,
           `  ${c("green")}broadcast${R} <msg>               ${D}message all agents${R}`,
@@ -1270,9 +1272,10 @@ class TermuxUI {
       case "debate": case "d": this.am.debate(args.join(" ") || "what should we build?"); break;
       case "evolve": case "e": this.am.evolveAll(); this.w(`${c("magenta")}⬆ Mass evolution${R}`); break;
       case "clear": case "c": this.log = []; break;
-      case "help": case "h": {
+      case "help": case "h": case "command": {
         this.w(`${B}COMMANDS${R}`);
-        this.w(`  ${c("green")}spawn${R} [name] [role] [persona]`);
+        this.w(`  ${c("green")}help${R} | ${c("green")}command${R}         ${D}show commands${R}`);
+        this.w(`  ${c("green")}spawn${R} [name] [role] [persona]    ${D}create agent${R}`);
         this.w(`  ${c("green")}list${R}                          ${D}list agents${R}`);
         this.w(`  ${c("green")}broadcast${R} <msg>               ${D}message all${R}`);
         this.w(`  ${c("green")}debate${R} [topic]                ${D}agents debate${R}`);
@@ -1764,9 +1767,11 @@ class ConversationalUI {
     switch (op) {
       case "help":
       case "h":
+      case "command":
         const toolCount = Object.keys(hackerTools).length;
         console.log(`\n${B}${c("green")}PHANTOM COMMANDS${R}`);
-        console.log(`  ${c("green")}  /help${R}        — show this help`);
+        console.log(`  ${c("green")}  /help${R}        — show this help
+  ${c("green")}  /command${R}    — list all commands`);
         console.log(`  ${c("green")}  /tools${R}        — list ${toolCount} tools`);
         console.log(`  ${c("green")}  /gui${R}          — start web dashboard (port 8080)`);
         console.log(`  ${c("green")}  /api${R}          — start REST API (port 9090)`);
