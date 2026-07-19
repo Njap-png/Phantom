@@ -173,6 +173,23 @@ describe("runTool extras", () => {
     const p = JSON.parse(r);
     assert.equal(p.ok, true);
   });
+
+  it("--help returns usage for any tool", async () => {
+    const r = await runTool(tools, "shell", "--help");
+    assert.match(r, /Usage.*@shell/);
+  });
+
+  it("--help via -h works", async () => {
+    const r = await runTool(tools, "hash", "-h");
+    assert.match(r, /Usage.*@hash/);
+  });
+
+  it("--help returns JSON when json=true", async () => {
+    const r = await runTool(tools, "decode", "--help", { json: true });
+    const p = JSON.parse(r);
+    assert.equal(p.ok, true);
+    assert.equal(p.help, true);
+  });
 });
 
 // ── runPipe chaining ────────────────────────────────────
