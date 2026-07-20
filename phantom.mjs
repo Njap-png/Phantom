@@ -296,7 +296,7 @@ __r.PROVIDERS = PROVIDERS;
         const headers = { "Content-Type": "application/json", ...p.auth(key) };
         if (p.urlMod) url = p.urlMod(url, p.chatPath.replace("{model}", model), key);
         const body = JSON.stringify(p.fmt({ model, messages }));
-        const r = await fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(30000) });
+        const r = await fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(90000) });
         if (!r.ok) { const t = await r.text().catch(() => ""); return `[${PHANTOM_LLM_PROVIDER} ${r.status}] ${t.substring(0, 200)}`; }
         const d = await r.json();
         return p.parse(d) || "...";
@@ -593,8 +593,8 @@ User: ${userInput}`;
       const raw = await this.llm.chat(messages);
       const text = raw.trim();
 
-      // Check for tool call pattern @tool_name|args
-      const toolMatch = text.match(/^@(\w+)\|(.+)/s);
+      // Check for tool call pattern @tool_name|args — match anywhere in text, take the first one
+      const toolMatch = text.match(/@(\w+)\|(.+?)(?:\n|$)/s);
       if (toolMatch) {
         const toolName = toolMatch[1];
         const args = toolMatch[2].trim();
