@@ -13,7 +13,7 @@ const $r = createRequire(import.meta.url);
 import { BASE_DIR, MEMORY_DIR, KNOWLEDGE_DIR, TOOLS_DIR, REPORTS_DIR, PLAYBOOKS_DIR, PHANTOM_VERSION } from "./lib/config.mjs";
 import { __r, runTool, runPipe, runScheduledScan } from "./lib/runtime.mjs";
 import { log } from "./lib/logger.mjs";
-import { renderLogo, renderBanner, prompt, icons } from "./lib/visual.mjs";
+import { renderLogo, renderBanner, prompt, icons, createSpinner } from "./lib/visual.mjs";
 import { hackerTools } from "./lib/tools.mjs";
 import { initApiDeps, startApiServer, startGuiDashboard } from "./lib/server.mjs";
 
@@ -1455,7 +1455,7 @@ class ConversationalUI {
       const codeFence = trimmed.match(/^```(\w*)/);
       if (codeFence) {
         if (inCode) {
-          console.log(`${c("dim")}└─${R}`);
+          console.log(`${c("dim")}└${R}`);
           inCode = false;
         } else {
           codeLang = codeFence[1] || "code";
@@ -1470,16 +1470,65 @@ class ConversationalUI {
       }
       // Tool calls shown during execution
       if (trimmed.startsWith("@") && trimmed.length < 80) {
-        continue; // Tools already shown by react loop
+        continue;
       }
       // Empty lines
       if (trimmed === "") {
         console.log("");
         continue;
       }
-      console.log(`${c("fg")}${trimmed}${R}`);
+      // Section headers (## or ###)
+      const heading = trimmed.match(/^(#{2,3}|\[)\s*(.+?)\]?\s*$/);
+      if (heading) {
+        const text = heading[2].trim();
+        console.log(`\n${c("magenta")}${"─".repeat(4)}${R} ${c("cyan")}${text}${R} ${c("magenta")}${"─".repeat(36)}${R}`);
+        continue;
+      }
+      // Bullet points
+      if (trimmed.match(/^[\s]*[-*•]\s/)) {
+        const bullet = trimmed.replace(/^[\s]*[-*•]\s/, "");
+        console.log(`  ${c("cyan")}•${R} ${bullet}`);
+        continue;
+      }
+      // Numbered lists
+      if (trimmed.match(/^\s*\d+[.)]\s/)) {
+        console.log(`  ${c("magenta")}${trimmed}${R}`);
+        continue;
+      }
+      // Success indicators
+      if (trimmed.match(/^✅|✓|✔|\[OK\]|\[DONE\]|success|completed/i)) {
+        console.log(` ${c("green")}${trimmed}${R}`);
+        continue;
+      }
+      // Warning indicators
+      if (trimmed.match(/^⚠|\[WARN\]|warning|caution/i)) {
+        console.log(` ${c("yellow")}${trimmed}${R}`);
+        continue;
+      }
+      // Error indicators
+      if (trimmed.match(/^✕|✖|❌|\[ERROR\]|\[FAIL\]|error|failed/i)) {
+        console.log(` ${c("red")}${trimmed}${R}`);
+        continue;
+      }
+      // Summary boxes (text surrounded by === or ---)
+      if (trimmed.match(/^={3,}/)) {
+        console.log(`${c("green")}${trimmed}${R}`);
+        continue;
+      }
+      if (trimmed.match(/^-{3,}/)) {
+        console.log(`${c("dim")}${trimmed}${R}`);
+        continue;
+      }
+      // Key: value lines (first word followed by colon)
+      const kv = trimmed.match(/^(\w[\w\s]+?):\s(.+)/);
+      if (kv && kv[1].length < 30) {
+        console.log(` ${c("cyan")}${kv[1]}:${R} ${kv[2]}`);
+        continue;
+      }
+      // Default: normal text
+      console.log(` ${trimmed}`);
     }
-    if (inCode) console.log(`${c("dim")}└─${R}`);
+    if (inCode) console.log(`${c("dim")}└${R}`);
   }
 
   async start() {
@@ -1743,8 +1792,20 @@ class ConversationalUI {
       return;
     }
 
-    // Thinking indicator
-    process.stdout.write(`${c("yellow")}🧠 thinking${R}\r`);
+    // Animated spinner — tracks agent state via tick events
+    const spinner = createSpinner();
+    spinner.start("thinking... ");
+
+    // Update spinner message on agent state changes
+    const tickHandler = () => {
+      if (!this.agent) return;
+      const msg = this.agent.status === "executing" ? "⚡ running tools... " :
+                  this.agent.status === "thinking"  ? "🧠 analyzing... " :
+                  this.agent.status === "speaking"  ? "💬 formulating... " :
+                  "⏳ working... ";
+      spinner.update(msg);
+    };
+    this.bus.on("tick", tickHandler);
 
     try {
       const response = await new Promise((resolve, reject) => {
@@ -1777,8 +1838,9 @@ class ConversationalUI {
         });
       });
 
-      // Clear thinking
-      process.stdout.write("\r\x1b[K");
+      // Clear spinner + tick handler
+      spinner.stop();
+      this.bus.off("tick", tickHandler);
 
       // Render the response with formatting
       this.renderResponse(response);
@@ -1799,6 +1861,8 @@ class ConversationalUI {
       saveMemory("conversation_latest", this.conversation);
 
     } catch (err) {
+      spinner.stop();
+      this.bus.off("tick", tickHandler);
       process.stdout.write(`\r\x1b[K`);
       this.sayLine(`✕ Error: ${err.message}`, "red");
     }
