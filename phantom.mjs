@@ -26,7 +26,7 @@ try {
 __r._config = _config;
 if (_config.VT_API_KEY && !process.env.VT_API_KEY) process.env.VT_API_KEY = _config.VT_API_KEY;
 // Load all provider API keys from config
-const PROVIDER_KEYS = ["OPENAI_API_KEY","ANTHROPIC_API_KEY","GEMINI_API_KEY","GROQ_API_KEY","DEEPSEEK_API_KEY","MISTRAL_API_KEY","OPENROUTER_API_KEY","SHODAN_API_KEY","HIBP_API_KEY"];
+const PROVIDER_KEYS = ["OPENAI_API_KEY","ANTHROPIC_API_KEY","GEMINI_API_KEY","GROQ_API_KEY","DEEPSEEK_API_KEY","MISTRAL_API_KEY","OPENROUTER_API_KEY","SHODAN_API_KEY","HIBP_API_KEY","HERMES_OPCODE_API_KEY"];
 for (const k of PROVIDER_KEYS) { if (_config[k] && !process.env[k]) process.env[k] = _config[k]; }
 // Selected provider: env > config > "openai"
 let PHANTOM_LLM_PROVIDER = process.env.PHANTOM_LLM_PROVIDER || _config.default_provider || "openai";
