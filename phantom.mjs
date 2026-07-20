@@ -232,7 +232,7 @@ function createProvider() {
     mistral:     { url: "https://api.mistral.ai/v1",            keyEnv: "MISTRAL_API_KEY",     defaultModel: "mistral-large-latest", chatPath: "/chat/completions", fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
     openrouter:  { url: "https://openrouter.ai/api/v1",         keyEnv: "OPENROUTER_API_KEY",  defaultModel: "anthropic/claude-sonnet-4", chatPath: "/chat/completions", fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
     ollama:      { url: process.env.OLLAMA_HOST || "http://localhost:11434", keyEnv: "",        defaultModel: "llama3",         chatPath: "/api/chat",           fmt: o => ({ model: o.model, messages: o.messages, stream: false }),                                  parse: d => d.message?.content?.trim() || "...",                                                                                                                       auth: () => ({}) },
-    opencode:    { url: "https://opencode.ai/zen/v1",                keyEnv: "OPENCODE_ZEN_API_KEY",     defaultModel: "opencode-zen", chatPath: "/chat/completions",     fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
+    opencode:    { url: "https://opencode.ai/zen/v1",                keyEnv: "OPENCODE_ZEN_API_KEY",     defaultModel: "deepseek-v4-flash-free", chatPath: "/chat/completions",     fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
   };
 __r.PROVIDERS = PROVIDERS;
 
@@ -592,6 +592,7 @@ User: ${userInput}`;
 
     // Max tool iterations — configurable via PHANTOM_MAX_ITER (default 32)
     const maxIter = parseInt(process.env.PHANTOM_MAX_ITER) || 32;
+    let toolCount = 0;
     for (let iter = 0; iter < maxIter; iter++) {
       const raw = await this.llm.chat(messages);
       const text = raw.trim();
@@ -599,6 +600,7 @@ User: ${userInput}`;
       // Execute ALL tool calls in the response (not just the first) — autonomous multi-step execution
       const toolMatches = [...text.matchAll(/@(\w+)\|(.+?)(?:\n|$)/gs)];
       if (toolMatches.length > 0) {
+        toolCount += toolMatches.length;
         // Execute all tool calls, collecting results
         const results = [];
         for (const tm of toolMatches) {
@@ -630,6 +632,8 @@ User: ${userInput}`;
       }
 
       // No tool call — this is the final response
+      // Evolve after multi-step workflows
+      if (toolCount >= 2) this.evolve();
       return text;
     }
     // Exceeded max iterations — return partial results
