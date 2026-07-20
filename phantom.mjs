@@ -1693,6 +1693,13 @@ class ConversationalUI {
       return;
     }
 
+    // Raw "exit" / "quit" to exit REPL
+    const trimmed = input.trim().toLowerCase();
+    if (trimmed === "exit" || trimmed === "quit") {
+      this.stop();
+      return;
+    }
+
     // Show user input in log
     this.sayLine(`┃ ${input}`, "green");
 

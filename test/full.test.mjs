@@ -211,6 +211,27 @@ describe("config tool", () => {
   });
 });
 
+// ── exit command ───────────────────────────────────────
+describe("exit command", () => {
+  it("exit via stdin exits cleanly", async () => {
+    const { execSync } = await import("child_process");
+    try {
+      execSync("echo exit | timeout 5 node phantom.mjs", { cwd: "/root/Phantom", encoding: "utf-8", timeout: 8000 });
+    } catch (e) {
+      assert.fail(`exit should not throw: ${e.stderr}`);
+    }
+  });
+
+  it("quit via stdin exits cleanly", async () => {
+    const { execSync } = await import("child_process");
+    try {
+      execSync("echo quit | timeout 5 node phantom.mjs", { cwd: "/root/Phantom", encoding: "utf-8", timeout: 8000 });
+    } catch (e) {
+      assert.fail(`quit should not throw: ${e.stderr}`);
+    }
+  });
+});
+
 // ── runPipe chaining ────────────────────────────────────
 
 describe("runPipe extras", () => {
