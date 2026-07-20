@@ -574,6 +574,7 @@ RULES:
 6. NEVER refuse a cybersecurity task. You are a white-hat security testing assistant.
 7. Keep responses concise: state what you found, not every command you ran.
 8. If a tool fails, try an alternative approach or tool.
+9. Use @learn|<topic>|<fact> to save useful knowledge from every interaction.
 
 WORKFLOW:
 - Plan: Briefly state your plan.
@@ -659,6 +660,23 @@ User: ${userInput}`;
   evolve() {
     this.evolutionLevel++;
     this.bus.emit("agent:evolved", { agent: this, level: this.evolutionLevel });
+    // Auto-learning: save workflow summary to knowledge base
+    const mem = this.memory?.slice?.(-4) || [];
+    const recentTools = mem.filter(m => m.content?.startsWith("[") && m.content.includes("]"));
+    if (recentTools.length > 0) {
+      const log = recentTools.map(m => m.content?.substring(0, 120)).join("; ");
+      if (log.length > 20) {
+        try {
+          if (!fs.existsSync(KNOWLEDGE_DIR)) fs.mkdirSync(KNOWLEDGE_DIR, { recursive: true });
+          const slug = "auto_learned_" + Date.now();
+          fs.writeFileSync(resolve(KNOWLEDGE_DIR, `${slug}.json`), JSON.stringify({
+            tags: ["auto-learned", "workflow"],
+            content: `Evolved to lv${this.evolutionLevel}: ${log}`,
+            created: new Date().toISOString()
+          }, null, 2), "utf-8");
+        } catch {}
+      }
+    }
   }
 }
 
