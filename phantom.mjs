@@ -601,6 +601,8 @@ User: ${userInput}`;
       const toolMatches = [...text.matchAll(/@(\w+)\|(.+?)(?:\n|$)/gs)];
       if (toolMatches.length > 0) {
         toolCount += toolMatches.length;
+        this.status = "executing";
+        this.bus.emit("tick");
         // Execute all tool calls, collecting results
         const results = [];
         for (const tm of toolMatches) {
@@ -1453,32 +1455,31 @@ class ConversationalUI {
       const codeFence = trimmed.match(/^```(\w*)/);
       if (codeFence) {
         if (inCode) {
-          this.log(`${c("dim")}└─${R}`);
+          console.log(`${c("dim")}└─${R}`);
           inCode = false;
         } else {
           codeLang = codeFence[1] || "code";
-          this.log(`${c("dim")}┌─ ${c("yellow")}${codeLang}${R}`);
+          console.log(`${c("dim")}┌─ ${c("yellow")}${codeLang}${R}`);
           inCode = true;
         }
         continue;
       }
       if (inCode) {
-        this.log(`${c("dim")}│ ${R}${trimmed}`);
+        console.log(`${c("dim")}│ ${R}${trimmed}`);
         continue;
       }
-      // Tool calls
+      // Tool calls shown during execution
       if (trimmed.startsWith("@") && trimmed.length < 80) {
-        this.log(`${c("magenta")}⚡ ${trimmed}${R}`);
-        continue;
+        continue; // Tools already shown by react loop
       }
       // Empty lines
       if (trimmed === "") {
-        this.log("");
+        console.log("");
         continue;
       }
-      this.log(`${c("fg")}${trimmed}${R}`);
+      console.log(`${c("fg")}${trimmed}${R}`);
     }
-    if (inCode) this.log(`${c("dim")}└─${R}`);
+    if (inCode) console.log(`${c("dim")}└─${R}`);
   }
 
   async start() {
@@ -1502,12 +1503,12 @@ class ConversationalUI {
 
     if (this.llm?.hasLLM) {
       const providerName = typeof this.llm.provider === "string" ? this.llm.provider : "connected";
-      this.log(`${c("green")}✓${R} ${B}Phantom${R} ${c("dim")}— ${providerName}${R}`);
+      console.log(`${c("green")}✓${R} ${B}Phantom${R} ${c("dim")}— ${providerName}${R}`);
 
       // Show team lineup
       const team = this.am.list;
       if (team.length > 0) {
-        this.log(`  ${c("dim")}team:${R} ${team.map(a =>
+        console.log(`  ${c("dim")}team:${R} ${team.map(a =>
           `${c("green")}${B}${a.name}${R}${c("dim")}(${a.role})${R}`
         ).join(" ")}`);
       }
@@ -1518,7 +1519,7 @@ class ConversationalUI {
           const groups = [["recon", "scan", "web"], ["crack", "exploit", "payload"], ["analyze", "decode", "packet"]];
           const featured = sysTools.filter(t => groups.some(g => g.some(k => t.desc.toLowerCase().includes(k)))).slice(0, 6);
           if (featured.length > 0) {
-            this.log(`  ${c("dim")}sys:${R} ${featured.map(t => `${c("cyan")}${t.bin}${R}`).join(" ")}`);
+            console.log(`  ${c("dim")}sys:${R} ${featured.map(t => `${c("cyan")}${t.bin}${R}`).join(" ")}`);
           }
         }
       }).catch(() => {});
@@ -1528,23 +1529,23 @@ class ConversationalUI {
       if (ready) {
         const list = ready.split(",").filter(n => n !== providerName);
         if (list.length > 0) {
-          this.log(`  ${c("dim")}also ready: ${list.join(", ")} · /model to switch${R}`);
+          console.log(`  ${c("dim")}also ready: ${list.join(", ")} · /model to switch${R}`);
         }
       }
     } else {
-      this.log(`${c("yellow")}⚠${R} No LLM configured.`);
+      console.log(`${c("yellow")}⚠${R} No LLM configured.`);
 
       const ready = process.env.PHANTOM_PROVIDERS_READY;
       if (ready) {
         const list = ready.split(",");
-        this.log(`  ${c("dim")}Available: ${list.join(", ")} · /model to select one${R}`);
+        console.log(`  ${c("dim")}Available: ${list.join(", ")} · /model to select one${R}`);
       } else {
-        this.log(`  ${c("dim")}Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or run Ollama locally${R}`);
-        this.log(`  ${c("dim")}tools-only mode (no AI reasoning)${R}`);
+        console.log(`  ${c("dim")}Set OPENCODE_ZEN_API_KEY or run Ollama locally${R}`);
+        console.log(`  ${c("dim")}tools-only mode (no AI reasoning)${R}`);
       }
     }
-    this.log(`  ${c("dim")}62 tools · /help · \\\\ multi-line${R}`);
-    this.log("");
+    console.log(`  ${c("dim")}${Object.keys(hackerTools).length} tools · /help · \\\\\\\\ multi-line${R}`);
+    console.log("");
 
     this.prompt();
   }
@@ -1556,7 +1557,9 @@ class ConversationalUI {
     this.cursorPos = 0;
     this.inputLines = [];
 
-    process.stdout.write(`${prompt.ghost}`);
+    const agentState = this.agent?.status || "ready";
+    const stateIcon = agentState === "thinking" ? "🧠" : agentState === "speaking" ? "💬" : agentState === "executing" ? "⚡" : "👻";
+    process.stdout.write(`${c("green")}${stateIcon}${R} `);
 
     raw(true);
     this.inputHandler = (buf) => this.onKey(buf);
@@ -1690,7 +1693,8 @@ class ConversationalUI {
   }
 
   redrawLine() {
-    const prompt = this.inputLines.length > 0 ? `${c("green")}│${R} ` : `${c("green")}👻${R} `;
+    const stateIcon = this.agent?.status === "thinking" ? "🧠" : this.agent?.status === "speaking" ? "💬" : this.agent?.status === "executing" ? "⚡" : "👻";
+    const prompt = this.inputLines.length > 0 ? `${c("green")}│${R} ` : `${c("green")}${stateIcon}${R} `;
     const strippedPrompt = prompt.replace(/\x1b\[[0-9;]*m/g, "");
     const display = strippedPrompt + this.inputBuf;
 
@@ -1779,6 +1783,15 @@ class ConversationalUI {
       // Render the response with formatting
       this.renderResponse(response);
 
+      // Status bar: agent state · tools used · evolution level
+      if (this.agent) {
+        const level = this.agent.evolutionLevel || 1;
+        const tools = Object.keys(this.agent.tools || {}).length;
+        const state = this.agent.status === "idle" ? "ready" : this.agent.status;
+        const bar = `${c("dim")}──${R} ${c("cyan")}●${R} ${state}  ${c("dim")}│${R} ${tools} tools  ${c("dim")}│${R} lv${level} ${c("dim")}──${R}`;
+        console.log(`\n${c("dim")}${"─".repeat(4)}${R} ${bar}`);
+      }
+
       // Auto-save conversation
       this.conversation.push(`user: ${input.substring(0, 200)}`);
       this.conversation.push(`phantom: ${response.substring(0, 500)}`);
@@ -1794,6 +1807,7 @@ class ConversationalUI {
   }
 
   sayLine(text, color = "fg") {
+    console.log(`${c(color)}${text}${R}`);
     this.log(`${c(color)}${text}${R}`);
   }
 
