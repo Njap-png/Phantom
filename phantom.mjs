@@ -1827,24 +1827,29 @@ class ConversationalUI {
       console.log(msg);
     };
 
+    const toolPlanHandler = ({ tool, args }) => {
+      printTool(` ${c("cyan")}${B}▶ ${tool}|${args}${R}`);
+    };
+
     const toolStartHandler = ({ tool, args }) => {
       printTool(` ${c("magenta")}${B}⚡ @${tool}|${args}${R}`);
     };
     const toolResultHandler = ({ tool, result, error, truncated }) => {
       if (error) {
         const firstLine = result.split("\n")[0].substring(0, 120);
-        printTool(`  ${c("red")}✕ ${firstLine}${truncated ? "..." : ""}${_R}`);
+        printTool(`  ${c("red")}✕ ${firstLine}${truncated ? "..." : ""}${R}`);
       } else {
         const lines = result.split("\n").filter(l => l.trim());
-        const preview = lines.slice(0, 2).map(l => `  ${c("dim")}→ ${l.substring(0, 120)}${_R}`).join("\n");
+        const preview = lines.slice(0, 2).map(l => `  ${c("dim")}→ ${l.substring(0, 120)}${R}`).join("\n");
         printTool(preview);
         if (lines.length > 2 || truncated) {
-          printTool(`  ${c("dim")}… +${lines.length - 2} lines${truncated ? " (truncated)" : ""}${_R}`);
+          printTool(`  ${c("dim")}… +${lines.length - 2} lines${truncated ? " (truncated)" : ""}${R}`);
         }
       }
       spinner.update("⚡ running tools... ");
     };
 
+    this.bus.on("agent:tool:plan", toolPlanHandler);
     this.bus.on("agent:tool:start", toolStartHandler);
     this.bus.on("agent:tool:result", toolResultHandler);
 
@@ -1882,6 +1887,7 @@ class ConversationalUI {
       // Clear spinner + tick handler + tool listeners
       spinner.stop();
       this.bus.off("tick", tickHandler);
+      this.bus.off("agent:tool:plan", toolPlanHandler);
       this.bus.off("agent:tool:start", toolStartHandler);
       this.bus.off("agent:tool:result", toolResultHandler);
 
@@ -1906,6 +1912,7 @@ class ConversationalUI {
     } catch (err) {
       spinner.stop();
       this.bus.off("tick", tickHandler);
+      this.bus.off("agent:tool:plan", toolPlanHandler);
       this.bus.off("agent:tool:start", toolStartHandler);
       this.bus.off("agent:tool:result", toolResultHandler);
       this.sayLine(`✕ Error: ${err.message}`, "red");
