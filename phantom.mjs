@@ -232,7 +232,7 @@ function createProvider() {
     mistral:     { url: "https://api.mistral.ai/v1",            keyEnv: "MISTRAL_API_KEY",     defaultModel: "mistral-large-latest", chatPath: "/chat/completions", fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
     openrouter:  { url: "https://openrouter.ai/api/v1",         keyEnv: "OPENROUTER_API_KEY",  defaultModel: "anthropic/claude-sonnet-4", chatPath: "/chat/completions", fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
     ollama:      { url: process.env.OLLAMA_HOST || "http://localhost:11434", keyEnv: "",        defaultModel: "llama3",         chatPath: "/api/chat",           fmt: o => ({ model: o.model, messages: o.messages, stream: false }),                                  parse: d => d.message?.content?.trim() || "...",                                                                                                                       auth: () => ({}) },
-    opencode:    { url: "https://api.opencode.ai/v1",                  keyEnv: "HERMES_OPCODE_API_KEY",    defaultModel: "opencode-zen", chatPath: "/chat/completions",     fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
+    opencode:    { url: "http://localhost:19000/v1",                  keyEnv: "HERMES_OPCODE_API_KEY",    defaultModel: "opencode-zen", chatPath: "/chat/completions",     fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
   };
 __r.PROVIDERS = PROVIDERS;
 
@@ -1616,6 +1616,32 @@ class ConversationalUI {
       if (this.cursorPos > 0) {
         this.inputBuf = this.inputBuf.slice(0, this.cursorPos - 1) + this.inputBuf.slice(this.cursorPos);
         this.cursorPos--;
+        this.redrawLine();
+      }
+      return;
+    }
+
+    // TAB — autocomplete @tool_name|
+    if (str === "\t" || str === "\x09") {
+      const match = this.inputBuf.match(/@([\w-]*)$/);
+      if (match) {
+        const prefix = match[1].toLowerCase();
+        const matches = Object.keys(hackerTools).filter(t => t.startsWith(prefix));
+        if (matches.length === 0) { this.redrawLine(); return; }
+        if (matches.length === 1) {
+          // Single match — complete immediately
+          this.inputBuf = this.inputBuf.slice(0, match.index) + `@${matches[0]}|`;
+          this.cursorPos = this.inputBuf.length;
+          this.redrawLine();
+        } else {
+          // Multiple matches — show list below
+          process.stdout.write(`\n${matches.map(t => c("cyan") + t + R).join("  ")}\n`);
+          this.redrawLine();
+        }
+      } else {
+        // No @ prefix — show all tool names
+        const names = Object.keys(hackerTools).sort();
+        process.stdout.write(`\n${names.map(t => c("cyan") + t + R).join("  ")}\n`);
         this.redrawLine();
       }
       return;
