@@ -232,6 +232,7 @@ function createProvider() {
     mistral:     { url: "https://api.mistral.ai/v1",            keyEnv: "MISTRAL_API_KEY",     defaultModel: "mistral-large-latest", chatPath: "/chat/completions", fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
     openrouter:  { url: "https://openrouter.ai/api/v1",         keyEnv: "OPENROUTER_API_KEY",  defaultModel: "anthropic/claude-sonnet-4", chatPath: "/chat/completions", fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
     ollama:      { url: process.env.OLLAMA_HOST || "http://localhost:11434", keyEnv: "",        defaultModel: "llama3",         chatPath: "/api/chat",           fmt: o => ({ model: o.model, messages: o.messages, stream: false }),                                  parse: d => d.message?.content?.trim() || "...",                                                                                                                       auth: () => ({}) },
+    opencode:    { url: "https://api.opencode.ai/v1",                  keyEnv: "HERMES_OPCODE_API_KEY",    defaultModel: "opencode-zen", chatPath: "/chat/completions",     fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
   };
 __r.PROVIDERS = PROVIDERS;
 
@@ -268,7 +269,7 @@ __r.PROVIDERS = PROVIDERS;
   }
 
   function selectBest(avail) {
-    const order = ["ollama", "openai", "anthropic", "groq", "gemini", "deepseek", "mistral", "openrouter"];
+    const order = ["ollama", "opencode", "openai", "anthropic", "groq", "gemini", "deepseek", "mistral", "openrouter"];
     for (const name of order) {
       if (avail[name] && avail[name] !== "no") return name;
     }
