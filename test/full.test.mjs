@@ -192,6 +192,25 @@ describe("runTool extras", () => {
   });
 });
 
+// ── config tool ─────────────────────────────────────────
+describe("config tool", () => {
+  it("list returns config path", async () => {
+    const r = await tools.config("");
+    assert.match(r, /Config/);
+    assert.match(r, /config\.json/);
+  });
+
+  it("path subcommand returns path", async () => {
+    const r = await tools.config("path");
+    assert.match(r, /config\.json/);
+  });
+
+  it("invalid subcommand shows usage", async () => {
+    const r = await tools.config("blah");
+    assert.match(r, /Usage.*@config/);
+  });
+});
+
 // ── runPipe chaining ────────────────────────────────────
 
 describe("runPipe extras", () => {
