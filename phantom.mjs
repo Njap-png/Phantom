@@ -224,7 +224,7 @@ const genId = () => `PH-${(++idCounter).toString(36).toUpperCase().padStart(4, "
 // ── LLM Provider ──────────────────────────────────────────
 function createProvider() {
   const PROVIDERS = {
-    openai:      { url: "https://api.openai.com/v1",            keyEnv: "OPENAI_API_KEY",      defaultModel: "gpt-4o",         chatPath: "/chat/completions",     fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
+    openai:      { url: "https://opencode.ai/zen/v1",                keyEnv: "OPENAI_API_KEY",     defaultModel: "deepseek-v4-flash-free", chatPath: "/chat/completions", fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
     anthropic:   { url: "https://api.anthropic.com/v1",         keyEnv: "ANTHROPIC_API_KEY",   defaultModel: "claude-sonnet-4-20250514", chatPath: "/messages",         fmt: o => ({ model: o.model, messages: o.messages, max_tokens: 512 }),                                 parse: d => d.content?.[0]?.text || d.content?.toString() || "...",                                                                                                      auth: k => ({ "x-api-key": k, "anthropic-version": "2023-06-01" }) },
     gemini:      { url: "https://generativelanguage.googleapis.com/v1beta", keyEnv: "GEMINI_API_KEY", defaultModel: "gemini-2.0-flash", chatPath: "/models/{model}:generateContent", fmt: o => ({ contents: o.messages.map(m => ({ role: m.role === "assistant" ? "model" : m.role, parts: [{ text: m.content }] })) }), parse: d => d.candidates?.[0]?.content?.parts?.[0]?.text || "...",                                             auth: () => ({}), urlMod: (u, m, k) => `${u}${m}?key=${k}` },
     groq:        { url: "https://api.groq.com/openai/v1",       keyEnv: "GROQ_API_KEY",        defaultModel: "llama-3.3-70b-versatile", chatPath: "/chat/completions", fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
@@ -269,7 +269,7 @@ __r.PROVIDERS = PROVIDERS;
   }
 
   function selectBest(avail) {
-    const order = ["ollama", "opencode", "openai", "anthropic", "groq", "gemini", "deepseek", "mistral", "openrouter"];
+    const order = ["openai", "ollama", "opencode", "anthropic", "groq", "gemini", "deepseek", "mistral", "openrouter"];
     for (const name of order) {
       if (avail[name] && avail[name] !== "no") return name;
     }
