@@ -15,7 +15,7 @@ import { __r, runTool, runPipe, runScheduledScan } from "./lib/runtime.mjs";
 import { log } from "./lib/logger.mjs";
 import { renderLogo, renderBanner, prompt, icons, createSpinner } from "./lib/visual.mjs";
 import { hackerTools } from "./lib/tools.mjs";
-import { initApiDeps, startApiServer, startGuiDashboard } from "./lib/server.mjs";
+import { initApiDeps, startApiServer, startGuiDashboard, setChatAgent } from "./lib/server.mjs";
 
 // ── Config ─────────────────────────────────────────────────
 let _config = {};
@@ -2242,9 +2242,19 @@ __r.llmInstance = llmInstance;
 
   if (flag === "gui" || flag === "dashboard" || flag === "g") {
     const port = parseInt(process.env.PHANTOM_PORT || '8080');
+    const dllm = createProvider();
+    llmInstance = dllm;
+    __r.llmInstance = dllm;
+    const dam = new AgentManager(dllm);
+    const dagent = dam.spawn("Phantom", "Cybersecurity AI",
+      "You are Phantom, an autonomous cybersecurity AI. You operate with zero handholding — " +
+      "the user gives a goal and you execute the full workflow. " +
+      "Use @tool|args syntax to run tools."
+    );
+    setChatAgent(dagent, dam, EventBus.i);
+    dam.agents.forEach(a => a.registerHackerTools());
     startGuiDashboard(port);
-    // Keep alive — server is already listening
-    await new Promise(() => {}); // never resolves
+    await new Promise(() => {}); // keep alive
   }
 
   if (flag === "api" || flag === "rest") {
