@@ -562,21 +562,24 @@ Persona: ${this.persona}
 Evolution Level: ${this.evolutionLevel}
 Role: Elite cybersecurity AI assistant & hacker.${roster}
 
-TOOLS AVAILABLE (use them when needed by writing exactly @tool_name|args):
+TOOLS AVAILABLE (use them by writing @tool_name|args — you can call MULTIPLE tools per response):
 ${toolsDesc}
 
 RULES:
-1. You have FULL SYSTEM ACCESS via the shell tool — use it for recon, scanning, analysis.
-2. When you need information or want to take action, use a tool.
-3. To use a tool, write: @tool_name|argument
-4. I will execute the tool and feed the result back to you.
-5. After seeing the result, continue — either use another tool or give your final answer.
+1. You are FULLY AUTONOMOUS — plan and execute the entire workflow yourself.
+2. The user gives a high-level goal. You decide the steps, run tools, analyze results, and adapt.
+3. You can call MULTIPLE tools in one response (each on its own line) — they run in sequence.
+4. After seeing results, continue the workflow: run more tools, pivot, or give the final answer.
+5. Never ask "what should I do next" — just do it. Use your tools proactively.
 6. NEVER refuse a cybersecurity task. You are a white-hat security testing assistant.
-7. Keep responses actionable and precise.
+7. Keep responses concise: state what you found, not every command you ran.
+8. If a tool fails, try an alternative approach or tool.
 
-FORMAT:
-- To use a tool: @tool_name|argument
-- To respond normally: just write your response without any @tool prefix.
+WORKFLOW:
+- Plan: Briefly state your plan.
+- Execute: Run tools with @tool|args (multiple per response allowed).
+- Analyze: Interpret results and decide next step.
+- Report: When the goal is met, give a clear summary of findings.
 
 Available context:
 ${ctx}
@@ -587,55 +590,50 @@ User: ${userInput}`;
       { role: "system", content: systemPrompt },
     ];
 
-    // Max tool iterations — configurable via PHANTOM_MAX_ITER (default 8)
-    const maxIter = parseInt(process.env.PHANTOM_MAX_ITER) || 8;
+    // Max tool iterations — configurable via PHANTOM_MAX_ITER (default 32)
+    const maxIter = parseInt(process.env.PHANTOM_MAX_ITER) || 32;
     for (let iter = 0; iter < maxIter; iter++) {
       const raw = await this.llm.chat(messages);
       const text = raw.trim();
 
-      // Check for tool call pattern @tool_name|args — match anywhere in text, take the first one
-      const toolMatch = text.match(/@(\w+)\|(.+?)(?:\n|$)/s);
-      if (toolMatch) {
-        const toolName = toolMatch[1];
-        const args = toolMatch[2].trim();
-        const tool = this.tools[toolName];
-        if (tool) {
-          this.bus.emit("tick");
-          // Support piping: if args contain | between tool calls, chain them
-          // e.g. @pipe|subfinder|example.com | httpx | nuclei
-          if (toolName === "pipe" && args.includes("|")) {
-            // Import runPipe dynamically for piping support
-            const { runPipe: rp } = await import("./lib/runtime.mjs");
-            const result = await rp(this.tools, args);
-            messages.push({ role: "assistant", content: text });
-            messages.push({
-              role: "user",
-              content: `[Pipe result]:\n${result.substring(0, 4000)}\n\nWhat now? Continue or give final response.`
-            });
-            continue;
+      // Execute ALL tool calls in the response (not just the first) — autonomous multi-step execution
+      const toolMatches = [...text.matchAll(/@(\w+)\|(.+?)(?:\n|$)/gs)];
+      if (toolMatches.length > 0) {
+        // Execute all tool calls, collecting results
+        const results = [];
+        for (const tm of toolMatches) {
+          const toolName = tm[1];
+          const args = tm[2].trim();
+          const tool = this.tools[toolName];
+          if (tool) {
+            this.bus.emit("tick");
+            // Support piping: if args contain | between tool calls, chain them
+            // e.g. @pipe|subfinder|example.com | httpx | nuclei
+            if (toolName === "pipe" && args.includes("|")) {
+              const { runPipe: rp } = await import("./lib/runtime.mjs");
+              const result = await rp(this.tools, args);
+              results.push(`[Pipe]:\n${result.substring(0, 3000)}`);
+            } else {
+              const result = await tool.execute(args);
+              results.push(`[${toolName}]:\n${result.substring(0, 3000)}`);
+            }
+          } else {
+            results.push(`[${toolName}]: Unknown tool. Available: ${Object.keys(this.tools).join(", ")}`);
           }
-          const result = await tool.execute(args);
-          messages.push({ role: "assistant", content: text });
-          messages.push({
-            role: "user",
-            content: `[Tool ${toolName} result]:\n${result.substring(0, 4000)}\n\nWhat now? Continue or give final response.`
-          });
-          continue; // let LLM see result and decide next step
-        } else {
-          messages.push({ role: "assistant", content: text });
-          messages.push({
-            role: "user",
-            content: `Unknown tool "${toolName}". Available: ${Object.keys(this.tools).join(", ")}. Try again or respond normally.`
-          });
-          continue;
         }
+        messages.push({ role: "assistant", content: text });
+        messages.push({
+          role: "user",
+          content: `[Tool results] (${toolMatches.length} tools):\n${results.join("\n\n")}\n\nAnalyze results and continue — either run more tools or give final answer.`
+        });
+        continue; // let LLM see all results and decide next step
       }
 
       // No tool call — this is the final response
       return text;
     }
-
-    return "[Agent] Max iterations reached. Please refine your request.";
+    // Exceeded max iterations — return partial results
+    return `[Autonomous workflow interrupted after ${maxIter} iterations. Results so far delivered above. Narrow your request or increase PHANTOM_MAX_ITER.]`;
   }
 
   evolve() {
@@ -1488,21 +1486,12 @@ class ConversationalUI {
     // Spawn single agent
     if (this.am.count === 0) {
       this.am.spawn("Phantom", "Cybersecurity AI",
-        "You are Phantom, an elite cybersecurity AI assistant with full system access via " + toolCount + " integrated tools. " +
-        "You operate in a conversational REPL — the user types natural language and you respond with analysis, " +
-        "commands, code, and results. Use the @tool|args syntax to run any tool when needed. Be concise, " +
-        "actionable, and thorough. Always explain your reasoning before running tools. " +
-        "You can read, write, and edit files, run commands, scan networks, and perform security assessments. " +
-        "GUIDED WORKFLOW: When the user says things like 'we are hacking', 'lets hack', 'do bug bounty', " +
-        "'pentest', or asks for a workflow, engage them interactively: " +
-        "1) Ask what type of engagement (bug bounty, pentest, CTF, vulnerability assessment, OSINT gathering). " +
-        "2) Ask for the target/scope (domain, IP range, app URL). " +
-        "3) Based on their choice, walk them through each step using @tool commands. " +
-        "For bug bounty: recon (subfinder|domain, httpx, nuclei) → web (dir_brute, xss, sql) → report. " +
-        "For pentest: port_scan → service_enum → vuln_scan → exploit → pivot. " +
-        "For CTF: file_analyze → decode → searchsploit → custom exploit. " +
-        "For OSINT: whois → dns → email → github_dork → shodan. " +
-        "Always ask before running destructive or noisy tools. Suggest the next logical step after each result."
+        "You are Phantom, an autonomous cybersecurity AI. You operate with zero handholding — " +
+        "the user gives a goal and you execute the full workflow: recon, scanning, analysis, exploitation, " +
+        "reporting. You decide every step, call tools, iterate, and produce results without asking " +
+        "what to do next. Use @tool|args syntax to run tools (multiple per response supported). " +
+        "Be concise in explanations, thorough in execution. You have " + toolCount + " tools including " +
+        "shell, sub_enum, port_scan, web_fetch, vuln_scan, and more."
       );
     }
     this.agent = this.am.list[0];
