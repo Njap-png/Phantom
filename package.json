@@ -1,9 +1,20 @@
 {
-  "name": "phantom",
+  "name": "phantom-ai",
   "version": "0.2.0",
   "description": "Space-evolving multi-agent terminal UI — zero-setup, works on desktop & Termux",
   "main": "phantom.mjs",
   "type": "module",
+  "preferGlobal": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "phantom.mjs",
+    "lib/",
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
   "bin": {
     "phantom": "./phantom.mjs"
   },
