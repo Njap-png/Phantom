@@ -603,6 +603,12 @@ User: ${userInput}`;
         toolCount += toolMatches.length;
         this.status = "executing";
         this.bus.emit("tick");
+
+        // Log planned tools before executing
+        for (const tm of toolMatches) {
+          this.bus.emit("agent:tool:plan", { tool: tm[1], args: tm[2].trim() });
+        }
+
         // Execute all tool calls, collecting results
         const results = [];
         for (const tm of toolMatches) {
@@ -610,18 +616,26 @@ User: ${userInput}`;
           const args = tm[2].trim();
           const tool = this.tools[toolName];
           if (tool) {
-            this.bus.emit("tick");
-            // Support piping: if args contain | between tool calls, chain them
-            // e.g. @pipe|subfinder|example.com | httpx | nuclei
-            if (toolName === "pipe" && args.includes("|")) {
-              const { runPipe: rp } = await import("./lib/runtime.mjs");
-              const result = await rp(this.tools, args);
-              results.push(`[Pipe]:\n${result.substring(0, 3000)}`);
-            } else {
-              const result = await tool.execute(args);
-              results.push(`[${toolName}]:\n${result.substring(0, 3000)}`);
+            this.bus.emit("agent:tool:start", { tool: toolName, args });
+            try {
+              if (toolName === "pipe" && args.includes("|")) {
+                const { runPipe: rp } = await import("./lib/runtime.mjs");
+                const result = await rp(this.tools, args);
+                const truncated = result.substring(0, 3000);
+                this.bus.emit("agent:tool:result", { tool: "pipe", args, result: truncated, truncated: result.length > 3000 });
+                results.push(`[Pipe]:\n${truncated}`);
+              } else {
+                const result = await tool.execute(args);
+                const truncated = result.substring(0, 3000);
+                this.bus.emit("agent:tool:result", { tool: toolName, args, result: truncated, truncated: result.length > 3000 });
+                results.push(`[${toolName}]:\n${truncated}`);
+              }
+            } catch (err) {
+              this.bus.emit("agent:tool:result", { tool: toolName, args, result: err.message, error: true });
+              results.push(`[${toolName}]: ERROR — ${err.message}`);
             }
           } else {
+            this.bus.emit("agent:tool:result", { tool: toolName, args, result: "Unknown tool", error: true });
             results.push(`[${toolName}]: Unknown tool. Available: ${Object.keys(this.tools).join(", ")}`);
           }
         }
@@ -1807,6 +1821,33 @@ class ConversationalUI {
     };
     this.bus.on("tick", tickHandler);
 
+    // Live tool execution output — pause spinner, print tool, resume
+    const printTool = (msg) => {
+      spinner.stop();
+      console.log(msg);
+    };
+
+    const toolStartHandler = ({ tool, args }) => {
+      printTool(` ${c("magenta")}${B}⚡ @${tool}|${args}${R}`);
+    };
+    const toolResultHandler = ({ tool, result, error, truncated }) => {
+      if (error) {
+        const firstLine = result.split("\n")[0].substring(0, 120);
+        printTool(`  ${c("red")}✕ ${firstLine}${truncated ? "..." : ""}${_R}`);
+      } else {
+        const lines = result.split("\n").filter(l => l.trim());
+        const preview = lines.slice(0, 2).map(l => `  ${c("dim")}→ ${l.substring(0, 120)}${_R}`).join("\n");
+        printTool(preview);
+        if (lines.length > 2 || truncated) {
+          printTool(`  ${c("dim")}… +${lines.length - 2} lines${truncated ? " (truncated)" : ""}${_R}`);
+        }
+      }
+      spinner.update("⚡ running tools... ");
+    };
+
+    this.bus.on("agent:tool:start", toolStartHandler);
+    this.bus.on("agent:tool:result", toolResultHandler);
+
     try {
       const response = await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -1838,9 +1879,11 @@ class ConversationalUI {
         });
       });
 
-      // Clear spinner + tick handler
+      // Clear spinner + tick handler + tool listeners
       spinner.stop();
       this.bus.off("tick", tickHandler);
+      this.bus.off("agent:tool:start", toolStartHandler);
+      this.bus.off("agent:tool:result", toolResultHandler);
 
       // Render the response with formatting
       this.renderResponse(response);
@@ -1863,7 +1906,8 @@ class ConversationalUI {
     } catch (err) {
       spinner.stop();
       this.bus.off("tick", tickHandler);
-      process.stdout.write(`\r\x1b[K`);
+      this.bus.off("agent:tool:start", toolStartHandler);
+      this.bus.off("agent:tool:result", toolResultHandler);
       this.sayLine(`✕ Error: ${err.message}`, "red");
     }
 
