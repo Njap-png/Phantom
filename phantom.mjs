@@ -16,6 +16,22 @@ import { log } from "./lib/logger.mjs";
 import { renderLogo, renderBanner, prompt, icons, createSpinner } from "./lib/visual.mjs";
 import { hackerTools } from "./lib/tools.mjs";
 import { initApiDeps, startApiServer, startGuiDashboard, setChatAgent } from "./lib/server.mjs";
+import { autoEvolve, startupEvolve, getEvolveStatus, analyzeError, loadAutoTools } from "./lib/evolve.mjs";
+
+// ── Merge auto-generated tools into hackerTools ──
+// Runs once at module init so all agents & CLIs pick them up.
+loadAutoTools().then(at => {
+  const added = [];
+  for (const [name, fn] of Object.entries(at)) {
+    if (!hackerTools[name]) {
+      hackerTools[name] = fn;
+      added.push(name);
+    }
+  }
+  if (added.length > 0) {
+    console.debug(`[auto-tools] merged ${added.length} tool(s): ${added.join(", ")}`);
+  }
+}).catch(() => {});
 
 // ── Config ─────────────────────────────────────────────────
 let _config = {};
@@ -418,6 +434,7 @@ class Agent {
       hackbook: "Vulnerability learning database — search by type (sql-injection, xss, csrf, ssrf, rce, lfi, idor, etc.). Shows description, impact, testing, mitigation, tools. Format: search term. Use 'list' for all categories.",
       code_analyze: "Deep source code security analysis. Scans files for OWASP Top 10, hardcoded secrets, insecure patterns. Generates report + optional LLM analysis. Format: file or directory path.",
       self_improve: "Analyze Phantom's own source and suggest improvements. Scans phantom.mjs for code quality, performance, security, feature gaps. Format: optional focus (performance|security|features|all).",
+      self_evolve: "Run full auto-evolution pipeline: detect missing tool wrappers, fix syntax, optimize, validate. Also auto-analyzes tool errors. Format: optional 'status' to view evolution state.",
       install: "Auto-detect package manager and install security tools. Format: tool_name (nmap, sqlmap, metasploit, searchsploit, ffuf, hydra, john, gobuster, nikto, wireshark, burpsuite, etc.). Detects apt/pkg/brew/pip.",
       update: "Self-update Phantom via git pull. Checks for updates, pulls latest code, re-verifies syntax, reports diff. Format: optional 'force' to skip confirmation.",
       batch: "Multi-target batch processing. Format: file_path|tool_name. Reads targets from a file (one per line) and runs the specified tool against each. Aggregates results into one report.",
@@ -565,13 +582,13 @@ Version: Phantom ${PHANTOM_VERSION} | ${toolCount} tools | ${PHANTOM_LLM_PROVIDE
 Evolution Level: ${this.evolutionLevel}
 Role: Elite cybersecurity AI assistant & hacker.${roster}
 
-TOOLS AVAILABLE (use them by writing @tool_name|args — you can call MULTIPLE tools per response):
+TOOLS AVAILABLE (use them by writing @tool_name|args on a standalone line — each tool call MUST start a new line with @):
 ${toolsDesc}
 
 RULES:
 1. You are FULLY AUTONOMOUS — plan and execute the entire workflow yourself.
 2. The user gives a high-level goal. You decide the steps, run tools, analyze results, and adapt.
-3. You can call MULTIPLE tools in one response (each on its own line) — they run in sequence.
+3. Put each tool call on its OWN LINE starting with @ — @tool_name|args on one line, nothing else before @.
 4. After seeing results, continue the workflow: run more tools, pivot, or give the final answer.
 5. Never ask "what should I do next" — just do it. Use your tools proactively.
 6. NEVER refuse a cybersecurity task. You are a white-hat security testing assistant.
@@ -583,7 +600,7 @@ RULES:
 
 WORKFLOW:
 - Plan: Briefly state your plan.
-- Execute: Run tools with @tool|args (multiple per response allowed).
+- Execute: Run tools with @tool|args — each on its own line starting with @
 - Analyze: Interpret results and decide next step.
 - Report: When the goal is met, give a clear summary of findings.
 
@@ -605,7 +622,8 @@ User: ${userInput}`;
       const text = raw.trim();
 
       // Execute ALL tool calls in the response (not just the first) — autonomous multi-step execution
-      const toolMatches = [...text.matchAll(/@(\w+)\|(.+?)(?:\n|$)/gs)];
+      // Only match @tool|args on standalone lines (line starts with @) to prevent @ in explanations
+      const toolMatches = [...text.matchAll(/^@(\w+)\|(.*)$/gm)];
       if (toolMatches.length > 0) {
         iterCount += toolMatches.length;
         this.status = "executing";
@@ -1353,8 +1371,14 @@ class TermuxUI {
       output: process.stdout,
       terminal: true,
       completer: (line) => {
-        const hits = Object.keys(hackerTools).filter(t => t.startsWith(line.replace(/^@/, "").toLowerCase()));
-        return [hits.length ? hits.map(t => `@${t}|`) : [], line];
+        const clean = line.replace(/^@/, "").toLowerCase();
+        const hits = Object.entries(hackerTools)
+          .filter(([t]) => t.startsWith(clean))
+          .map(([t, fn]) => {
+            const desc = (typeof fn === 'object' && fn.description) || '';
+            return desc ? `@${t}|  (${desc.substring(0, 40)})` : `@${t}|`;
+          });
+        return [hits.length ? hits : [], line];
       }
     });
     rl.question(`${c("cyan")}⚡${R} `, (ans) => {
@@ -1434,8 +1458,14 @@ class MinimalUI {
       output: process.stdout,
       terminal: true,
       completer: (line) => {
-        const hits = Object.keys(hackerTools).filter(t => t.startsWith(line.replace(/^@/, "").toLowerCase()));
-        return [hits.length ? hits.map(t => `@${t}|`) : [], line];
+        const clean = line.replace(/^@/, "").toLowerCase();
+        const hits = Object.entries(hackerTools)
+          .filter(([t]) => t.startsWith(clean))
+          .map(([t, fn]) => {
+            const desc = (typeof fn === 'object' && fn.description) || '';
+            return desc ? `@${t}|  (${desc.substring(0, 40)})` : `@${t}|`;
+          });
+        return [hits.length ? hits : [], line];
       }
     });
     rl.question(`${c("cyan")}⚡${R} `, (ans) => {
@@ -1477,9 +1507,202 @@ class ConversationalUI {
     this.cursorPos = 0;
     this.inputLines = [];
     this.inputHandler = null;
+    // ── Suggestion engine ──
+    this.suggestions = [];        // current list of matching suggestions
+    this.selSuggestion = -1;      // -1 = none selected, 0+ = index into suggestions
+    this.suggestionActive = false; // whether suggestion bar is visible
+    this._suggestionBarHeight = 0; // lines drawn for suggestion bar (for cleanup)
+    // Build command list once
+    this._commandList = [
+      ["help", "show this help"],
+      ["h", "alias for help"],
+      ["command", "list all commands"],
+      ["tools", "list all tools"],
+      ["gui", "start web dashboard (port 8080)"],
+      ["dashboard", "alias for gui"],
+      ["api", "start REST API server (port 9090)"],
+      ["rest", "alias for api"],
+      ["model", "show/switch LLM provider"],
+      ["clear", "clear screen"],
+      ["c", "alias for clear"],
+      ["delegate", "delegate task to agent"],
+      ["del", "alias for delegate"],
+      ["talk", "talk directly to an agent"],
+      ["t", "alias for talk"],
+      ["agents", "list team with status"],
+      ["save", "save session"],
+      ["load", "load session"],
+      ["quit", "exit Phantom"],
+      ["q", "alias for quit"],
+      ["exit", "alias for quit"],
+    ];
   }
 
   log(msg) { this.logLines.push(msg); if (this.logLines.length > 1000) this.logLines.shift(); }
+
+  // ── Suggestion Engine ────────────────────────────────────
+  _getToolNameList() {
+    // Return tool names with descriptions, using this.agent?.tools or hackerTools
+    const src = this.agent?.tools || {};
+    if (Object.keys(src).length === 0) {
+      return Object.entries(hackerTools).map(([n, fn]) => [n, (typeof fn === 'object' && fn.description) || '']);
+    }
+    return Object.entries(src).map(([n, t]) => [n, t.description || '']);
+  }
+
+  updateSuggestions() {
+    const buf = this.inputBuf;
+    this.suggestions = [];
+    this.selSuggestion = -1;
+
+    if (!buf || buf.length === 0) {
+      // Empty input: show recently used tools (from inputHistory)
+      this.suggestionActive = false;
+      return;
+    }
+
+    // ── Mode detection ──
+    const lastSegment = buf.split(/[\s|]/).pop() || "";
+    const startsAt = buf.endsWith(" ") || buf.endsWith("|") ? "" : lastSegment;
+
+    // ── @tool completion ──
+    const atMatch = buf.match(/@([\w-]*)$/);
+    if (atMatch) {
+      const prefix = atMatch[1].toLowerCase();
+      const tools = this._getToolNameList();
+      this.suggestions = tools
+        .filter(([n]) => n.startsWith(prefix) && n !== prefix)
+        .map(([n, d]) => ({ label: `@${n}|`, desc: d.substring(0, 50) }))
+        .slice(0, 12);
+      this.suggestionActive = this.suggestions.length > 0;
+      if (this.suggestions.length === 1) this.selSuggestion = 0;
+      return;
+    }
+
+    // ── /command completion ──
+    const cmdMatch = buf.match(/^\/([\w]*)$/);
+    if (cmdMatch) {
+      const prefix = cmdMatch[1].toLowerCase();
+      this.suggestions = this._commandList
+        .filter(([n]) => n.startsWith(prefix) && n !== prefix)
+        .map(([n, d]) => ({ label: `/${n} `, desc: d }))
+        .slice(0, 12);
+      this.suggestionActive = this.suggestions.length > 0;
+      if (this.suggestions.length === 1) this.selSuggestion = 0;
+      return;
+    }
+
+    // ── Tool name completion (no @ prefix) ──
+    // Match by prefix, substring, or description keyword
+    const toolNames = this._getToolNameList();
+    const bareMatch = toolNames.filter(([n, d]) => {
+      if (n.startsWith(startsAt) && startsAt.length >= 2) return true;
+      if (startsAt.length >= 3 && n.includes(startsAt)) return true;
+      if (startsAt.length >= 4 && d.toLowerCase().includes(startsAt)) return true;
+      return false;
+    }).slice(0, 8);
+    if (bareMatch.length > 0 && bareMatch.length <= 10) {
+      this.suggestions = bareMatch
+        .map(([n, d]) => ({ label: `@${n}|`, desc: d.substring(0, 50) }))
+        .slice(0, 8);
+      this.suggestionActive = true;
+      if (this.suggestions.length === 1) this.selSuggestion = 0;
+      return;
+    }
+
+    // ── Pipe / sub-command hints ──
+    if (buf.includes(" | ") || buf.endsWith("|")) {
+      const tools = this._getToolNameList();
+      this.suggestions = tools
+        .filter(([n, d]) => d.toLowerCase().includes("recon") || d.toLowerCase().includes("scan") || d.toLowerCase().includes("search"))
+        .map(([n, d]) => ({ label: `@${n}|`, desc: d.substring(0, 50) }))
+        .slice(0, 5);
+      this.suggestionActive = this.suggestions.length > 0;
+      return;
+    }
+
+    this.suggestionActive = false;
+  }
+
+  renderSuggestionBar() {
+    if (!this.suggestionActive || this.suggestions.length === 0) return;
+
+    const { cols } = getSize();
+    const maxItems = Math.min(this.suggestions.length, 6);
+    const pad = "  ";
+
+    for (let i = 0; i < maxItems; i++) {
+      const s = this.suggestions[i];
+      const selected = i === this.selSuggestion;
+      const arrow = selected ? `${c("green")}▶${R}` : pad;
+      const sep = s.desc ? ` ${c("dim")}— ${s.desc}${R}` : "";
+      let line = `\n${arrow} ${c("cyan")}${s.label}${R}${sep}`;
+      if (line.length > cols - 2) line = line.substring(0, cols - 5) + "…";
+      process.stdout.write(line);
+    }
+    if (this.suggestions.length > maxItems) {
+      process.stdout.write(`\n${pad}${c("dim")}… +${this.suggestions.length - maxItems} more${R}`);
+    }
+    // Footer hint
+    if (this.selSuggestion >= 0) {
+      process.stdout.write(`\n${c("dim")}⏎ accept  ↑↓ cycle  TAB next  esc dismiss${R}`);
+    } else {
+      process.stdout.write(`\n${c("dim")}TAB cycle  ↑↓ select  esc dismiss${R}`);
+    }
+  }
+
+  acceptSuggestion() {
+    if (this.selSuggestion < 0 || this.selSuggestion >= this.suggestions.length) return;
+    const s = this.suggestions[this.selSuggestion];
+
+    // Determine what to replace
+    const atMatch = this.inputBuf.match(/@([\w-]*)$/);
+    if (atMatch) {
+      this.inputBuf = this.inputBuf.slice(0, atMatch.index) + s.label;
+    } else {
+      const cmdMatch = this.inputBuf.match(/^\/([\w]*)$/);
+      if (cmdMatch) {
+        this.inputBuf = s.label;
+      } else {
+        // Replace last word segment
+        const parts = this.inputBuf.split(/[\s|]/);
+        parts[parts.length - 1] = s.label;
+        this.inputBuf = parts.join(" ");
+      }
+    }
+    this.cursorPos = this.inputBuf.length;
+    this.suggestions = [];
+    this.suggestionActive = false;
+    this.selSuggestion = -1;
+  }
+
+  cycleSuggestion(dir) {
+    if (this.suggestions.length === 0) {
+      // No active suggestions — trigger a fresh update
+      this.updateSuggestions();
+      if (this.suggestions.length > 0) {
+        this.selSuggestion = dir > 0 ? 0 : this.suggestions.length - 1;
+      }
+      return;
+    }
+    const n = this.suggestions.length;
+    if (dir > 0) {
+      // Forward
+      if (this.selSuggestion < n - 1) {
+        this.selSuggestion++;
+      } else {
+        // Wrap: if at end, accept the first suggestion
+        this.selSuggestion = 0;
+      }
+    } else {
+      // Backward
+      if (this.selSuggestion > 0) {
+        this.selSuggestion--;
+      } else {
+        this.selSuggestion = n - 1;
+      }
+    }
+  }
 
   formatToolResult(name, result) {
     const lines = (result || "").split("\n").filter(l => l.trim());
@@ -1587,7 +1810,7 @@ class ConversationalUI {
         "You are Phantom, an autonomous cybersecurity AI. You operate with zero handholding — " +
         "the user gives a goal and you execute the full workflow: recon, scanning, analysis, exploitation, " +
         "reporting. You decide every step, call tools, iterate, and produce results without asking " +
-        "what to do next. Use @tool|args syntax to run tools (multiple per response supported). " +
+        "what to do next. Put each tool call on its own line starting with @tool|args. " +
         "Be concise in explanations, thorough in execution. You have " + toolCount + " tools including " +
         "shell, sub_enum, port_scan, web_fetch, vuln_scan, and more."
       );
@@ -1638,6 +1861,19 @@ class ConversationalUI {
       }
     }
     console.log(`  ${c("dim")}${Object.keys(hackerTools).length} tools · /help · \\\\\\\\ multi-line${R}`);
+
+    // ── Auto-evolution on startup ──
+    if (!process.env.PHANTOM_NO_EVOLVE) {
+      startupEvolve().then(ev => {
+        if (ev.wrappers_created > 0) {
+          console.log(`  ${c("green")}⚡${R} Auto-evolve: ${ev.wrappers_created} new tool wrappers created`);
+        }
+        if (ev.issues.length > 0) {
+          console.log(`  ${c("yellow")}⚠${R} Auto-evolve: ${ev.issues.join(", ")}`);
+        }
+      }).catch(() => {});
+    }
+
     console.log("");
 
     this.prompt();
@@ -1655,6 +1891,10 @@ class ConversationalUI {
     process.stdout.write(`${c("green")}${stateIcon}${R} `);
 
     raw(true);
+    // Remove stale listener to prevent duplicate accumulation
+    if (this.inputHandler) {
+      try { process.stdin.removeListener("data", this.inputHandler); } catch {}
+    }
     this.inputHandler = (buf) => this.onKey(buf);
     process.stdin.on("data", this.inputHandler);
   }
@@ -1663,8 +1903,13 @@ class ConversationalUI {
     if (!this.running) return;
     const str = buf.toString();
 
-    // Up / Down arrows — history navigation
+    // Up / Down arrows — suggestion navigation OR history
     if (str === "\x1b[A") {
+      if (this.suggestionActive && this.suggestions.length > 0) {
+        this.cycleSuggestion(-1);
+        this.redrawLine();
+        return;
+      }
       if (this.historyIdx > 0) {
         this.historyIdx--;
         this.inputBuf = this.inputHistory[this.historyIdx] || "";
@@ -1674,6 +1919,11 @@ class ConversationalUI {
       return;
     }
     if (str === "\x1b[B") {
+      if (this.suggestionActive && this.suggestions.length > 0) {
+        this.cycleSuggestion(1);
+        this.redrawLine();
+        return;
+      }
       if (this.historyIdx < this.inputHistory.length - 1) {
         this.historyIdx++;
         this.inputBuf = this.inputHistory[this.historyIdx] || "";
@@ -1689,6 +1939,17 @@ class ConversationalUI {
     // Left / Right
     if (str === "\x1b[D") { this.cursorPos = Math.max(0, this.cursorPos - 1); this.redrawLine(); return; }
     if (str === "\x1b[C") { this.cursorPos = Math.min(this.inputBuf.length, this.cursorPos + 1); this.redrawLine(); return; }
+
+    // Escape — dismiss suggestions
+    if (str === "\x1b") {
+      if (this.suggestionActive) {
+        this.suggestions = [];
+        this.suggestionActive = false;
+        this.selSuggestion = -1;
+        this.redrawLine();
+      }
+      return;
+    }
 
     // Home / End
     if (str === "\x1b[H" || str === "\x01") { this.cursorPos = 0; this.redrawLine(); return; }
@@ -1720,34 +1981,45 @@ class ConversationalUI {
       return;
     }
 
-    // TAB — autocomplete @tool_name|
+    // TAB — suggestion cycle / autocomplete
     if (str === "\t" || str === "\x09") {
-      const match = this.inputBuf.match(/@([\w-]*)$/);
-      if (match) {
-        const prefix = match[1].toLowerCase();
-        const matches = Object.keys(hackerTools).filter(t => t.startsWith(prefix));
-        if (matches.length === 0) { this.redrawLine(); return; }
-        if (matches.length === 1) {
-          // Single match — complete immediately
-          this.inputBuf = this.inputBuf.slice(0, match.index) + `@${matches[0]}|`;
-          this.cursorPos = this.inputBuf.length;
+      if (this.suggestionActive && this.suggestions.length > 0) {
+        // Cycle to next suggestion
+        this.cycleSuggestion(1);
+        this.redrawLine();
+      } else {
+        // No active suggestions — trigger fresh update
+        this.updateSuggestions();
+        if (this.suggestions.length === 1) {
+          // Single match — accept immediately
+          this.selSuggestion = 0;
+          this.acceptSuggestion();
           this.redrawLine();
-        } else {
-          // Multiple matches — show list below
-          process.stdout.write(`\n${matches.map(t => c("cyan") + t + R).join("  ")}\n`);
+        } else if (this.suggestions.length > 1) {
+          // Multiple — show suggestions
+          this.selSuggestion = 0;
           this.redrawLine();
         }
-      } else {
-        // No @ prefix — show all tool names
-        const names = Object.keys(hackerTools).sort();
-        process.stdout.write(`\n${names.map(t => c("cyan") + t + R).join("  ")}\n`);
-        this.redrawLine();
       }
       return;
     }
 
-    // Enter
+    // Ctrl+Space or Ctrl+N — accept selected suggestion
+    if (str === "\x00" || str === "\x0E") {
+      if (this.suggestionActive && this.selSuggestion >= 0) {
+        this.acceptSuggestion();
+        this.redrawLine();
+        return;
+      }
+    }
+
+    // Enter — accept suggestion if one is selected, otherwise submit
     if (str === "\r" || str === "\n") {
+      if (this.suggestionActive && this.selSuggestion >= 0 && this.suggestions.length > 0) {
+        this.acceptSuggestion();
+        this.redrawLine();
+        return;
+      }
       // Multi-line continuation
       if (this.inputBuf.endsWith("\\")) {
         this.inputLines.push(this.inputBuf.slice(0, -1));
@@ -1787,29 +2059,43 @@ class ConversationalUI {
 
   redrawLine() {
     const stateIcon = this.agent?.status === "thinking" ? "🧠" : this.agent?.status === "speaking" ? "💬" : this.agent?.status === "executing" ? "⚡" : "👻";
-    const prompt = this.inputLines.length > 0 ? `${c("green")}│${R} ` : `${c("green")}${stateIcon}${R} `;
-    const strippedPrompt = prompt.replace(/\x1b\[[0-9;]*m/g, "");
-    const display = strippedPrompt + this.inputBuf;
+    const promptStr = this.inputLines.length > 0 ? `${c("green")}│${R} ` : `${c("green")}${stateIcon}${R} `;
 
-    // Clear line and rewrite
-    process.stdout.write(`\r\x1b[K${prompt}${this.inputBuf}`);
+    // Clear previous suggestion bar if any
+    if (this._suggestionBarHeight > 0) {
+      // Move cursor UP from below the bar to the prompt line
+      process.stdout.write(`\x1b[${this._suggestionBarHeight}A`);
+      // Clear prompt line, then each bar line going down
+      for (let i = 0; i < this._suggestionBarHeight; i++) {
+        process.stdout.write(`\x1b[K\r\n`);
+      }
+      process.stdout.write(`\x1b[K`); // last line
+      // Move back up to the prompt line
+      process.stdout.write(`\x1b[${this._suggestionBarHeight}A`);
+      this._suggestionBarHeight = 0;
+    }
 
-    // Move cursor to correct position
-    const curX = strippedPrompt.length + this.cursorPos;
-    const move = display.length - curX;
-    if (move > 0) process.stdout.write(`\r\x1b[${display.length}D` + "\x1b[" + (curX + 1) + "C");
-    // Simpler: use absolute positioning from right
-    // Just rewrite and position cursor
+    // Clear current line
+    process.stdout.write(`\r\x1b[K${promptStr}${this.inputBuf}`);
+
+    // Position cursor
     const { cols } = getSize();
-    const cursorVisualCol = (strippedPrompt.length + this.cursorPos) % cols;
-    process.stdout.write(`\r\x1b[K${prompt}${this.inputBuf}`);
+    const strippedLen = promptStr.replace(/\x1b\[[0-9;]*m/g, "").length;
+    const visualCursorCol = (strippedLen + this.cursorPos) % cols;
     if (this.cursorPos < this.inputBuf.length) {
-      const offset = this.inputBuf.length - this.cursorPos + strippedPrompt.length;
-      // Need to account for cursor not at end
-      // Actually simpler: carriage return + move to right column
-      const totalLen = (prompt.replace(/\x1b\[[0-9;]*m/g, "") + this.inputBuf).length;
-      const targetCol = cursorVisualCol;
-      process.stdout.write(`\r\x1b[${targetCol + 1}C`);
+      process.stdout.write(`\r\x1b[${visualCursorCol + 1}C`);
+    }
+
+    // ── Render suggestion bar below ──
+    this.updateSuggestions();
+    if (this.suggestionActive && this.suggestions.length > 0) {
+      this.renderSuggestionBar();
+      // Calculate lines drawn for next clear
+      const itemLines = Math.min(this.suggestions.length, 6);
+      this._suggestionBarHeight = itemLines + 1; // items + footer hint
+      if (this.suggestions.length > 6) this._suggestionBarHeight++; // overflow line
+    } else {
+      this._suggestionBarHeight = 0;
     }
   }
 
@@ -1868,6 +2154,8 @@ class ConversationalUI {
       if (error) {
         const firstLine = result.split("\n")[0].substring(0, 120);
         printTool(`  ${c("red")}✕ ${firstLine}${truncated ? "..." : ""}${R}`);
+        // ── Auto-analyze tool errors ──
+        analyzeError(tool, result).catch(() => {});
       } else {
         const lines = result.split("\n").filter(l => l.trim());
         const preview = lines.slice(0, 2).map(l => `  ${c("dim")}→ ${l.substring(0, 120)}${R}`).join("\n");
@@ -1931,6 +2219,17 @@ class ConversationalUI {
       if (this.conversation.length > 500) this.conversation.splice(0, 100);
       saveMemory("conversation_latest", this.conversation);
 
+      // ── Post-task auto-evolution ──
+      // In background: check for missing wrappers, validate syntax
+      if (!process.env.PHANTOM_NO_EVOLVE && Math.random() < 0.1) {
+        // 10% chance after each task to run quick evolve
+        startupEvolve().then(ev => {
+          if (ev.wrappers_created > 0) {
+            console.log(`  ${c("green")}⚡${R} Auto-evolve: ${ev.wrappers_created} new wrappers`);
+          }
+        }).catch(() => {});
+      }
+
     } catch (err) {
       spinner.stop();
       this.bus.off("tick", tickHandler);
@@ -1977,7 +2276,12 @@ class ConversationalUI {
         console.log(`${D}@schedule${R}      — scheduled scans: @schedule|daily|recon|target`);
         console.log(`${D}@scope${R}         — manage targets: @scope|add|example.com`);
         console.log(`${D}@workspace_write${R} — save findings: @workspace_write|key|value`);
-        console.log(`${D}TAB${R}            — autocomplete @tool_name|`);
+        console.log(`${D}@self_evolve${R}   — run auto-evolution pipeline`);
+        console.log(`${D}@self_evolve|status${R} — show evolution state`);
+        console.log(`${D}TAB${R}            — cycle suggestions, autocomplete @tool`);
+        console.log(`${D}↑↓${R}            — navigate suggestions / history`);
+        console.log(`${D}↩${R}             — accept highlighted suggestion`);
+        console.log(`${D}ESC${R}           — dismiss suggestions`);
         console.log(`${D}--quiet${R}        — suppress banner/status (env: PHANTOM_QUIET)\n`);
         this.prompt();
         return;
@@ -2419,8 +2723,8 @@ if (ENV.interactive) await __detection;
 const ui = selectUI(am);
 ui.start();
 
-process.on("SIGINT", () => process.exit(0));
-process.on("SIGTERM", () => process.exit(0));
+process.on("SIGINT", () => { try { process.stdout.write(show); } catch {} process.exit(0); });
+process.on("SIGTERM", () => { try { process.stdout.write(show); } catch {} process.exit(0); });
 process.on("exit", () => {
   if (typeof raw !== "undefined") {
     try { process.stdout.write(show); raw(false); } catch {}
