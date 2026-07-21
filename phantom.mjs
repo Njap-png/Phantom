@@ -296,7 +296,7 @@ __r.PROVIDERS = PROVIDERS;
         const headers = { "Content-Type": "application/json", ...p.auth(key) };
         if (p.urlMod) url = p.urlMod(url, p.chatPath.replace("{model}", model), key);
         const body = JSON.stringify(p.fmt({ model, messages }));
-        const r = await fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(90000) });
+        const r = await fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(300000) });
         if (!r.ok) { const t = await r.text().catch(() => ""); return `[${PHANTOM_LLM_PROVIDER} ${r.status}] ${t.substring(0, 200)}`; }
         const d = await r.json();
         return p.parse(d) || "...";
