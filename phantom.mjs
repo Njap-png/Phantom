@@ -297,7 +297,7 @@ __r.PROVIDERS = PROVIDERS;
         const headers = { "Content-Type": "application/json", ...p.auth(key) };
         if (p.urlMod) url = p.urlMod(url, p.chatPath.replace("{model}", model), key);
         const body = JSON.stringify(p.fmt({ model, messages }));
-        const r = await fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(7200000) });
+        const r = await fetch(url, { method: "POST", headers, body });
         if (!r.ok) { const t = await r.text().catch(() => ""); return `[${PHANTOM_LLM_PROVIDER} ${r.status}] ${t.substring(0, 200)}`; }
         const d = await r.json();
         return p.parse(d) || "...";
@@ -1874,14 +1874,8 @@ class ConversationalUI {
 
     try {
       const response = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          try { this.bus.off("agent:msg", handler); } catch {}
-          reject(new Error("LLM response timeout"));
-        }, 7200000);
-
         const handler = ({ agent: a, text }) => {
           if (a && a.id === this.agent.id) {
-            clearTimeout(timeout);
             try { this.bus.off("agent:msg", handler); } catch {}
             resolve(text);
           }
@@ -1890,14 +1884,12 @@ class ConversationalUI {
 
         // If no LLM, just list tools and return
         if (!this.llm?.hasLLM) {
-          clearTimeout(timeout);
           const tools = Object.keys(this.agent.tools).sort();
           resolve(`No LLM connected — tools-only mode.\nAvailable tools: ${tools.join(", ")}\nUse @tool_name|args to run a tool.`);
           return;
         }
 
         this.agent.receive("user", input).catch(err => {
-          clearTimeout(timeout);
           try { this.bus.off("agent:msg", handler); } catch {}
           reject(err);
         });
