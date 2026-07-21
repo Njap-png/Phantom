@@ -353,6 +353,7 @@ class Agent {
       workspace_write: "Write to shared workspace (all agents can see). Format: key|value.",
       workspace_read: "Read from shared workspace. Format: key.",
       shell: "Execute ANY shell command on the system. Use for: running tools, scripts, file operations, network scans, system info, package management. Input: shell command string.",
+      web_search: "Search the internet via DuckDuckGo + Wikipedia. Use for: finding information, researching topics, checking current events, finding documentation. Input: search query.",
       web_fetch: "Fetch a URL and return its content (HTML stripped, plain text). Use for: reading web pages, APIs, documentation, checking endpoints. Input: full URL including https://.",
       decode: "Auto-detect and decode encoded strings. Tries base64, hex, URL encoding, binary, and ROT13. Use for: decoding obfuscated strings, payloads, and encoded data. Input: the encoded string.",
       file_analyze: "Deep file analysis: file type detection by magic bytes, MD5/SHA1/SHA256 hashes, entropy calculation (detects packed/encrypted malware), and printable string extraction. Use for: malware analysis, file forensics, verifying file integrity. Input: absolute file path.",
