@@ -1877,7 +1877,7 @@ class ConversationalUI {
         const timeout = setTimeout(() => {
           try { this.bus.off("agent:msg", handler); } catch {}
           reject(new Error("LLM response timeout"));
-        }, 90000);
+        }, 300000);
 
         const handler = ({ agent: a, text }) => {
           if (a && a.id === this.agent.id) {
