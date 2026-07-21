@@ -1965,7 +1965,7 @@ class ConversationalUI {
     }
 
     // Ctrl+C / Ctrl+D
-    if (str === "\x03") { raw(false); process.stdin.removeListener("data", this.inputHandler); this.stop(); return; }
+    if (str === "\x03") { this.cancel(); return; }
     if (str === "\x04") {
       if (this.inputBuf.length === 0) { raw(false); process.stdin.removeListener("data", this.inputHandler); this.stop(); return; }
       return;
@@ -2100,6 +2100,9 @@ class ConversationalUI {
   }
 
   async handleInput(input) {
+    // Reset cancel flag
+    this._cancelled = false;
+
     // Commands
     if (input.startsWith("/")) {
       this.handleCommand(input.slice(1).trim().split(/\s+/));
@@ -2124,6 +2127,7 @@ class ConversationalUI {
 
     // Animated spinner — tracks agent state via tick events
     const spinner = createSpinner();
+    this._spinner = spinner;
     spinner.start("thinking... ");
 
     // Update spinner message on agent state changes
@@ -2135,7 +2139,8 @@ class ConversationalUI {
                   "⏳ working... ";
       spinner.update(msg);
     };
-    this.bus.on("tick", tickHandler);
+    this._tickHandler = tickHandler;
+    this.bus.on("tick", this._tickHandler);
 
     // Live tool execution output — pause spinner, print tool, resume
     const printTool = (msg) => {
@@ -2146,10 +2151,12 @@ class ConversationalUI {
     const toolPlanHandler = ({ tool, args }) => {
       printTool(` ${c("cyan")}${B}▶ ${tool}|${args}${R}`);
     };
+    this._toolPlanHandler = toolPlanHandler;
 
     const toolStartHandler = ({ tool, args }) => {
       printTool(` ${c("magenta")}${B}⚡ @${tool}|${args}${R}`);
     };
+    this._toolStartHandler = toolStartHandler;
     const toolResultHandler = ({ tool, result, error, truncated }) => {
       if (error) {
         const firstLine = result.split("\n")[0].substring(0, 120);
@@ -2166,6 +2173,7 @@ class ConversationalUI {
       }
       spinner.update("⚡ running tools... ");
     };
+    this._toolResultHandler = toolResultHandler;
 
     this.bus.on("agent:tool:plan", toolPlanHandler);
     this.bus.on("agent:tool:start", toolStartHandler);
@@ -2196,10 +2204,16 @@ class ConversationalUI {
 
       // Clear spinner + tick handler + tool listeners
       spinner.stop();
+      delete this._spinner;
       this.bus.off("tick", tickHandler);
-      this.bus.off("agent:tool:plan", toolPlanHandler);
-      this.bus.off("agent:tool:start", toolStartHandler);
-      this.bus.off("agent:tool:result", toolResultHandler);
+      this.bus.off("agent:tool:plan", this._toolPlanHandler);
+      this.bus.off("agent:tool:start", this._toolStartHandler);
+      this.bus.off("agent:tool:result", this._toolResultHandler);
+
+      // If cancelled mid-flight, skip response output
+      if (this._cancelled) { this._cancelled = false; this.sayLine(`${c("yellow")}⏹${R} Cancelled`, "yellow"); this.prompt(); return; }
+
+      // Render the response with formatting
 
       // Render the response with formatting
       this.renderResponse(response);
@@ -2232,14 +2246,29 @@ class ConversationalUI {
 
     } catch (err) {
       spinner.stop();
+      delete this._spinner;
       this.bus.off("tick", tickHandler);
-      this.bus.off("agent:tool:plan", toolPlanHandler);
-      this.bus.off("agent:tool:start", toolStartHandler);
-      this.bus.off("agent:tool:result", toolResultHandler);
-      this.sayLine(`✕ Error: ${err.message}`, "red");
+      this.bus.off("agent:tool:plan", this._toolPlanHandler);
+      this.bus.off("agent:tool:start", this._toolStartHandler);
+      this.bus.off("agent:tool:result", this._toolResultHandler);
+      if (!this._cancelled) this.sayLine(`✕ Error: ${err.message}`, "red");
     }
 
+    // If cancelled, skip redundant prompt
+    if (this._cancelled) { this._cancelled = false; return; }
     this.prompt();
+  }
+
+  cancel() {
+    // Cancel current operation without exiting — returns to prompt
+    this._cancelled = true;
+    if (this._spinner) { try { this._spinner.stop(); } catch {} delete this._spinner; }
+    this.bus.off("tick", this._tickHandler);
+    this.bus.off("agent:tool:plan", this._toolPlanHandler);
+    this.bus.off("agent:tool:start", this._toolStartHandler);
+    this.bus.off("agent:tool:result", this._toolResultHandler);
+    this.sayLine(`${c("yellow")}⏹${R} Cancelled`, "yellow");
+    setTimeout(() => { this._cancelled = false; this.prompt(); }, 50);
   }
 
   sayLine(text, color = "fg") {
@@ -2723,7 +2752,13 @@ if (ENV.interactive) await __detection;
 const ui = selectUI(am);
 ui.start();
 
-process.on("SIGINT", () => { try { process.stdout.write(show); } catch {} process.exit(0); });
+process.on("SIGINT", () => {
+  if (ui && typeof ui.cancel === "function") {
+    ui.cancel();
+  } else {
+    try { process.stdout.write(show); } catch {} process.exit(0);
+  }
+});
 process.on("SIGTERM", () => { try { process.stdout.write(show); } catch {} process.exit(0); });
 process.on("exit", () => {
   if (typeof raw !== "undefined") {
