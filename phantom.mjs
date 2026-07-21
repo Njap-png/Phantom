@@ -547,7 +547,8 @@ class Agent {
 
   async react(userInput, from) {
     const toolsDesc = this.getToolDescriptions();
-    const ctx = this.memory.slice(-8).map(m => `${m.from}: ${m.content}`).join("\n");
+    const toolCount = Object.keys(this.tools).length;
+    const ctx = this.memory.slice(-16).map(m => `${m.from}: ${m.content && m.content.substring(0, 300)}`).join("\n");
 
     // Build teammate roster
     let roster = "";
@@ -560,6 +561,7 @@ class Agent {
 
     const systemPrompt = `You are ${this.name}, a ${this.role}.
 Persona: ${this.persona}
+Version: Phantom ${PHANTOM_VERSION} | ${toolCount} tools | ${PHANTOM_LLM_PROVIDER} LLM
 Evolution Level: ${this.evolutionLevel}
 Role: Elite cybersecurity AI assistant & hacker.${roster}
 
@@ -576,6 +578,8 @@ RULES:
 7. Keep responses concise: state what you found, not every command you ran.
 8. If a tool fails, try an alternative approach or tool.
 9. Use @learn|<topic>|<fact> to save useful knowledge from every interaction.
+10. Use @web_search|<query> to find current information online.
+11. Use @web_fetch|<url> to read full pages from search results.
 
 WORKFLOW:
 - Plan: Briefly state your plan.
@@ -583,7 +587,7 @@ WORKFLOW:
 - Analyze: Interpret results and decide next step.
 - Report: When the goal is met, give a clear summary of findings.
 
-Available context:
+Recent context (your last actions):
 ${ctx}
 
 User: ${userInput}`;
@@ -591,10 +595,11 @@ User: ${userInput}`;
     let messages = [
       { role: "system", content: systemPrompt },
     ];
+    const MAX_HISTORY_TURNS = 12; // keep last 12 assistant+user turns to stay within context
 
     // Max tool iterations — configurable via PHANTOM_MAX_ITER (default 32)
     const maxIter = parseInt(process.env.PHANTOM_MAX_ITER) || 32;
-    let toolCount = 0;
+    let iterCount = 0;
     for (let iter = 0; iter < maxIter; iter++) {
       const raw = await this.llm.chat(messages);
       const text = raw.trim();
@@ -602,7 +607,7 @@ User: ${userInput}`;
       // Execute ALL tool calls in the response (not just the first) — autonomous multi-step execution
       const toolMatches = [...text.matchAll(/@(\w+)\|(.+?)(?:\n|$)/gs)];
       if (toolMatches.length > 0) {
-        toolCount += toolMatches.length;
+        iterCount += toolMatches.length;
         this.status = "executing";
         this.bus.emit("tick");
 
@@ -646,12 +651,18 @@ User: ${userInput}`;
           role: "user",
           content: `[Tool results] (${toolMatches.length} tools):\n${results.join("\n\n")}\n\nAnalyze results and continue — either run more tools or give final answer.`
         });
+        // Rolling window: keep system prompt + last MAX_HISTORY_TURNS assistant/user pairs
+        const sysMsg = messages[0];
+        const historyPairs = messages.slice(1);
+        if (historyPairs.length > MAX_HISTORY_TURNS * 2) {
+          messages = [sysMsg, ...historyPairs.slice(-MAX_HISTORY_TURNS * 2)];
+        }
         continue; // let LLM see all results and decide next step
       }
 
       // No tool call — this is the final response
       // Evolve after multi-step workflows
-      if (toolCount >= 2) this.evolve();
+      if (iterCount >= 2) this.evolve();
       return text;
     }
     // Exceeded max iterations — return partial results
