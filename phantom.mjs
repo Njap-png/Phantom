@@ -10,7 +10,7 @@ import { pathToFileURL } from "url";
 import { createRequire } from "module";
 const $r = createRequire(import.meta.url);
 
-import { BASE_DIR, MEMORY_DIR, KNOWLEDGE_DIR, TOOLS_DIR, REPORTS_DIR, PLAYBOOKS_DIR, PHANTOM_VERSION } from "./lib/config.mjs";
+import { BASE_DIR, MEMORY_DIR, KNOWLEDGE_DIR, BOOKS_DIR, TOOLS_DIR, REPORTS_DIR, PLAYBOOKS_DIR, PHANTOM_VERSION } from "./lib/config.mjs";
 import { __r, runTool, runPipe, runScheduledScan } from "./lib/runtime.mjs";
 import { log } from "./lib/logger.mjs";
 import { renderLogo, renderBanner, prompt, icons, createSpinner, chatBorder } from "./lib/visual.mjs";
@@ -83,6 +83,7 @@ let llmInstance = null;
 function ensureDirs() {
   if (!fs.existsSync(MEMORY_DIR)) fs.mkdirSync(MEMORY_DIR, { recursive: true });
   if (!fs.existsSync(KNOWLEDGE_DIR)) fs.mkdirSync(KNOWLEDGE_DIR, { recursive: true });
+  if (!fs.existsSync(BOOKS_DIR)) fs.mkdirSync(BOOKS_DIR, { recursive: true });
   if (!fs.existsSync(TOOLS_DIR)) fs.mkdirSync(TOOLS_DIR, { recursive: true });
 }
 
@@ -179,6 +180,24 @@ function saveDynamicTool(toolName, code) {
   }
   fs.writeFileSync(filePath, fileContent, "utf-8");
   return filePath;
+}
+
+// ── Load learned techniques for system prompt injection ──
+function loadLearned() {
+  try {
+    ensureDirs();
+    const files = fs.readdirSync(BOOKS_DIR).filter(f => f.endsWith(".txt"));
+    if (files.length === 0) return "";
+    const parts = [];
+    for (const f of files.slice(0, 10)) { // max 10 books
+      const content = fs.readFileSync(resolve(BOOKS_DIR, f), "utf-8").trim();
+      if (content) {
+        const tag = f.replace(/\.txt$/, "").replace(/_/g, " ");
+        parts.push(`📖 From "${tag}":\n${content}`);
+      }
+    }
+    return parts.join("\n\n");
+  } catch { return ""; }
 }
 
 async function loadDynamicTool(filePath, toolName, description) {
@@ -387,6 +406,8 @@ class Agent {
       synthesize: "Ask coordinator to merge results. Format: original_request|raw_results.",
       parallel: "Auto-parallelize a task: splits complex tasks into independent subtasks and runs them concurrently on Nova (recon), Orion (exploit), Vega (defense). Format: task_description. Use for: running recon+exploit+defense in parallel, scanning multiple targets, multi-pronged approaches.",
       grow: "Deep learn from session knowledge. Reads all auto-extracted facts from tool outputs and reports a summary of what Phantom has learned. Use: @grow to see your knowledge base. Run after several tools to consolidate learning.",
+      learn_book: "Learn from a book or documentation file. Format: <file_path>|<description>. Reads the file, extracts techniques, stores them permanently. Every future session uses this knowledge.",
+      learn_url: "Learn from a URL (online docs, tutorials, articles). Format: <url>|<description>. Fetches, extracts knowledge, stores permanently.",
       workspace_write: "Write to shared workspace (all agents can see). Format: key|value.",
       workspace_read: "Read from shared workspace. Format: key.",
       shell: "Execute ANY shell command on the system. Use for: running tools, scripts, file operations, network scans, system info, package management. Input: shell command string.",
@@ -606,6 +627,9 @@ Role: Elite cybersecurity AI assistant & hacker.${roster}
 
 TOOLS AVAILABLE (use them by writing @tool_name|args on a standalone line — each tool call MUST start a new line with @):
 ${toolsDesc}
+
+LEARNED KNOWLEDGE (apply these techniques when relevant):
+${loadLearned() || "(none yet — learn from books with @learn_book, from URLs with @learn_url)"}
 
 RULES:
 1. You are FULLY AUTONOMOUS — plan and execute the entire workflow yourself.
