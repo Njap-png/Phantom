@@ -1788,33 +1788,14 @@ class ConversationalUI {
     const isTermux = !!(process.env.TERMUX_VERSION || process.env.PREFIX?.startsWith("/data/data/com.termux"));
     const modelLabel = typeof providerName === "string" ? providerName : "connected";
 
-    // ── Hermes-style header ──
-    const headerText = `${c("cyan")}${B}Phantom${R}${c("dim")}`;
-    const headerDashes = "─".repeat(Math.max(0, cols - 9));
-    console.log(`${headerText} ${c("dim")}${headerDashes}${R}${c("dim")}╮${R}`);
-
-    // ── Status bar ──
-    const sessionStart = this._sessionStart || Date.now();
-    this._sessionStart = sessionStart;
-    const elapsed = Math.floor((Date.now() - sessionStart) / 1000);
-    const elapsedStr = elapsed > 3600
-      ? `${Math.floor(elapsed / 3600)}h ${Math.floor((elapsed % 3600) / 60)}m`
-      : elapsed > 60
-        ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
-        : `${elapsed}s`;
-
-    const statusParts = [
-      `${c("dim")}${isTermux ? "📱" : "🖥"}${R}`,
-      `${c("cyan")}${modelLabel}${R}`,
-      `${c("dim")}│${R} ${c("yellow")}${toolCount}${R} ${c("dim")}tools${R}`,
-      `${c("dim")}│${R} ${c("green")}${elapsedStr}${R}`,
-    ];
-    if (this.llm?.hasLLM) statusParts.push(`${c("dim")}│${R} ${c("green")}✓${R}`);
-
-    console.log(` ${statusParts.join(" ")}`);
-
-    // ── Separator ──
-    console.log(`${c("dim")}${"─".repeat(cols)}${R}`);
+    // ── Cyberpunk header ──
+    const dashLen = Math.max(0, cols - 14);
+    console.log(`${c("green")}┌─[ ${B}${c("cyan")}PHANTOM${R}${c("green")} ]${R}${c("dim")}${"─".repeat(dashLen)}${R}${c("green")}┐${R}`);
+    const infoStr = `${c("dim")}│${R} ${c("yellow")}${toolCount}${R} ${c("dim")}tools · ${c("cyan")}${modelLabel}${R}${isTermux ? ` · ${c("dim")}📱${R}` : ""}${this.llm?.hasLLM ? ` · ${c("green")}ready${R}` : ` · ${c("yellow")}toolsonly${R}`}`;
+    const visLen = infoStr.replace(/\x1b\[[0-9;]*m/g, "").length;
+    const pad = " ".repeat(Math.max(0, cols - visLen - 1));
+    console.log(`${infoStr}${pad}${c("green")}│${R}`);
+    console.log(`${c("green")}└${R}${c("dim")}${"─".repeat(Math.max(0, cols - 2))}${R}${c("green")}┘${R}`);
 
     // Spawn single agent
     if (this.am.count === 0) {
@@ -2258,7 +2239,7 @@ class ConversationalUI {
       this.lastResponseTime = Date.now();
       this.tokensUsed += response.length; // rough estimate
 
-      // ── Hermes-style bottom frame ──
+      // ── Cyberpunk footer ──
       const cols = process.stdout.columns || 80;
       const elapsed = Math.floor((this.lastResponseTime - (this._sessionStart || this.lastResponseTime)) / 1000);
       const elapsedStr = elapsed > 3600
@@ -2266,28 +2247,15 @@ class ConversationalUI {
         : elapsed > 60
           ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
           : `${elapsed}s`;
-      const providerName = this.llm?.provider || "no-llm";
-      const modelLabel = typeof providerName === "string" ? providerName : "connected";
       const toolCount = Object.keys(hackerTools).length;
       const tokenK = (this.tokensUsed / 1000).toFixed(1);
-
-      // Bottom closure: ╰───╯
-      console.log(`\n${c("dim")}╰${"─".repeat(Math.max(0, cols - 2))}╯${R}`);
-
-      // Status bar: model | tokens | tools | elapsed | response count
-      const statusParts = [
-        `${c("dim")}${modelLabel}${R}`,
-        `${c("dim")}│${R} ${tokenK}K ${c("dim")}tokens${R}`,
-        `${c("dim")}│${R} ${toolCount} ${c("dim")}tools${R}`,
-        `${c("dim")}│${R} ${c("green")}${elapsedStr}${R}`,
-      ];
-      if (this.responseCount > 0) {
-        statusParts.push(`${c("dim")}│${R} ✓ ${this.responseCount}${R}`);
-      }
-      console.log(` ${statusParts.join(" ")}`);
-
-      // Full-width separator
-      console.log(`${c("dim")}${"─".repeat(cols)}${R}`);
+      const footerParts = [`${c("green")}✓${R} ${c("dim")}${this.responseCount}${R}`];
+      if (this.responseCount > 1) footerParts.push(`${c("dim")}·${R} ${tokenK}K`);
+      footerParts.push(`${c("dim")}·${R} ${toolCount} ${c("dim")}tools${R}`, `${c("dim")}·${R} ${c("green")}${elapsedStr}${R}`);
+      const footerTxt = footerParts.join(" ");
+      const footerLen = footerTxt.replace(/\x1b\[[0-9;]*m/g, "").length;
+      const footerDashes = Math.max(0, cols - footerLen - 4);
+      console.log(`\n${c("green")}└${R}${c("dim")}${"─".repeat(Math.floor(footerDashes / 2))}${R} ${footerTxt} ${c("dim")}${"─".repeat(Math.ceil(footerDashes / 2))}${R}${c("green")}┘${R}`);
       // Auto-save conversation
       this.conversation.push(`user: ${input.substring(0, 200)}`);
       this.conversation.push(`phantom: ${response.substring(0, 500)}`);
