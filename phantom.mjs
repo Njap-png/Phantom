@@ -1491,6 +1491,10 @@ class ConversationalUI {
     this.responseCount = 0;
     this.tokensUsed = 0;       // estimated
     this.compressions = 0;
+    this._toolCallCounter = 0; // total tool calls this session
+    // ── Evolution XP ──
+    this.evolutionXP = 0;
+    this.evolutionMaxXP = 100;
     // ── Suggestion engine ──
     this.suggestions = [];        // current list of matching suggestions
     this.selSuggestion = -1;      // -1 = none selected, 0+ = index into suggestions
@@ -2162,6 +2166,9 @@ class ConversationalUI {
 
     const toolStartHandler = ({ tool, args }) => {
       printTool(` ${c("magenta")}${B}⚡ @${tool}|${args}${R}`);
+      this._toolCallCounter++;
+      // Gain evolution XP per tool call
+      this.evolutionXP = Math.min(this.evolutionMaxXP, this.evolutionXP + 10);
     };
     this._toolStartHandler = toolStartHandler;
     const toolResultHandler = ({ tool, result, error, truncated }) => {
@@ -2279,7 +2286,7 @@ class ConversationalUI {
 
       // ── Cyberpunk footer ──
       const cols = process.stdout.columns || 80;
-      const elapsed = Math.floor((this.lastResponseTime - (this._sessionStart || this.lastResponseTime)) / 1000);
+      const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
       const elapsedStr = elapsed > 3600
         ? `${Math.floor(elapsed / 3600)}h ${Math.floor((elapsed % 3600) / 60)}m`
         : elapsed > 60
@@ -2287,9 +2294,15 @@ class ConversationalUI {
           : `${elapsed}s`;
       const toolCount = Object.keys(hackerTools).length;
       const tokenK = (this.tokensUsed / 1000).toFixed(1);
+      // Evolution XP bar
+      const xpPct = Math.floor((this.evolutionXP / this.evolutionMaxXP) * 100);
+      const barW = 8;
+      const filled = Math.round((xpPct / 100) * barW);
+      const empty = barW - filled;
+      const xpBar = `${c("green")}${"█".repeat(filled)}${c("dim")}${"░".repeat(empty)}${R} ${c("green")}${xpPct}%${R}`;
       const footerParts = [`${c("green")}✓${R} ${c("dim")}${this.responseCount}${R}`];
       if (this.responseCount > 1) footerParts.push(`${c("dim")}·${R} ${tokenK}K`);
-      footerParts.push(`${c("dim")}·${R} ${toolCount} ${c("dim")}tools${R}`, `${c("dim")}·${R} ${c("green")}${elapsedStr}${R}`);
+      footerParts.push(`${c("dim")}·${R} ${toolCount} ${c("dim")}tools${R}`, `${c("dim")}·${R} ${c("green")}${elapsedStr}${R}`, `${c("dim")}·${R} ${xpBar}`);
       const footerTxt = footerParts.join(" ");
       const footerLen = footerTxt.replace(/\x1b\[[0-9;]*m/g, "").length;
       const footerDashes = Math.max(0, cols - footerLen - 4);
@@ -2301,12 +2314,38 @@ class ConversationalUI {
       saveMemory("conversation_latest", this.conversation);
 
       // ── Post-task auto-evolution ──
-      // In background: check for missing wrappers, validate syntax
-      if (!process.env.PHANTOM_NO_EVOLVE && Math.random() < 0.1) {
-        // 10% chance after each task to run quick evolve
-        startupEvolve().then(ev => {
-          if (ev.wrappers_created > 0) {
-            console.log(`  ${c("green")}⚡${R} Auto-evolve: ${ev.wrappers_created} new wrappers`);
+      // Check if XP bar is full → trigger full evolve + verify
+      if (!process.env.PHANTOM_NO_EVOLVE && this.evolutionXP >= this.evolutionMaxXP) {
+        console.log(`  ${c("yellow")}⚡${R} Evolution ready! Running auto-evolve + verification...`);
+        startupEvolve().then(async ev => {
+          // Verify everything still works
+          const { execSync } = $r("child_process");
+          let allGood = true;
+          const results = [];
+          for (const f of ["phantom.mjs", "lib/tools.mjs", "lib/visual.mjs", "lib/evolve.mjs"]) {
+            try {
+              const r = execSync(`node --check ${f}`, { encoding: "utf-8", timeout: 5000 });
+              results.push(`${c("green")}✓${R} ${f}`);
+            } catch (e) {
+              results.push(`${c("red")}✕${R} ${f}: ${e.stderr?.trim() || e.message}`);
+              allGood = false;
+            }
+          }
+          // Run core tests
+          try {
+            execSync(`node test/core.test.mjs`, { encoding: "utf-8", timeout: 30000 });
+            results.push(`${c("green")}✓${R} core tests`);
+          } catch {
+            results.push(`${c("red")}✕${R} core tests`);
+            allGood = false;
+          }
+          if (allGood) {
+            this.evolutionXP = 0; // Reset bar on success
+            const w = ev.wrappers_created > 0 ? ` ${ev.wrappers_created} wrappers` : "";
+            console.log(`  ${c("green")}✓${R} Evolved${w} — all checks pass`);
+          } else {
+            console.log(`  ${c("red")}⚠${R} Evolution checks failed — keeping XP`);
+            console.log(`  ${results.join("\n  ")}`);
           }
         }).catch(() => {});
       }
