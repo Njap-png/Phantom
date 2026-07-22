@@ -337,6 +337,7 @@ class Agent {
       delegate: "Delegate a task to another agent. Format: agent_name|task_description. Agents: Lyra (coordinator), Nova (recon), Orion (exploit), Vega (defense). Use when you need specialized expertise.",
       fanout: "Fan-out same task to multiple agents in parallel. Format: agent1,agent2|task. Runs them simultaneously.",
       synthesize: "Ask coordinator to merge results. Format: original_request|raw_results.",
+      parallel: "Auto-parallelize a task: splits complex tasks into independent subtasks and runs them concurrently on Nova (recon), Orion (exploit), Vega (defense). Format: task_description. Use for: running recon+exploit+defense in parallel, scanning multiple targets, multi-pronged approaches.",
       workspace_write: "Write to shared workspace (all agents can see). Format: key|value.",
       workspace_read: "Read from shared workspace. Format: key.",
       shell: "Execute ANY shell command on the system. Use for: running tools, scripts, file operations, network scans, system info, package management. Input: shell command string.",
@@ -1469,6 +1470,7 @@ class ConversationalUI {
     this.am = am;
     this.bus = EventBus.i;
     this.llm = am.llm;
+    globalThis.__phantomManager = am;
     this.running = true;
     this.agent = null;
     this.conversation = [];
@@ -1784,9 +1786,13 @@ class ConversationalUI {
     process.stdout.write(cls + home);
     const toolCount = Object.keys(hackerTools).length;
     const cols = process.stdout.columns || 80;
+    const isWide = cols >= 100;
     const providerName = this.llm?.provider || "no-llm";
     const isTermux = !!(process.env.TERMUX_VERSION || process.env.PREFIX?.startsWith("/data/data/com.termux"));
     const modelLabel = typeof providerName === "string" ? providerName : "connected";
+
+    // ── Shadow figlet logo ──
+    log.art(renderLogo({ wide: isWide, tools: toolCount }));
 
     // ── Cyberpunk header ──
     const dashLen = Math.max(0, cols - 14);
@@ -1797,15 +1803,38 @@ class ConversationalUI {
     console.log(`${infoStr}${pad}${c("green")}│${R}`);
     console.log(`${c("green")}└${R}${c("dim")}${"─".repeat(Math.max(0, cols - 2))}${R}${c("green")}┘${R}`);
 
-    // Spawn single agent
+    // ── Spawn agents ──
     if (this.am.count === 0) {
-      this.am.spawn("Phantom", "Cybersecurity AI",
+      // Main agent
+      this.am.spawn("Phantom", "cybersecurity-ai",
         "You are Phantom, an autonomous cybersecurity AI. You operate with zero handholding — " +
         "the user gives a goal and you execute the full workflow: recon, scanning, analysis, exploitation, " +
         "reporting. You decide every step, call tools, iterate, and produce results without asking " +
         "what to do next. Put each tool call on its own line starting with @tool|args. " +
         "Be concise in explanations, thorough in execution. You have " + toolCount + " tools including " +
-        "shell, sub_enum, port_scan, web_fetch, vuln_scan, and more."
+        "shell, sub_enum, port_scan, web_fetch, vuln_scan, and more. " +
+        "CRITICAL: For complex tasks with multiple independent subtasks (e.g. recon multiple targets, " +
+        "run different scans concurrently), use @parallel|task_description to auto-split and run on sub-agents. " +
+        "You can also delegate directly via @delegate|agent_name|task."
+      );
+      // Specialist sub-agents for parallel work
+      this.am.spawn("Nova", "recon",
+        "OSINT and reconnaissance specialist. Expert in DNS analysis, subdomain enumeration, " +
+        "port scanning, WHOIS lookups, web crawling, and attack surface mapping. " +
+        "Use tools: sub_enum, dns_lookup, whois, port_scan, http_headers, ssl_check, crawl, " +
+        "reverse_dns, wayback, robots_txt, geoip, shodan_search."
+      );
+      this.am.spawn("Orion", "exploit",
+        "Vulnerability analysis and exploitation engineer. Expert in CVE research, " +
+        "exploit matching, brute force testing, SQL injection, XSS, and penetration testing. " +
+        "Use tools: cve_search, searchsploit, bruteforce, xss_scan, sql_detect, " +
+        "open_redirect, dir_bruteforce, cors_test, fuzz, pwn."
+      );
+      this.am.spawn("Vega", "defense",
+        "Defensive security and monitoring analyst. Expert in log analysis, SSL/TLS audit, " +
+        "CORS testing, JWT analysis, certificate checks, and security hardening. " +
+        "Use tools: ssl_check, cert_expiry, http_headers, hash, decode, " +
+        "jwt_decode, cors_test, dns_lookup, geoip."
       );
     }
     this.agent = this.am.list[0];
