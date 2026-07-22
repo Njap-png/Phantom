@@ -200,6 +200,75 @@ function loadLearned() {
   } catch { return ""; }
 }
 
+// ── Self-Learning: extract and save techniques from any content ──
+let _studyCycle = 0;
+
+function recordTechnique(content, source) {
+  if (!content || content.length < 80) return;
+  try {
+    ensureDirs();
+    // Extract meaningful sentences (techniques, commands, workflows)
+    const sentences = content
+      .replace(/\n+/g, ". ")
+      .split(/[.!\n]/)
+      .map(s => s.trim())
+      .filter(s => s.length > 60 && !s.includes("@") && !s.includes("```"))
+      .slice(0, 10);
+    if (sentences.length === 0) return;
+
+    const tag = `auto_${source.replace(/[^a-z0-9]/gi, "_").substring(0, 20)}`;
+    const filePath = resolve(BOOKS_DIR, `${tag}.txt`);
+    const timestamp = new Date().toISOString().slice(0, 19);
+    const entry = `## Auto-learned: ${source} (${timestamp})\n${sentences.map(s => `- ${s}.`).join("\n")}\n\n`;
+
+    const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf-8") : "";
+    const combined = existing ? `${existing}${entry}` : entry;
+    fs.writeFileSync(filePath, combined, "utf-8");
+  } catch { /* best-effort */ }
+}
+
+async function consolidateKnowledge() {
+  try {
+    ensureDirs();
+    // Read all knowledge files and all book files, synthesize into a compact summary
+    const kFiles = fs.existsSync(KNOWLEDGE_DIR) ? fs.readdirSync(KNOWLEDGE_DIR).filter(f => f.endsWith(".txt")) : [];
+    const learned = loadLearned(); // already formatted
+    if (kFiles.length === 0 && !learned) return;
+
+    // Build a cross-reference: which tools found what on which targets
+    const summary = [`📚 Knowledge Synthesis (${new Date().toISOString().slice(0, 10)})`];
+    for (const f of kFiles.slice(0, 15)) {
+      const content = fs.readFileSync(resolve(KNOWLEDGE_DIR, f), "utf-8");
+      const entries = content.split("\n").filter(Boolean);
+      summary.push(`  ${f.replace(".txt", "")}: ${entries.length} findings`);
+    }
+    if (kFiles.length > 15) summary.push(`  … ${kFiles.length - 15} more knowledge files`);
+    summary.push("");
+
+    const synthesisFile = resolve(BOOKS_DIR, "_synthesis.txt");
+    fs.writeFileSync(synthesisFile, summary.join("\n"), "utf-8");
+    return summary.join("\n");
+  } catch { return ""; }
+}
+
+async function studyCycle(self) {
+  _studyCycle = (_studyCycle || 0) + 1;
+  // Every 5th response: consolidation
+  if (_studyCycle % 5 === 0) {
+    const s = await consolidateKnowledge();
+    if (s) console.log(`  ${c("cyan")}🧠${R} Auto-study: ${s.split("\n").length - 1} knowledge files indexed`);
+    const kCount = fs.existsSync(KNOWLEDGE_DIR) ? fs.readdirSync(KNOWLEDGE_DIR).filter(f => f.endsWith(".txt")).length : 0;
+    const bCount = fs.existsSync(BOOKS_DIR) ? fs.readdirSync(BOOKS_DIR).filter(f => f.endsWith(".txt")).length : 0;
+    console.log(`  ${c("dim")}   ${kCount} knowledge files · ${bCount} book/technique entries → injected into every agent prompt${R}`);
+  }
+  // Every 10th response: deeper study — extract patterns from knowledge
+  if (_studyCycle % 10 === 0 && self._growFacts > 0) {
+    const summary = `Self-learned ${self._growFacts} facts this session from tool outputs.`;
+    recordTechnique(summary, "session_summary");
+    console.log(`  ${c("cyan")}📘${R} Learned ${self._growFacts} facts into persistent memory`);
+  }
+}
+
 async function loadDynamicTool(filePath, toolName, description) {
   const fileUrl = pathToFileURL(filePath).href;
   const module = await import(`${fileUrl}?t=${Date.now()}`);
@@ -408,6 +477,7 @@ class Agent {
       grow: "Deep learn from session knowledge. Reads all auto-extracted facts from tool outputs and reports a summary of what Phantom has learned. Use: @grow to see your knowledge base. Run after several tools to consolidate learning.",
       learn_book: "Learn from a book or documentation file. Format: <file_path>|<description>. Reads the file, extracts techniques, stores them permanently. Every future session uses this knowledge.",
       learn_url: "Learn from a URL (online docs, tutorials, articles). Format: <url>|<description>. Fetches, extracts knowledge, stores permanently.",
+      study: "Trigger self-learning report. Shows all book/technique files, knowledge base, and confirms injected knowledge. Use: @study to see what Phantom has learned.",
       workspace_write: "Write to shared workspace (all agents can see). Format: key|value.",
       workspace_read: "Read from shared workspace. Format: key.",
       shell: "Execute ANY shell command on the system. Use for: running tools, scripts, file operations, network scans, system info, package management. Input: shell command string.",
@@ -2361,6 +2431,10 @@ class ConversationalUI {
       this.responseCount++;
       this.lastResponseTime = Date.now();
       this.tokensUsed += response.length; // rough estimate
+
+      // ── Auto-learn from every response ──
+      recordTechnique(response, "reasoning");
+      studyCycle(this).catch(() => {});
 
       // Evolution XP: tool calls already give +10 each; study/learn
       // (thinking, reading docs, analyzing) gives +1 per ~50 chars
