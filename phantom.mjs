@@ -103,62 +103,7 @@ function loadMemory(name) {
   } catch (e) { return []; }
 }
 
-// ── System Tool Detection ─────────────────────────────────
-const SYSTEM_TOOLS = [
-  ["nmap", "Network scanning"],
-  ["sqlmap", "SQL injection testing"],
-  ["metasploit", "Exploitation framework"],
-  ["searchsploit", "Exploit search"],
-  ["ffuf", "Web fuzzing"],
-  ["gobuster", "Directory bruteforce"],
-  ["hydra", "Login bruteforce"],
-  ["john", "Password cracking"],
-  ["hashcat", "GPU password cracking"],
-  ["aircrack-ng", "WiFi security"],
-  ["tshark", "Packet analysis"],
-  ["masscan", "Fast port scanning"],
-  ["nikto", "Web server scanner"],
-  ["wpscan", "WordPress security"],
-  ["dirb", "Web content scanner"],
-  ["enum4linux", "SMB enumeration"],
-  ["smbclient", "SMB client"],
-  ["netcat", "Network Swiss army knife"],
-  ["socat", "Network relay"],
-  ["curl", "HTTP requests"],
-  ["wget", "File downloader"],
-  ["git", "Version control"],
-  ["python3", "Python interpreter"],
-  ["node", "Node.js runtime"],
-  ["docker", "Container engine"],
-  ["kubectl", "Kubernetes CLI"],
-  ["terraform", "Infrastructure as code"],
-  ["yara", "Malware pattern matching"],
-  ["clamscan", "Antivirus scanning"],
-  ["sslyze", "SSL/TLS analysis"],
-  ["testssl", "SSL/TLS testing"],
-  ["whois", "Domain WHOIS lookup"],
-  ["dig", "DNS lookup utility"],
-  ["nslookup", "DNS lookup"],
-  ["host", "DNS lookup"],
-  ["tcpdump", "Packet capture"],
-  ["sqlite3", "SQLite database"],
-  ["jq", "JSON processor"],
-  ["yt-dlp", "Media downloader"],
-  ["ffmpeg", "Media processor"],
-];
-
-async function detectSystemTools() {
-  const found = [];
-  for (const [bin, desc] of SYSTEM_TOOLS) {
-    try {
-      const { execSync } = await import("child_process");
-      execSync(`command -v ${bin} 2>/dev/null`, { stdio: "pipe", timeout: 1500 });
-      found.push({ bin, desc });
-    } catch {}
-  }
-  return found;
-}
-
+// ── Terminal raw mode helpers ─────────────────────────
 function saveKnowledge(name, knowledge) {
   try {
     ensureDirs();
@@ -1898,19 +1843,11 @@ class ConversationalUI {
 
   prompt() {
     if (!this.running) return;
-
-    // Hermes-style bottom frame before each prompt
-    this.renderBottomBar();
-    this.renderStatusBar();
-    this.renderSepLine();
-
     this.inputBuf = "";
     this.historyIdx = this.inputHistory.length;
     this.cursorPos = 0;
     this.inputLines = [];
 
-    const agentState = this.agent?.status || "ready";
-    const stateIcon = agentState === "thinking" ? "🧠" : agentState === "speaking" ? "💬" : agentState === "executing" ? "⚡" : "👻";
     process.stdout.write(`${c("green")}❯${R} `);
 
     raw(true);
@@ -2321,17 +2258,36 @@ class ConversationalUI {
       this.lastResponseTime = Date.now();
       this.tokensUsed += response.length; // rough estimate
 
-      // Status bar: agent state · tools used · evolution level
-      if (this.agent) {
-        const level = this.agent.evolutionLevel || 1;
-        const tools = Object.keys(this.agent.tools || {}).length;
-        const state = this.agent.status === "idle" ? "ready" : this.agent.status;
-        const bar = `${c("dim")}──${R} ${c("cyan")}●${R} ${state}  ${c("dim")}│${R} ${tools} tools  ${c("dim")}│${R} lv${level} ${c("dim")}──${R}`;
-        console.log(`\n${c("dim")}${"─".repeat(4)}${R} ${bar}`);
+      // ── Hermes-style bottom frame ──
+      const cols = process.stdout.columns || 80;
+      const elapsed = Math.floor((this.lastResponseTime - (this._sessionStart || this.lastResponseTime)) / 1000);
+      const elapsedStr = elapsed > 3600
+        ? `${Math.floor(elapsed / 3600)}h ${Math.floor((elapsed % 3600) / 60)}m`
+        : elapsed > 60
+          ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
+          : `${elapsed}s`;
+      const providerName = this.llm?.provider || "no-llm";
+      const modelLabel = typeof providerName === "string" ? providerName : "connected";
+      const toolCount = Object.keys(hackerTools).length;
+      const tokenK = (this.tokensUsed / 1000).toFixed(1);
+
+      // Bottom closure: ╰───╯
+      console.log(`\n${c("dim")}╰${"─".repeat(Math.max(0, cols - 2))}╯${R}`);
+
+      // Status bar: model | tokens | tools | elapsed | response count
+      const statusParts = [
+        `${c("dim")}${modelLabel}${R}`,
+        `${c("dim")}│${R} ${tokenK}K ${c("dim")}tokens${R}`,
+        `${c("dim")}│${R} ${toolCount} ${c("dim")}tools${R}`,
+        `${c("dim")}│${R} ${c("green")}${elapsedStr}${R}`,
+      ];
+      if (this.responseCount > 0) {
+        statusParts.push(`${c("dim")}│${R} ✓ ${this.responseCount}${R}`);
       }
+      console.log(` ${statusParts.join(" ")}`);
 
-      // Full frame (bottom bar + status bar + separator)
-
+      // Full-width separator
+      console.log(`${c("dim")}${"─".repeat(cols)}${R}`);
       // Auto-save conversation
       this.conversation.push(`user: ${input.substring(0, 200)}`);
       this.conversation.push(`phantom: ${response.substring(0, 500)}`);
