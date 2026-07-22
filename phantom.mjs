@@ -118,7 +118,55 @@ function loadKnowledge(name) {
     const filePath = resolve(KNOWLEDGE_DIR, `${name}.txt`);
     if (!fs.existsSync(filePath)) return "";
     return fs.readFileSync(filePath, "utf-8");
-  } catch (e) { return ""; }
+  } catch { return ""; }
+}
+
+// ── Auto-Learning: extract knowledge from tool output ─────
+function learnFromTool(tool, result, args) {
+  if (!result || result.length < 20) return;
+  try {
+    // Derive a target name from args
+    let target = (args || "").replace(/^https?:\/\//, "").split(/[/\s|]/)[0].trim();
+    if (!target || target.length > 64 || target.includes(".")) {
+      // Use tool name as bucket if no clean domain target
+      target = tool;
+    }
+    const sanitized = target.replace(/[^a-zA-Z0-9._-]/g, "_").substring(0, 48);
+    const tag = `${sanitized}_${tool}`;
+
+    const facts = [];
+    const text = typeof result === "string" ? result : String(result);
+
+    // Subdomains
+    const subs = text.match(/([a-zA-Z0-9][-a-zA-Z0-9]*\.)+(com|net|org|io|gov|edu|dev|app|xyz|co|uk|ru|cn|de|jp|fr|au|us|in|br|nl|eu)\b/g);
+    if (subs) {
+      const uniq = [...new Set(subs.filter(s => !s.startsWith("CVE") && !s.startsWith("cve")))];
+      if (uniq.length > 0) facts.push(`subs: ${uniq.slice(0, 20).join(" ")}`);
+    }
+
+    // IPs
+    const ips = text.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g);
+    if (ips) facts.push(`ips: ${[...new Set(ips)].slice(0, 20).join(" ")}`);
+
+    // CVEs
+    const cves = text.match(/CVE-\d{4}-\d{4,7}/gi);
+    if (cves) facts.push(`cves: ${[...new Set(cves)].slice(0, 10).join(" ")}`);
+
+    // Open ports (e.g. "80/tcp open" or "22 open")
+    const ports = text.match(/\b(\d{1,5})\/(?:tcp|udp)\s+open\b/g);
+    if (ports) facts.push(`ports: ${ports.map(p => p.split("/")[0]).slice(0, 20).join(" ")}`);
+
+    if (facts.length > 0) {
+      const existing = loadKnowledge(tag);
+      const newEntry = `[${new Date().toISOString().slice(0, 19)}] ${facts.join("; ")}`;
+      const combined = existing ? `${existing}\n${newEntry}` : newEntry;
+      // Keep last 50 entries
+      const lines = combined.split("\n").slice(-50);
+      saveKnowledge(tag, lines.join("\n"));
+      return facts.length; // how many fact types extracted
+    }
+  } catch { /* silent — learning is best-effort */ }
+  return 0;
 }
 
 function saveDynamicTool(toolName, code) {
@@ -338,6 +386,7 @@ class Agent {
       fanout: "Fan-out same task to multiple agents in parallel. Format: agent1,agent2|task. Runs them simultaneously.",
       synthesize: "Ask coordinator to merge results. Format: original_request|raw_results.",
       parallel: "Auto-parallelize a task: splits complex tasks into independent subtasks and runs them concurrently on Nova (recon), Orion (exploit), Vega (defense). Format: task_description. Use for: running recon+exploit+defense in parallel, scanning multiple targets, multi-pronged approaches.",
+      grow: "Deep learn from session knowledge. Reads all auto-extracted facts from tool outputs and reports a summary of what Phantom has learned. Use: @grow to see your knowledge base. Run after several tools to consolidate learning.",
       workspace_write: "Write to shared workspace (all agents can see). Format: key|value.",
       workspace_read: "Read from shared workspace. Format: key.",
       shell: "Execute ANY shell command on the system. Use for: running tools, scripts, file operations, network scans, system info, package management. Input: shell command string.",
@@ -1492,6 +1541,8 @@ class ConversationalUI {
     this.tokensUsed = 0;       // estimated
     this.compressions = 0;
     this._toolCallCounter = 0; // total tool calls this session
+    this._growFacts = 0;       // auto-extracted facts this session
+    this._growCycle = 0;       // grow cycles completed
     // ── Evolution XP ──
     this.evolutionXP = 0;
     this.evolutionMaxXP = 100;
@@ -2184,6 +2235,9 @@ class ConversationalUI {
         if (lines.length > 2 || truncated) {
           printTool(`  ${c("dim")}… +${lines.length - 2} lines${truncated ? " (truncated)" : ""}${R}`);
         }
+        // ── Auto-learn from output (fire-and-forget) ──
+        const n = learnFromTool(tool, result, args);
+        if (n > 0) this._growFacts += n;
       }
       spinner.update("⚡ running tools... ");
     };
@@ -2353,6 +2407,18 @@ class ConversationalUI {
             console.log(`  ${results.join("\n  ")}`);
           }
         }).catch(() => {});
+      }
+
+      // ── Background grow cycle every 5 responses ──
+      this._growCycle++;
+      if (!process.env.PHANTOM_NO_EVOLVE && this._growCycle % 5 === 0 && this._growFacts > 0) {
+        const facts = this._growFacts;
+        console.log(`  ${c("cyan")}🌱${R} Learning consolidated: ${facts} facts extracted this session`);
+        const dir = resolve(homedir(), ".config", "phantom", "knowledge");
+        if (fs.existsSync(dir)) {
+          const nFiles = fs.readdirSync(dir).filter(f => f.endsWith(".txt")).length;
+          console.log(`  ${c("dim")}   ${nFiles} knowledge files — use @grow to explore${R}`);
+        }
       }
 
     } catch (err) {
