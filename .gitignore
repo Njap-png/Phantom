@@ -6,3 +6,4 @@ dist/
 .tmp/
 tmp/
 config.json
+lib/generated/

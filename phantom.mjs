@@ -33,6 +33,33 @@ loadAutoTools().then(at => {
   }
 }).catch(() => {});
 
+// ── Merge self-improvement learned modules into hackerTools ──
+// Generated during improvement cycles, copied to lib/learned/
+const LEARNED_DIR = resolve(new URL(".", import.meta.url).pathname, "lib", "learned");
+(async () => {
+  try {
+    if (!fs.existsSync(LEARNED_DIR)) return;
+    const files = fs.readdirSync(LEARNED_DIR).filter(f => f.endsWith(".mjs"));
+    if (files.length === 0) return;
+    let count = 0;
+    for (const file of files) {
+      try {
+        const name = file.replace(/\.mjs$/, "");
+        if (hackerTools[name]) continue; // don't override existing
+        const mod = await import(resolve(LEARNED_DIR, file) + `?t=${Date.now()}`);
+        const fn = mod.default || mod.execute;
+        if (typeof fn === "function") {
+          hackerTools[name] = fn;
+          count++;
+        }
+      } catch {}
+    }
+    if (count > 0) {
+      console.debug(`[self-improve] loaded ${count} learned module(s)`);
+    }
+  } catch {}
+})();
+
 // ── Config ─────────────────────────────────────────────────
 let _config = {};
 try {
@@ -1507,6 +1534,10 @@ class ConversationalUI {
     this.cursorPos = 0;
     this.inputLines = [];
     this.inputHandler = null;
+    this.promptQueue = [];     // inputs queued while agent is busy
+    this._busy = false;        // agent is processing
+    this._queueBuf = "";       // partial input during busy mode
+    this._queueHandler = null; // stdin listener during busy mode
     // ── Suggestion engine ──
     this.suggestions = [];        // current list of matching suggestions
     this.selSuggestion = -1;      // -1 = none selected, 0+ = index into suggestions
@@ -2028,7 +2059,7 @@ class ConversationalUI {
         process.stdout.write(`\n${c("green")}│${R} `);
         return;
       }
-
+      // Submit
       const fullInput = this.inputLines.concat([this.inputBuf]).join("\n").trim();
       this.inputLines = [];
       this.inputBuf = "";
@@ -2038,14 +2069,22 @@ class ConversationalUI {
       process.stdin.removeListener("data", this.inputHandler);
       process.stdout.write("\n");
 
-      if (fullInput) {
-        if (this.inputHistory.length === 0 || this.inputHistory[this.inputHistory.length - 1] !== fullInput) {
-          this.inputHistory.push(fullInput);
-        }
-        this.handleInput(fullInput);
-      } else {
-        this.prompt();
+      if (!fullInput) { this.prompt(); return; }
+
+      // Save to input history
+      if (this.inputHistory.length === 0 || this.inputHistory[this.inputHistory.length - 1] !== fullInput) {
+        this.inputHistory.push(fullInput);
       }
+
+      // If agent is busy, queue the input instead of submitting
+      if (this._busy) {
+        this.promptQueue.push(fullInput);
+        this.sayLine(`${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${fullInput}`, "yellow");
+        this.prompt();
+        return;
+      }
+
+      this.handleInput(fullInput);
       return;
     }
 
@@ -2116,11 +2155,15 @@ class ConversationalUI {
       return;
     }
 
+    // Mark busy so queuing kicks in
+    this._busy = true;
+
     // Show user input in log
     this.sayLine(`┃ ${input}`, "green");
 
     if (!this.agent) {
       this.sayLine("✕ No agent available.", "red");
+      this._busy = false;
       this.prompt();
       return;
     }
@@ -2179,6 +2222,50 @@ class ConversationalUI {
     this.bus.on("agent:tool:start", toolStartHandler);
     this.bus.on("agent:tool:result", toolResultHandler);
 
+    // ── Enable background input queue while agent is busy ──
+    // Keep raw mode ON so the user can type. On Enter the input
+    // gets pushed to this.promptQueue instead of submitted to agent.
+    const queueHandler = (buf) => {
+      const s = buf.toString();
+      // Enter → commit current queue buffer
+      if (s === "\r" || s === "\n") {
+        const q = this._queueBuf?.trim();
+        this._queueBuf = "";
+        if (q) {
+          this.promptQueue.push(q);
+          // Use raw stdout since raw mode is active
+          process.stdout.write(`\r${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${q}\r\n`);
+          this.log(`${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${q}`);
+        }
+        // Show busy prompt
+        const busyIcon = `${c("yellow")}⚡${R}`;
+        const qHint = this.promptQueue.length ? ` ${c("dim")}[${this.promptQueue.length} queued]${R}` : "";
+        process.stdout.write(`${busyIcon} ${qHint} `);
+        return;
+      }
+      // Ctrl+C during busy → cancel
+      if (s === "\x03") { this.cancel(); return; }
+      // Backspace
+      if (s === "\x7f" || s === "\b") {
+        if (this._queueBuf?.length > 0) {
+          this._queueBuf = this._queueBuf.slice(0, -1);
+          // Rewrite the busy prompt line
+          process.stdout.write(`\r\x1b[K${c("yellow")}⚡${R} ${this._queueBuf}`);
+        }
+        return;
+      }
+      // Regular characters
+      if (s.length === 1 && s.charCodeAt(0) >= 32) {
+        this._queueBuf = (this._queueBuf || "") + s;
+        process.stdout.write(s);
+      }
+    };
+    this._queueHandler = queueHandler;
+    raw(true);
+    // Draw the busy prompt
+    process.stdout.write(`\r${c("yellow")}⚡${R} `);
+    process.stdin.on("data", queueHandler);
+
     try {
       const response = await new Promise((resolve, reject) => {
         const handler = ({ agent: a, text }) => {
@@ -2202,6 +2289,10 @@ class ConversationalUI {
         });
       });
 
+      // Remove queue handler
+      process.stdin.removeListener("data", queueHandler);
+      raw(false);
+
       // Clear spinner + tick handler + tool listeners
       spinner.stop();
       delete this._spinner;
@@ -2211,7 +2302,7 @@ class ConversationalUI {
       this.bus.off("agent:tool:result", this._toolResultHandler);
 
       // If cancelled mid-flight, skip response output
-      if (this._cancelled) { this._cancelled = false; this.sayLine(`${c("yellow")}⏹${R} Cancelled`, "yellow"); this.prompt(); return; }
+      if (this._cancelled) { this._cancelled = false; this.sayLine(`${c("yellow")}⏹${R} Cancelled`, "yellow"); this._busy = false; this.processQueue(); return; }
 
       // Render the response with formatting
 
@@ -2245,6 +2336,10 @@ class ConversationalUI {
       }
 
     } catch (err) {
+      // Remove queue handler
+      process.stdin.removeListener("data", queueHandler);
+      raw(false);
+
       spinner.stop();
       delete this._spinner;
       this.bus.off("tick", tickHandler);
@@ -2254,21 +2349,45 @@ class ConversationalUI {
       if (!this._cancelled) this.sayLine(`✕ Error: ${err.message}`, "red");
     }
 
-    // If cancelled, skip redundant prompt
+    this._busy = false;
     if (this._cancelled) { this._cancelled = false; return; }
-    this.prompt();
+    this.processQueue();
   }
 
   cancel() {
     // Cancel current operation without exiting — returns to prompt
     this._cancelled = true;
+    this._busy = false;
     if (this._spinner) { try { this._spinner.stop(); } catch {} delete this._spinner; }
+    // Clean up queue handler if active
+    if (this._queueHandler) {
+      try { process.stdin.removeListener("data", this._queueHandler); } catch {}
+      this._queueHandler = null;
+    }
+    raw(false);
     this.bus.off("tick", this._tickHandler);
     this.bus.off("agent:tool:plan", this._toolPlanHandler);
     this.bus.off("agent:tool:start", this._toolStartHandler);
     this.bus.off("agent:tool:result", this._toolResultHandler);
-    this.sayLine(`${c("yellow")}⏹${R} Cancelled`, "yellow");
+    this._queueBuf = "";
+    if (this.promptQueue.length > 0) {
+      this.sayLine(`${c("yellow")}⏹${R} Stopped. ${this.promptQueue.length} queued — type /queue to see, /flushqueue to clear.`, "yellow");
+    } else {
+      this.sayLine(`${c("yellow")}⏹${R} Cancelled`, "yellow");
+    }
     setTimeout(() => { this._cancelled = false; this.prompt(); }, 50);
+  }
+
+  processQueue() {
+    // Process next queued item
+    if (this.promptQueue.length > 0) {
+      const next = this.promptQueue.shift();
+      this.sayLine(`${c("cyan")}📤${R} Next queued: ${next}`, "cyan");
+      this._busy = true;
+      setImmediate(() => this.handleInput(next));
+    } else {
+      this.prompt();
+    }
   }
 
   sayLine(text, color = "fg") {
@@ -2293,6 +2412,9 @@ class ConversationalUI {
         console.log(`  ${c("green")}  /api${R}          — start REST API (port 9090)`);
         console.log(`  ${c("green")}  /model${R}        — show/switch LLM`);
         console.log(`  ${c("green")}  /clear${R}        — clear screen`);
+        console.log(`  ${c("green")}  /stop${R}         — cancel current operation`);
+        console.log(`  ${c("green")}  /queue${R}        — show queued inputs`);
+        console.log(`  ${c("green")}  /flushqueue${R}   — clear all queued inputs`);
         console.log(`  ${c("green")}  /delegate${R}     — delegate task to agent`);
         console.log(`  ${c("green")}  /talk${R} <a>     — talk directly to an agent`);
         console.log(`  ${c("green")}  /agents${R}       — list team with status`);
@@ -2366,6 +2488,35 @@ class ConversationalUI {
         console.log(`  ${c("magenta")}${B}P H A N T O M${R}  ${c("dim")}cleared${R}\n`);
         this.prompt();
         return;
+
+      case "stop": {
+        this.cancel();
+        return;
+      }
+
+      case "queue":
+      case "q": {
+        if (this.promptQueue.length === 0) {
+          console.log(`${c("dim")}Queue empty. Type while the agent is busy to queue inputs.${R}`);
+        } else {
+          console.log(`\n${B}${c("cyan")}QUEUE (${this.promptQueue.length})${R}`);
+          this.promptQueue.forEach((item, i) => {
+            console.log(`  ${c("dim")}${i + 1}.${R} ${item}`);
+          });
+          console.log("");
+        }
+        this.prompt();
+        return;
+      }
+
+      case "flushqueue":
+      case "fq": {
+        const n = this.promptQueue.length;
+        this.promptQueue = [];
+        console.log(`${c("yellow")}🗑${R} Queue cleared (${n} items discarded).`);
+        this.prompt();
+        return;
+      }
 
       case "delegate":
       case "del": {
