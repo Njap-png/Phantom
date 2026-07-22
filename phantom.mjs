@@ -13,7 +13,7 @@ const $r = createRequire(import.meta.url);
 import { BASE_DIR, MEMORY_DIR, KNOWLEDGE_DIR, TOOLS_DIR, REPORTS_DIR, PLAYBOOKS_DIR, PHANTOM_VERSION } from "./lib/config.mjs";
 import { __r, runTool, runPipe, runScheduledScan } from "./lib/runtime.mjs";
 import { log } from "./lib/logger.mjs";
-import { renderLogo, renderBanner, prompt, icons, createSpinner } from "./lib/visual.mjs";
+import { renderLogo, renderBanner, prompt, icons, createSpinner, chatBorder } from "./lib/visual.mjs";
 import { hackerTools } from "./lib/tools.mjs";
 import { initApiDeps, startApiServer, startGuiDashboard, setChatAgent } from "./lib/server.mjs";
 import { autoEvolve, startupEvolve, getEvolveStatus, analyzeError, loadAutoTools } from "./lib/evolve.mjs";
@@ -1835,6 +1835,8 @@ class ConversationalUI {
     const isWide = process.stdout.columns >= 100;
     log.art(renderLogo({ wide: isWide, tools: toolCount }));
 
+    console.log(chatBorder("", { width: 60, color: c("dim") }));
+
     // Spawn single agent
     if (this.am.count === 0) {
       this.am.spawn("Phantom", "Cybersecurity AI",
@@ -2088,6 +2090,22 @@ class ConversationalUI {
       return;
     }
 
+    // Ctrl+V — paste from clipboard
+    if (str === "\x16") {
+      try {
+        const { execSync } = $r("child_process");
+        const isTermux = !!(process.env.TERMUX_VERSION || process.env.PREFIX?.startsWith("/data/data/com.termux"));
+        const pasteCmd = isTermux ? "termux-clipboard-get" : process.platform === "darwin" ? "pbpaste" : "xclip -selection clipboard -o";
+        const clip = execSync(pasteCmd, { encoding: "utf-8", timeout: 3000 }).toString().trim();
+        if (clip) {
+          this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + clip + this.inputBuf.slice(this.cursorPos);
+          this.cursorPos += clip.length;
+          this.redrawLine();
+        }
+      } catch {}
+      return;
+    }
+
     // Regular character
     if (str.length === 1 && str.charCodeAt(0) >= 32) {
       this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + str + this.inputBuf.slice(this.cursorPos);
@@ -2306,8 +2324,9 @@ class ConversationalUI {
 
       // Render the response with formatting
 
-      // Render the response with formatting
+      console.log(chatBorder("", { width: 50, color: c("dim") }));
       this.renderResponse(response);
+      console.log(chatBorder("", { width: 50, color: c("dim") }));
 
       // Status bar: agent state · tools used · evolution level
       if (this.agent) {
