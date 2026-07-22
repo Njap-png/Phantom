@@ -2043,6 +2043,15 @@ class ConversationalUI {
       return;
     }
 
+    // Paste detection: terminal dumped multi-char text (not a control sequence)
+    // Catches right-click paste, Ctrl+Shift+V, Termux paste button, etc.
+    if (str.length > 1) {
+      this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + str + this.inputBuf.slice(this.cursorPos);
+      this.cursorPos += str.length;
+      this.redrawLine();
+      return;
+    }
+
     // Regular character
     if (str.length === 1 && str.charCodeAt(0) >= 32) {
       this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + str + this.inputBuf.slice(this.cursorPos);
