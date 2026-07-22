@@ -2284,6 +2284,11 @@ class ConversationalUI {
       this.lastResponseTime = Date.now();
       this.tokensUsed += response.length; // rough estimate
 
+      // Evolution XP: tool calls already give +10 each; study/learn
+      // (thinking, reading docs, analyzing) gives +1 per ~50 chars
+      this.evolutionXP = Math.min(this.evolutionMaxXP,
+        this.evolutionXP + Math.min(20, Math.max(1, Math.floor(response.length / 50))));
+
       // ── Cyberpunk footer ──
       const cols = process.stdout.columns || 80;
       const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
