@@ -1538,6 +1538,12 @@ class ConversationalUI {
     this._busy = false;        // agent is processing
     this._queueBuf = "";       // partial input during busy mode
     this._queueHandler = null; // stdin listener during busy mode
+    // ── Session stats ──
+    this.startTime = Date.now();
+    this.lastResponseTime = null;
+    this.responseCount = 0;
+    this.tokensUsed = 0;       // estimated
+    this.compressions = 0;
     // ── Suggestion engine ──
     this.suggestions = [];        // current list of matching suggestions
     this.selSuggestion = -1;      // -1 = none selected, 0+ = index into suggestions
@@ -1832,10 +1838,38 @@ class ConversationalUI {
   async start() {
     process.stdout.write(cls + home);
     const toolCount = Object.keys(hackerTools).length;
-    const isWide = process.stdout.columns >= 100;
-    log.art(renderLogo({ wide: isWide, tools: toolCount }));
+    const cols = process.stdout.columns || 80;
+    const providerName = this.llm?.provider || "no-llm";
+    const isTermux = !!(process.env.TERMUX_VERSION || process.env.PREFIX?.startsWith("/data/data/com.termux"));
+    const modelLabel = typeof providerName === "string" ? providerName : "connected";
 
-    console.log(chatBorder("", { width: 60, color: c("dim") }));
+    // ── Hermes-style header ──
+    const headerText = `${c("cyan")}${B}Phantom${R}${c("dim")}`;
+    const headerDashes = "─".repeat(Math.max(0, cols - 9));
+    console.log(`${headerText} ${c("dim")}${headerDashes}${R}${c("dim")}╮${R}`);
+
+    // ── Status bar ──
+    const sessionStart = this._sessionStart || Date.now();
+    this._sessionStart = sessionStart;
+    const elapsed = Math.floor((Date.now() - sessionStart) / 1000);
+    const elapsedStr = elapsed > 3600
+      ? `${Math.floor(elapsed / 3600)}h ${Math.floor((elapsed % 3600) / 60)}m`
+      : elapsed > 60
+        ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
+        : `${elapsed}s`;
+
+    const statusParts = [
+      `${c("dim")}${isTermux ? "📱" : "🖥"}${R}`,
+      `${c("cyan")}${modelLabel}${R}`,
+      `${c("dim")}│${R} ${c("yellow")}${toolCount}${R} ${c("dim")}tools${R}`,
+      `${c("dim")}│${R} ${c("green")}${elapsedStr}${R}`,
+    ];
+    if (this.llm?.hasLLM) statusParts.push(`${c("dim")}│${R} ${c("green")}✓${R}`);
+
+    console.log(` ${statusParts.join(" ")}`);
+
+    // ── Separator ──
+    console.log(`${c("dim")}${"─".repeat(cols)}${R}`);
 
     // Spawn single agent
     if (this.am.count === 0) {
@@ -1850,70 +1884,26 @@ class ConversationalUI {
     }
     this.agent = this.am.list[0];
 
-    if (this.llm?.hasLLM) {
-      const providerName = typeof this.llm.provider === "string" ? this.llm.provider : "connected";
-      console.log(`${c("green")}✓${R} ${B}Phantom${R} ${c("dim")}— ${providerName}${R}`);
-
-      // Show team lineup
-      const team = this.am.list;
-      if (team.length > 0) {
-        console.log(`  ${c("dim")}team:${R} ${team.map(a =>
-          `${c("green")}${B}${a.name}${R}${c("dim")}(${a.role})${R}`
-        ).join(" ")}`);
-      }
-
-      // Detect and show available system tools
-      detectSystemTools().then(sysTools => {
-        if (sysTools.length > 0) {
-          const groups = [["recon", "scan", "web"], ["crack", "exploit", "payload"], ["analyze", "decode", "packet"]];
-          const featured = sysTools.filter(t => groups.some(g => g.some(k => t.desc.toLowerCase().includes(k)))).slice(0, 6);
-          if (featured.length > 0) {
-            console.log(`  ${c("dim")}sys:${R} ${featured.map(t => `${c("cyan")}${t.bin}${R}`).join(" ")}`);
-          }
-        }
-      }).catch(() => {});
-
-      // Show available providers
-      const ready = process.env.PHANTOM_PROVIDERS_READY;
-      if (ready) {
-        const list = ready.split(",").filter(n => n !== providerName);
-        if (list.length > 0) {
-          console.log(`  ${c("dim")}also ready: ${list.join(", ")} · /model to switch${R}`);
-        }
-      }
-    } else {
-      console.log(`${c("yellow")}⚠${R} No LLM configured.`);
-
-      const ready = process.env.PHANTOM_PROVIDERS_READY;
-      if (ready) {
-        const list = ready.split(",");
-        console.log(`  ${c("dim")}Available: ${list.join(", ")} · /model to select one${R}`);
-      } else {
-        console.log(`  ${c("dim")}Set OPENCODE_ZEN_API_KEY or run Ollama locally${R}`);
-        console.log(`  ${c("dim")}tools-only mode (no AI reasoning)${R}`);
-      }
-    }
-    console.log(`  ${c("dim")}${Object.keys(hackerTools).length} tools · /help · \\\\\\\\ multi-line${R}`);
-
-    // ── Auto-evolution on startup ──
+    // Background: show available providers and auto-evolve
     if (!process.env.PHANTOM_NO_EVOLVE) {
       startupEvolve().then(ev => {
         if (ev.wrappers_created > 0) {
-          console.log(`  ${c("green")}⚡${R} Auto-evolve: ${ev.wrappers_created} new tool wrappers created`);
-        }
-        if (ev.issues.length > 0) {
-          console.log(`  ${c("yellow")}⚠${R} Auto-evolve: ${ev.issues.join(", ")}`);
+          console.log(`${c("green")}⚡${R} Auto-evolve: ${ev.wrappers_created} new tool wrappers`);
         }
       }).catch(() => {});
     }
-
-    console.log("");
 
     this.prompt();
   }
 
   prompt() {
     if (!this.running) return;
+
+    // Hermes-style bottom frame before each prompt
+    this.renderBottomBar();
+    this.renderStatusBar();
+    this.renderSepLine();
+
     this.inputBuf = "";
     this.historyIdx = this.inputHistory.length;
     this.cursorPos = 0;
@@ -1921,7 +1911,7 @@ class ConversationalUI {
 
     const agentState = this.agent?.status || "ready";
     const stateIcon = agentState === "thinking" ? "🧠" : agentState === "speaking" ? "💬" : agentState === "executing" ? "⚡" : "👻";
-    process.stdout.write(`${c("green")}${stateIcon}${R} `);
+    process.stdout.write(`${c("green")}❯${R} `);
 
     raw(true);
     // Remove stale listener to prevent duplicate accumulation
@@ -2116,7 +2106,7 @@ class ConversationalUI {
 
   redrawLine() {
     const stateIcon = this.agent?.status === "thinking" ? "🧠" : this.agent?.status === "speaking" ? "💬" : this.agent?.status === "executing" ? "⚡" : "👻";
-    const promptStr = this.inputLines.length > 0 ? `${c("green")}│${R} ` : `${c("green")}${stateIcon}${R} `;
+    const promptStr = this.inputLines.length > 0 ? `${c("green")}│${R} ` : `${c("green")}❯${R} `;
 
     // Clear previous suggestion bar if any
     if (this._suggestionBarHeight > 0) {
@@ -2324,9 +2314,12 @@ class ConversationalUI {
 
       // Render the response with formatting
 
-      console.log(chatBorder("", { width: 50, color: c("dim") }));
       this.renderResponse(response);
-      console.log(chatBorder("", { width: 50, color: c("dim") }));
+
+      // Update session stats
+      this.responseCount++;
+      this.lastResponseTime = Date.now();
+      this.tokensUsed += response.length; // rough estimate
 
       // Status bar: agent state · tools used · evolution level
       if (this.agent) {
@@ -2336,6 +2329,8 @@ class ConversationalUI {
         const bar = `${c("dim")}──${R} ${c("cyan")}●${R} ${state}  ${c("dim")}│${R} ${tools} tools  ${c("dim")}│${R} lv${level} ${c("dim")}──${R}`;
         console.log(`\n${c("dim")}${"─".repeat(4)}${R} ${bar}`);
       }
+
+      // Full frame (bottom bar + status bar + separator)
 
       // Auto-save conversation
       this.conversation.push(`user: ${input.substring(0, 200)}`);
@@ -2412,6 +2407,69 @@ class ConversationalUI {
   sayLine(text, color = "fg") {
     console.log(`${c(color)}${text}${R}`);
     this.log(`${c(color)}${text}${R}`);
+  }
+
+  // ── Hermes-style bars ────────────────────────────────────
+
+  get cols() { return process.stdout.columns || 80; }
+
+  renderTopBar() {
+    const cols = this.cols;
+    const title = "Phantom";
+    const sep = "─".repeat(Math.max(0, cols - title.length - 2));
+    console.log(`${c("cyan")}${B}${title}${R}${c("dim")}${sep}╮${R}`);
+  }
+
+  renderBottomBar() {
+    const cols = this.cols;
+    console.log(`${c("dim")}╰${"─".repeat(cols - 1)}╯${R}`);
+  }
+
+  renderStatusBar() {
+    const cols = this.cols;
+    const model = this.llm?.provider || "no LLM";
+    const modelShort = typeof model === "string" ? model.replace(/^custom:/, "").split("/").pop() || model : "ai";
+    const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
+    const elapsedStr = elapsed >= 3600
+      ? `${Math.floor(elapsed / 3600)}h ${Math.floor((elapsed % 3600) / 60)}m`
+      : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
+    const lastResp = this.lastResponseTime
+      ? `${Math.floor((Date.now() - this.lastResponseTime) / 1000)}s`
+      : "—";
+    const tok = this.tokensUsed || this.responseCount * 500;
+    const tokLimit = 200000;
+    const pct = Math.min(100, Math.round((tok / tokLimit) * 100));
+    const barLen = 12;
+    const filled = Math.round((pct / 100) * barLen);
+    const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
+    const icon = "⚕";
+
+    const parts = [
+      `${c("magenta")}${icon}${R} ${c("cyan")}${modelShort}${R}`,
+      `${c("dim")}${tok.toLocaleString()}/${(tokLimit / 1000).toFixed(0)}K${R}`,
+      `${c("cyan")}[${bar}]${R} ${c("dim")}${pct}%${R}`,
+      `${c("yellow")}🗜️ ${this.compressions}${R}`,
+      `${c("green")}${elapsedStr}${R}`,
+      `${c("dim")}⏲ ${lastResp}${R}`,
+      `${c("green")}✓${R}`,
+    ];
+    const status = parts.join(` ${c("dim")}│${R} `);
+    // Truncate if too long
+    const maxLen = cols - 2;
+    const out = status.length > maxLen ? status.substring(0, maxLen - 1) + "…" : status;
+    console.log(out);
+  }
+
+  renderSepLine() {
+    console.log(`${c("dim")}${"─".repeat(this.cols)}${R}`);
+  }
+
+  renderFullFrame() {
+    this.renderTopBar();
+    console.log("");
+    this.renderBottomBar();
+    this.renderStatusBar();
+    this.renderSepLine();
   }
 
   async handleCommand(args) {
