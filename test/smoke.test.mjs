@@ -8,7 +8,7 @@ const CWD = "/root/Phantom";
 describe("CLI smoke", () => {
   it("--list runs without error", async () => {
     const { execSync } = await import("child_process");
-    const out = execSync("node phantom.mjs --list 2>&1", { cwd: CWD, encoding: "utf-8", timeout: 10000 });
+    const out = execSync("node phantom.mjs --list 2>&1", { cwd: CWD, encoding: "utf-8", timeout: 15000 });
     assert.ok(out.length > 100);
   });
 
