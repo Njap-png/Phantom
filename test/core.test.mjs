@@ -114,6 +114,80 @@ describe("hackerTools", () => {
     const r = await hackerTools.hash("hello");
     assert.ok(r.length > 10);
   });
+
+  it("env detects platform", async () => {
+    const { hackerTools } = await import("../lib/tools.mjs");
+    const { __r } = await import("../lib/runtime.mjs");
+    const { populateEnv } = await import("../lib/env.mjs");
+    if (!__r.ENV) { __r.ENV = {}; populateEnv(__r.ENV); }
+    const r = await hackerTools.env("");
+    assert.match(r, /Platform:/);
+    assert.match(r, /Tools:/);
+  });
+
+  it("env availability cached in __r.ENV", async () => {
+    const { __r } = await import("../lib/runtime.mjs");
+    const { populateEnv } = await import("../lib/env.mjs");
+    if (!__r.ENV) { __r.ENV = {}; populateEnv(__r.ENV); }
+    assert.ok(__r.ENV.tools);
+    assert.ok(typeof __r.ENV.availableTools === "number");
+  });
+
+  it("batch runs multiple tools sequentially", async () => {
+    const { hackerTools } = await import("../lib/tools.mjs");
+    const r = await hackerTools.batch("env\nhash hello");
+    assert.match(r, /✓ env/);
+    assert.match(r, /✓ hash/);
+  });
+
+  it("batch handles unknown tool gracefully", async () => {
+    const { hackerTools } = await import("../lib/tools.mjs");
+    const r = await hackerTools.batch("# comment\nnonexistent_tool_xyz");
+    assert.match(r, /✗ nonexistent_tool_xyz/);
+  });
+
+  it("graph returns empty or linked data", async () => {
+    const { hackerTools } = await import("../lib/tools.mjs");
+    const r = await hackerTools.graph("");
+    assert.ok(r.includes("[graph]") || r.includes("links"));
+  });
+
+  it("browser_auto detects missing playwright", async () => {
+    const { hackerTools } = await import("../lib/tools.mjs");
+    const r = await hackerTools.browser_auto("https://example.com");
+    assert.match(r, /Playwright not installed/);
+  });
+
+  it("session save/load round-trips", async () => {
+    const { saveSession, loadSession, clearSession } = await import("../lib/session.mjs");
+    clearSession();
+    const before = loadSession();
+    assert.deepEqual(before, {});
+    saveSession({ test: "roundtrip", stats: { toolsUsed: 99 } });
+    const after = loadSession();
+    assert.equal(after.test, "roundtrip");
+    assert.equal(after.stats.toolsUsed, 99);
+    clearSession();
+  });
+
+  it("knowledge graph link/query", async () => {
+    const { linkTool, queryGraph, loadGraph, saveGraph } = await import("../lib/session.mjs");
+    saveGraph({});
+    linkTool("test_tool", { books: ["test_book"], cves: ["CVE-2025-TEST"], tags: ["test"] });
+    const g = loadGraph();
+    assert.ok(g.test_tool);
+    assert.equal(g.test_tool.books[0], "test_book");
+    const q = queryGraph("test_book");
+    assert.ok(q.length > 0);
+    assert.equal(q[0].tool, "test_tool");
+    saveGraph({});
+  });
+
+  it("self_integrate handles missing file", async () => {
+    const { hackerTools } = await import("../lib/tools.mjs");
+    const r = await hackerTools.self_integrate("/nonexistent/path.mjs");
+    assert.match(r, /File not found/);
+  });
 });
 
 describe("CLI smoke", () => {

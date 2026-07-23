@@ -18,6 +18,7 @@ import { hackerTools } from "./lib/tools.mjs";
 import { initApiDeps, startApiServer, startGuiDashboard, setChatAgent } from "./lib/server.mjs";
 import { autoEvolve, startupEvolve, getEvolveStatus, analyzeError, loadAutoTools } from "./lib/evolve.mjs";
 import { populateEnv } from "./lib/env.mjs";
+import { saveSession, loadSession, autoLinkFromBooks } from "./lib/session.mjs";
 
 // ── Merge auto-generated tools into hackerTools ──
 // Runs once at module init so all agents & CLIs pick them up.
@@ -594,6 +595,11 @@ class Agent {
       upload_test: "Test file upload endpoints for XXE, YAML deserialization, polyglot. Format: url|mode (xxe/polyglot/all).",
       rate_limit_test: "Test rate limiting, timing attacks, race conditions. Format: url|mode|count. Modes: burst/timing/race/all.",
       env: "Show detected environment: OS, tools, packages, network, resources.",
+      batch: "Run multiple tool calls sequentially (one per line, lines starting with # ignored). Bypasses agent loop for fast multi-step tasks.",
+      install_missing: "Auto-install missing security tools via package manager. Options: tool name or 'all'.",
+      self_integrate: "Auto-integrate a generated .mjs module into hackerTools + registry. Input: path to .mjs file.",
+      graph: "Query knowledge graph: tool ↔ books/CVEs/tags. Empty input shows all links.",
+      cron: "Schedule/manage periodic tasks: cve_now (run now), cve_daily (daily CVE scan).",
       browser_auto: "Launch headless Playwright browser, load URL, return rendered HTML. Supports --screenshot, --html, --text flags. Input: URL [flags].",
       plugin_load: "Load external plugin tools from plugins directory. Input: optional path.",
       plugin_create: "Create a new plugin skeleton. Format: name|description.",
@@ -1087,6 +1093,14 @@ const ENV = (() => {
 __r.ENV = ENV;
 populateEnv(ENV);
 
+// Restore session + auto-link knowledge graph
+const session = loadSession();
+if (session?.stats) {
+  __r._sessionRestored = session;
+}
+const linked = autoLinkFromBooks();
+if (linked > 0) log.debug(`knowledge graph: ${linked} tool↔book links restored`);
+
 // ── ANSI adapters (based on color capability) ─────────────
 const ansi = (() => {
   const useBasic = !ENV.has256;
@@ -1389,9 +1403,11 @@ class DesktopUI {
     raw(false);
     process.stdout.write(cls + home + show);
     log.ok(`${c("green")}Phantom terminated.${R}`);
+    saveSession({ stats: { toolsUsed: Object.keys(hackerTools).length, lastExit: Date.now() } });
     process.exit(0);
   }
 
+  // ── Log view (for plugins) ──
   start() {
     this.am.spawnDefaults();
 
@@ -1579,6 +1595,7 @@ class TermuxUI {
   stop() {
     this.running = false;
     log.ok(`\n${c("green")}Phantom terminated.${R}`);
+    saveSession({ stats: { toolsUsed: Object.keys(hackerTools).length, lastExit: Date.now() } });
     process.exit(0);
   }
 
@@ -2940,6 +2957,7 @@ class ConversationalUI {
     try { if (this.inputHandler) process.stdin.removeListener("data", this.inputHandler); } catch {}
     process.stdout.write(show);
     log.ok(`\n${c("green")}Phantom terminated.${R}`);
+    saveSession({ stats: { toolsUsed: Object.keys(hackerTools).length, lastExit: Date.now() } });
     process.exit(0);
   }
 }
