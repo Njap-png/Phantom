@@ -17,6 +17,7 @@ import { renderLogo, renderBanner, prompt, icons, createSpinner, chatBorder } fr
 import { hackerTools } from "./lib/tools.mjs";
 import { initApiDeps, startApiServer, startGuiDashboard, setChatAgent } from "./lib/server.mjs";
 import { autoEvolve, startupEvolve, getEvolveStatus, analyzeError, loadAutoTools } from "./lib/evolve.mjs";
+import { populateEnv } from "./lib/env.mjs";
 
 // ── Merge auto-generated tools into hackerTools ──
 // Runs once at module init so all agents & CLIs pick them up.
@@ -592,6 +593,7 @@ class Agent {
       js_analyze: "Deep JS bundle analysis — find API keys, secrets, API endpoints, XSS sinks. Input: URL to JS file.",
       upload_test: "Test file upload endpoints for XXE, YAML deserialization, polyglot. Format: url|mode (xxe/polyglot/all).",
       rate_limit_test: "Test rate limiting, timing attacks, race conditions. Format: url|mode|count. Modes: burst/timing/race/all.",
+      env: "Show detected environment: OS, tools, packages, network, resources.",
       browser_auto: "Launch headless Playwright browser, load URL, return rendered HTML. Supports --screenshot, --html, --text flags. Input: URL [flags].",
       plugin_load: "Load external plugin tools from plugins directory. Input: optional path.",
       plugin_create: "Create a new plugin skeleton. Format: name|description.",
@@ -1083,6 +1085,7 @@ const ENV = (() => {
   };
 })();
 __r.ENV = ENV;
+populateEnv(ENV);
 
 // ── ANSI adapters (based on color capability) ─────────────
 const ansi = (() => {
