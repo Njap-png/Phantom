@@ -592,6 +592,7 @@ class Agent {
       js_analyze: "Deep JS bundle analysis — find API keys, secrets, API endpoints, XSS sinks. Input: URL to JS file.",
       upload_test: "Test file upload endpoints for XXE, YAML deserialization, polyglot. Format: url|mode (xxe/polyglot/all).",
       rate_limit_test: "Test rate limiting, timing attacks, race conditions. Format: url|mode|count. Modes: burst/timing/race/all.",
+      browser_auto: "Launch headless Playwright browser, load URL, return rendered HTML. Supports --screenshot, --html, --text flags. Input: URL [flags].",
       plugin_load: "Load external plugin tools from plugins directory. Input: optional path.",
       plugin_create: "Create a new plugin skeleton. Format: name|description.",
       report_export: "Export report to styled HTML (Ctrl+P → PDF). Input: report name.",
