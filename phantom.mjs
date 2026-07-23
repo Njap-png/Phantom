@@ -561,6 +561,7 @@ class Agent {
       knowledge_add: "Add an entry to Phantom's persistent knowledge base. Format: tag1,tag2|content.",
       knowledge_search: "Search Phantom's knowledge base by tag or keyword. Input: search query.",
       brain: "Search Phantom's entire learned knowledge: books, knowledge findings, and auto-extracted techniques. For use when you need to recall what you learned across sessions. Format: search query or tag.",
+      hackbook: "Zero-day vulnerability taxonomy and security reference. Browse topics: @hackbook or search: @hackbook|buffer overflow, @hackbook|UAF, @hackbook|CVE-2025, etc.",
       playbook_create: "Create a new multi-step automation playbook. Uses LLM if OPENAI_API_KEY set. Input: name|description.",
       playbook_list: "List all available playbooks (built-in + custom).",
       playbook_run: "Execute a playbook against a target. Input: name|target=example.com.",
@@ -759,6 +760,7 @@ RULES:
 9. Use @learn|<topic>|<fact> to save useful knowledge from every interaction.
 10. Use @web_search|<query> to find current information online.
 11. Use @web_fetch|<url> to read full pages from search results.
+12. Do NOT use markdown bold (**), italics (_), or any text formatting. Plain text only.
 
 WORKFLOW:
 - Plan: Briefly state your plan.
@@ -1892,7 +1894,9 @@ class ConversationalUI {
 
   renderResponse(response) {
     if (!response) return;
-    const lines = response.split("\n");
+    // Strip markdown bold before processing
+    const clean = response.replace(/\*\*/g, "").replace(/___/g, "").replace(/__/g, "");
+    const lines = clean.split("\n");
     let inCode = false;
     let codeLang = "";
 
@@ -2328,7 +2332,7 @@ class ConversationalUI {
     }
 
     // Animated spinner — tracks agent state via tick events
-    const spinner = createSpinner();
+    const spinner = createSpinner(this.startTime);
     this._spinner = spinner;
     spinner.start("thinking... ");
 
@@ -2500,6 +2504,16 @@ class ConversationalUI {
       const footerLen = footerTxt.replace(/\x1b\[[0-9;]*m/g, "").length;
       const footerDashes = Math.max(0, cols - footerLen - 4);
       console.log(`\n${c("green")}└${R}${c("dim")}${"─".repeat(Math.floor(footerDashes / 2))}${R} ${footerTxt} ${c("dim")}${"─".repeat(Math.ceil(footerDashes / 2))}${R}${c("green")}┘${R}`);
+
+      // ── Execution summary ──
+      const calls = this._toolCallCounter;
+      const facts = this._growFacts;
+      if (calls > 0) {
+        const parts = [`${c("dim")}  ${c("green")}✓${R} ${calls} tool${calls === 1 ? "" : "s"}`];
+        if (facts > 0) parts.push(`${c("cyan")}${facts} fact${facts === 1 ? "" : "s"} extracted${R}`);
+        parts.push(`${c("dim")}${elapsedStr} total${R}`);
+        console.log(parts.join(` ${c("dim")}·${R} `));
+      }
       // Auto-save conversation
       this.conversation.push(`user: ${input.substring(0, 200)}`);
       this.conversation.push(`phantom: ${response.substring(0, 500)}`);
