@@ -161,6 +161,10 @@ function learnFromTool(tool, result, args) {
     if (facts.length > 0) {
       const existing = loadKnowledge(tag);
       const newEntry = `[${new Date().toISOString().slice(0, 19)}] ${facts.join("; ")}`;
+      // Dedup: do not append if identical entry already exists anywhere in the file
+      if (existing && existing.split("\n").some(l => l.trim() === newEntry)) {
+        return facts.length; // already saved, skip
+      }
       const combined = existing ? `${existing}\n${newEntry}` : newEntry;
       // Keep last 50 entries
       const lines = combined.split("\n").slice(-50);
@@ -800,32 +804,45 @@ User: ${userInput}`;
 
         // Execute all tool calls, collecting results
         const results = [];
+        const toolFailures = {};
         for (const tm of toolMatches) {
           const toolName = tm[1];
           const args = tm[2].trim();
           const tool = this.tools[toolName];
+
+          // Break infinite same-tool-error loops
+          const errKey = `${toolName}|${args}`;
+          if ((toolFailures[errKey] || 0) >= 2) {
+            results.push(`[${toolName}]: SKIPPED — repeated failure, use different approach`);
+            continue;
+          }
+
           if (tool) {
             this.bus.emit("agent:tool:start", { tool: toolName, args });
             try {
               if (toolName === "pipe" && args.includes("|")) {
                 const { runPipe: rp } = await import("./lib/runtime.mjs");
                 const result = await rp(this.tools, args);
-                const truncated = result.substring(0, 3000);
-                this.bus.emit("agent:tool:result", { tool: "pipe", args, result: truncated, truncated: result.length > 3000 });
-                results.push(`[Pipe]:\n${truncated}`);
+                const truncated = result.length > 3000 ? result.substring(0, 3000) : result;
+                const suffix = result.length > 3000 ? "\n[TRUNCATED — result > 3000 chars; use tool with narrower scope]" : "";
+                this.bus.emit("agent:tool:result", { tool: "pipe", args, result: truncated, truncated: !!suffix });
+                results.push(`[Pipe]:\n${truncated}${suffix}`);
               } else {
                 const result = await tool.execute(args);
-                const truncated = result.substring(0, 3000);
-                this.bus.emit("agent:tool:result", { tool: toolName, args, result: truncated, truncated: result.length > 3000 });
-                results.push(`[${toolName}]:\n${truncated}`);
+                const truncated = result.length > 3000 ? result.substring(0, 3000) : result;
+                const suffix = result.length > 3000 ? "\n[TRUNCATED — result > 3000 chars; use tool with narrower scope]" : "";
+                this.bus.emit("agent:tool:result", { tool: toolName, args, result: truncated, truncated: !!suffix });
+                results.push(`[${toolName}]:\n${truncated}${suffix}`);
               }
             } catch (err) {
               this.bus.emit("agent:tool:result", { tool: toolName, args, result: err.message, error: true });
               results.push(`[${toolName}]: ERROR — ${err.message}`);
+              toolFailures[errKey] = (toolFailures[errKey] || 0) + 1;
             }
           } else {
             this.bus.emit("agent:tool:result", { tool: toolName, args, result: "Unknown tool", error: true });
             results.push(`[${toolName}]: Unknown tool. Available: ${Object.keys(this.tools).join(", ")}`);
+            toolFailures[errKey] = (toolFailures[errKey] || 0) + 1;
           }
         }
         messages.push({ role: "assistant", content: text });
