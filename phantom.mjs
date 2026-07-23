@@ -597,6 +597,7 @@ class Agent {
       env: "Show detected environment: OS, tools, packages, network, resources.",
       batch: "Run multiple tool calls sequentially (one per line, lines starting with # ignored). Bypasses agent loop for fast multi-step tasks.",
       install_missing: "Auto-install missing security tools via package manager. Options: tool name or 'all'.",
+      rollback: "Save/restore git state for safe self-evolution. Commands: save | restore | status.",
       self_integrate: "Auto-integrate a generated .mjs module into hackerTools + registry. Input: path to .mjs file.",
       graph: "Query knowledge graph: tool ↔ books/CVEs/tags. Empty input shows all links.",
       cron: "Schedule/manage periodic tasks: cve_now (run now), cve_daily (daily CVE scan).",

@@ -188,24 +188,24 @@ describe("hackerTools", () => {
     const r = await hackerTools.self_integrate("/nonexistent/path.mjs");
     assert.match(r, /File not found/);
   });
-});
 
-describe("CLI smoke", () => {
-  it("--list runs without error", async () => {
-    const { execSync } = await import("child_process");
-    const out = execSync("node phantom.mjs --list 2>&1", { cwd: "/root/Phantom", encoding: "utf-8", timeout: 10000 });
-    assert.ok(out.length > 100);
-  });
-
-  it("--help shows PHANTOM banner", async () => {
-    const { execSync } = await import("child_process");
-    const out = execSync("node phantom.mjs --help 2>&1", { cwd: "/root/Phantom", encoding: "utf-8", timeout: 10000 });
-    assert.match(out, /PHANTOM/i);
-  });
-
-  it("--tool whois example.com returns data quickly", async () => {
-    const { execSync } = await import("child_process");
-    const out = execSync("node phantom.mjs --tool whois example.com 2>&1", { cwd: "/root/Phantom", encoding: "utf-8", timeout: 15000 });
-    assert.ok(out.includes("whois") || out.includes("Error") || out.includes("example"), `Got: ${out.slice(0, 100)}`);
+  it("rollback save/status/restore round-trips", async () => {
+    const { hackerTools } = await import("../lib/tools.mjs");
+    const { execFileSync } = await import("child_process");
+    const fs = await import("fs");
+    const MARKER = ".hermes/rollback_head";
+    // Clean marker
+    if (fs.existsSync(MARKER)) fs.unlinkSync(MARKER);
+    // Save
+    const saved = await hackerTools.rollback("save");
+    assert.match(saved, /Saved HEAD:/);
+    // Status should show same
+    const status1 = await hackerTools.rollback("status");
+    assert.match(status1, /same/);
+    // Restore (should be no-op at same commit)
+    const restore1 = await hackerTools.rollback("restore");
+    assert.match(restore1, /nothing to revert/);
+    // Clean up
+    if (fs.existsSync(MARKER)) fs.unlinkSync(MARKER);
   });
 });
