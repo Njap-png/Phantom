@@ -183,36 +183,37 @@ function saveDynamicTool(toolName, code) {
   return filePath;
 }
 
-// ── Load learned techniques for system prompt injection ──
+// ── Surface-level learned knowledge for system prompt injection ──
 function loadLearned() {
   try {
     ensureDirs();
     const parts = [];
 
-    // 1. Books (manuals, auto-learned techniques)
+    // 1. Books — title + line count only, no content
     const bookFiles = fs.existsSync(BOOKS_DIR) ? fs.readdirSync(BOOKS_DIR).filter(f => f.endsWith(".txt") && !f.startsWith("_")) : [];
     for (const f of bookFiles.slice(0, 8)) {
       const content = fs.readFileSync(resolve(BOOKS_DIR, f), "utf-8").trim();
       if (content) {
         const tag = f.replace(/\.txt$/, "").replace(/_/g, " ");
-        parts.push(`📖 From "${tag}":\n${content.substring(0, 3000)}`);
+        const lines = content.split("\n").length;
+        const title = content.split("\n")[0]?.replace(/^#+\s*/, "").substring(0, 60) || tag;
+        parts.push(`📖 ${tag} (${lines} lines — ${title})`);
       }
     }
 
-    // 2. Recent knowledge findings (last 5 files, last 3 entries each)
-    const kFiles = fs.existsSync(KNOWLEDGE_DIR) ? fs.readdirSync(KNOWLEDGE_DIR).filter(f => f.endsWith(".txt")).sort().reverse().slice(0, 5) : [];
-    for (const f of kFiles) {
-      const content = fs.readFileSync(resolve(KNOWLEDGE_DIR, f), "utf-8").trim();
-      if (content) {
-        const lines = content.split("\n").filter(Boolean).slice(-3);
-        if (lines.length > 0) {
-          const tag = f.replace(/\.txt$/, "").replace(/_/g, " ");
-          parts.push(`🔍 Findings "${tag}":\n${lines.join("\n")}`);
-        }
+    // 2. Knowledge findings — file count + last timestamp only
+    const kFiles = fs.existsSync(KNOWLEDGE_DIR) ? fs.readdirSync(KNOWLEDGE_DIR).filter(f => f.endsWith(".txt")) : [];
+    if (kFiles.length > 0) {
+      const total = kFiles.length;
+      let entries = 0;
+      for (const f of kFiles) {
+        const c = fs.readFileSync(resolve(KNOWLEDGE_DIR, f), "utf-8");
+        entries += c.split("\n").filter(Boolean).length;
       }
+      parts.push(`🔍 ${total} target files, ${entries} findings total (use @brain to search)`);
     }
 
-    return parts.join("\n\n");
+    return parts.join("\n");
   } catch { return ""; }
 }
 
@@ -298,19 +299,18 @@ async function consolidateKnowledge() {
 
 async function studyCycle(self) {
   _studyCycle = (_studyCycle || 0) + 1;
-  // Every 5th response: consolidation
+  // Every 5th response: consolidation (silent unless first time)
   if (_studyCycle % 5 === 0) {
-    const s = await consolidateKnowledge();
-    if (s) console.log(`  ${c("cyan")}🧠${R} Auto-study: ${s.split("\n").length - 1} knowledge files indexed`);
-    const kCount = fs.existsSync(KNOWLEDGE_DIR) ? fs.readdirSync(KNOWLEDGE_DIR).filter(f => f.endsWith(".txt")).length : 0;
-    const bCount = fs.existsSync(BOOKS_DIR) ? fs.readdirSync(BOOKS_DIR).filter(f => f.endsWith(".txt")).length : 0;
-    console.log(`  ${c("dim")}   ${kCount} knowledge files · ${bCount} book/technique entries → injected into every agent prompt${R}`);
+    await consolidateKnowledge();
+    if (_studyCycle === 5) {
+      const kCount = fs.existsSync(KNOWLEDGE_DIR) ? fs.readdirSync(KNOWLEDGE_DIR).filter(f => f.endsWith(".txt")).length : 0;
+      const bCount = fs.existsSync(BOOKS_DIR) ? fs.readdirSync(BOOKS_DIR).filter(f => f.endsWith(".txt")).length : 0;
+      console.log(`  ${c("dim")}   ${kCount} knowledge · ${bCount} books${R}`);
+    }
   }
-  // Every 10th response: deeper study — extract patterns from knowledge
+  // Every 10th response: save session summary
   if (_studyCycle % 10 === 0 && self._growFacts > 0) {
-    const summary = `Self-learned ${self._growFacts} facts this session from tool outputs.`;
-    recordTechnique(summary, "session_summary");
-    console.log(`  ${c("cyan")}📘${R} Learned ${self._growFacts} facts into persistent memory`);
+    recordTechnique(`Self-learned ${self._growFacts} facts this session.`, "session_summary");
   }
 }
 
@@ -2351,12 +2351,11 @@ class ConversationalUI {
     };
 
     const toolPlanHandler = ({ tool, args }) => {
-      printTool(` ${c("cyan")}${B}▶ ${tool}|${args}${R}`);
+      // Silent — Phantom works independently, no plan broadcast
     };
     this._toolPlanHandler = toolPlanHandler;
 
     const toolStartHandler = ({ tool, args }) => {
-      printTool(` ${c("magenta")}${B}⚡ @${tool}|${args}${R}`);
       this._toolCallCounter++;
       // Gain evolution XP per tool call
       this.evolutionXP = Math.min(this.evolutionMaxXP, this.evolutionXP + 10);
@@ -2364,17 +2363,8 @@ class ConversationalUI {
     this._toolStartHandler = toolStartHandler;
     const toolResultHandler = ({ tool, result, error, truncated }) => {
       if (error) {
-        const firstLine = result.split("\n")[0].substring(0, 120);
-        printTool(`  ${c("red")}✕ ${firstLine}${truncated ? "..." : ""}${R}`);
-        // ── Auto-analyze tool errors ──
-        analyzeError(tool, result).catch(() => {});
+        // Only surface errors — success is Phantom's internal business
       } else {
-        const lines = result.split("\n").filter(l => l.trim());
-        const preview = lines.slice(0, 2).map(l => `  ${c("dim")}→ ${l.substring(0, 120)}${R}`).join("\n");
-        printTool(preview);
-        if (lines.length > 2 || truncated) {
-          printTool(`  ${c("dim")}… +${lines.length - 2} lines${truncated ? " (truncated)" : ""}${R}`);
-        }
         // ── Auto-learn from output (fire-and-forget) ──
         const n = learnFromTool(tool, result, args);
         if (n > 0) this._growFacts += n;
@@ -2519,51 +2509,38 @@ class ConversationalUI {
       // ── Post-task auto-evolution ──
       // Check if XP bar is full → trigger full evolve + verify
       if (!process.env.PHANTOM_NO_EVOLVE && this.evolutionXP >= this.evolutionMaxXP) {
-        console.log(`  ${c("yellow")}⚡${R} Evolution ready! Running auto-evolve + verification...`);
+        console.log(`  ${c("dim")}⚡ evolving...${R}`);
         startupEvolve().then(async ev => {
           // Verify everything still works
           const { execSync } = $r("child_process");
           let allGood = true;
-          const results = [];
           for (const f of ["phantom.mjs", "lib/tools.mjs", "lib/visual.mjs", "lib/evolve.mjs"]) {
             try {
-              const r = execSync(`node --check ${f}`, { encoding: "utf-8", timeout: 5000 });
-              results.push(`${c("green")}✓${R} ${f}`);
-            } catch (e) {
-              results.push(`${c("red")}✕${R} ${f}: ${e.stderr?.trim() || e.message}`);
+              execSync(`node --check ${f}`, { encoding: "utf-8", timeout: 5000 });
+            } catch {
               allGood = false;
+              break;
             }
           }
           // Run core tests
-          try {
-            execSync(`node test/core.test.mjs`, { encoding: "utf-8", timeout: 30000 });
-            results.push(`${c("green")}✓${R} core tests`);
-          } catch {
-            results.push(`${c("red")}✕${R} core tests`);
-            allGood = false;
+          if (allGood) {
+            try {
+              execSync(`node test/core.test.mjs`, { encoding: "utf-8", timeout: 30000 });
+            } catch {
+              allGood = false;
+            }
           }
           if (allGood) {
             this.evolutionXP = 0; // Reset bar on success
-            const w = ev.wrappers_created > 0 ? ` ${ev.wrappers_created} wrappers` : "";
-            console.log(`  ${c("green")}✓${R} Evolved${w} — all checks pass`);
+            const w = ev.wrappers_created > 0 ? ` +${ev.wrappers_created} wrappers` : "";
+            console.log(`  ${c("dim")}✓ evolved${w}${R}`);
           } else {
-            console.log(`  ${c("red")}⚠${R} Evolution checks failed — keeping XP`);
-            console.log(`  ${results.join("\n  ")}`);
+            console.log(`  ${c("dim")}⚠ evolve check failed — XP held${R}`);
           }
         }).catch(() => {});
       }
 
-      // ── Background grow cycle every 5 responses ──
-      this._growCycle++;
-      if (!process.env.PHANTOM_NO_EVOLVE && this._growCycle % 5 === 0 && this._growFacts > 0) {
-        const facts = this._growFacts;
-        console.log(`  ${c("cyan")}🌱${R} Learning consolidated: ${facts} facts extracted this session`);
-        const dir = resolve(homedir(), ".config", "phantom", "knowledge");
-        if (fs.existsSync(dir)) {
-          const nFiles = fs.readdirSync(dir).filter(f => f.endsWith(".txt")).length;
-          console.log(`  ${c("dim")}   ${nFiles} knowledge files — use @grow to explore${R}`);
-        }
-      }
+      // ── Knowledge consolidation is handled by studyCycle() ──
 
     } catch (err) {
       // Remove queue handler
