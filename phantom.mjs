@@ -128,8 +128,9 @@ function learnFromTool(tool, result, args) {
   try {
     // Derive a target name from args
     let target = (args || "").replace(/^https?:\/\//, "").split(/[/\s|]/)[0].trim();
-    if (!target || target.length > 64 || target.includes(".")) {
-      // Use tool name as bucket if no clean domain target
+    // BUGFIX: was "target.includes('.')" which is always true for domains
+    if (!target || target.length > 64 || !target.includes(".")) {
+      // No dot = probably not a domain → use tool name as bucket
       target = tool;
     }
     const sanitized = target.replace(/[^a-zA-Z0-9._-]/g, "_").substring(0, 48);
@@ -138,24 +139,24 @@ function learnFromTool(tool, result, args) {
     const facts = [];
     const text = typeof result === "string" ? result : String(result);
 
-    // Subdomains
+    // Subdomains (exclude IPs, CVEs)
     const subs = text.match(/([a-zA-Z0-9][-a-zA-Z0-9]*\.)+(com|net|org|io|gov|edu|dev|app|xyz|co|uk|ru|cn|de|jp|fr|au|us|in|br|nl|eu)\b/g);
     if (subs) {
-      const uniq = [...new Set(subs.filter(s => !s.startsWith("CVE") && !s.startsWith("cve")))];
-      if (uniq.length > 0) facts.push(`subs: ${uniq.slice(0, 20).join(" ")}`);
+      const uniq = [...new Set(subs.filter(s => !s.startsWith("CVE") && !s.startsWith("cve") && !/^\d/.test(s)))];
+      if (uniq.length > 0) facts.push(`subs: ${uniq.slice(0, 30).join(" ")}`);
     }
 
     // IPs
     const ips = text.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g);
-    if (ips) facts.push(`ips: ${[...new Set(ips)].slice(0, 20).join(" ")}`);
+    if (ips) facts.push(`ips: ${[...new Set(ips)].slice(0, 30).join(" ")}`);
 
     // CVEs
     const cves = text.match(/CVE-\d{4}-\d{4,7}/gi);
-    if (cves) facts.push(`cves: ${[...new Set(cves)].slice(0, 10).join(" ")}`);
+    if (cves) facts.push(`cves: ${[...new Set(cves)].slice(0, 15).join(" ")}`);
 
-    // Open ports (e.g. "80/tcp open" or "22 open")
+    // Open ports (e.g. "80/tcp open" or "port 443 open")
     const ports = text.match(/\b(\d{1,5})\/(?:tcp|udp)\s+open\b/g);
-    if (ports) facts.push(`ports: ${ports.map(p => p.split("/")[0]).slice(0, 20).join(" ")}`);
+    if (ports) facts.push(`ports: ${ports.map(p => p.split("/")[0]).slice(0, 30).join(" ")}`);
 
     if (facts.length > 0) {
       const existing = loadKnowledge(tag);
@@ -186,16 +187,31 @@ function saveDynamicTool(toolName, code) {
 function loadLearned() {
   try {
     ensureDirs();
-    const files = fs.readdirSync(BOOKS_DIR).filter(f => f.endsWith(".txt"));
-    if (files.length === 0) return "";
     const parts = [];
-    for (const f of files.slice(0, 10)) { // max 10 books
+
+    // 1. Books (manuals, auto-learned techniques)
+    const bookFiles = fs.existsSync(BOOKS_DIR) ? fs.readdirSync(BOOKS_DIR).filter(f => f.endsWith(".txt") && !f.startsWith("_")) : [];
+    for (const f of bookFiles.slice(0, 8)) {
       const content = fs.readFileSync(resolve(BOOKS_DIR, f), "utf-8").trim();
       if (content) {
         const tag = f.replace(/\.txt$/, "").replace(/_/g, " ");
-        parts.push(`📖 From "${tag}":\n${content}`);
+        parts.push(`📖 From "${tag}":\n${content.substring(0, 3000)}`);
       }
     }
+
+    // 2. Recent knowledge findings (last 5 files, last 3 entries each)
+    const kFiles = fs.existsSync(KNOWLEDGE_DIR) ? fs.readdirSync(KNOWLEDGE_DIR).filter(f => f.endsWith(".txt")).sort().reverse().slice(0, 5) : [];
+    for (const f of kFiles) {
+      const content = fs.readFileSync(resolve(KNOWLEDGE_DIR, f), "utf-8").trim();
+      if (content) {
+        const lines = content.split("\n").filter(Boolean).slice(-3);
+        if (lines.length > 0) {
+          const tag = f.replace(/\.txt$/, "").replace(/_/g, " ");
+          parts.push(`🔍 Findings "${tag}":\n${lines.join("\n")}`);
+        }
+      }
+    }
+
     return parts.join("\n\n");
   } catch { return ""; }
 }
@@ -207,43 +223,72 @@ function recordTechnique(content, source) {
   if (!content || content.length < 80) return;
   try {
     ensureDirs();
-    // Extract meaningful sentences (techniques, commands, workflows)
+    // Smart sentence split: preserve IPs, CVEs, version numbers
+    // Split on ". " (period+space) or ".\n" or "!\n" — not on bare "."
     const sentences = content
-      .replace(/\n+/g, ". ")
-      .split(/[.!\n]/)
-      .map(s => s.trim())
-      .filter(s => s.length > 60 && !s.includes("@") && !s.includes("```"))
-      .slice(0, 10);
+      .replace(/\n{2,}/g, ". \n")           // paragraph breaks = sentence break
+      .split(/(?<=[.!])\s+(?=[A-Z0-9#])/)   // split on . / ! followed by capital/num
+      .map(s => s.trim().replace(/^["']|["']$/g, ""))
+      .filter(s => {
+        if (s.length < 60 || s.length > 600) return false;
+        if (s.includes("@") || s.includes("```")) return false;
+        // Must have actual content — not just a fragment
+        return /[A-Za-z]{4,}/.test(s);
+      })
+      .slice(0, 8);
     if (sentences.length === 0) return;
 
     const tag = `auto_${source.replace(/[^a-z0-9]/gi, "_").substring(0, 20)}`;
     const filePath = resolve(BOOKS_DIR, `${tag}.txt`);
     const timestamp = new Date().toISOString().slice(0, 19);
-    const entry = `## Auto-learned: ${source} (${timestamp})\n${sentences.map(s => `- ${s}.`).join("\n")}\n\n`;
+    const entry = `## Auto-learned: ${source} (${timestamp})\n${sentences.map(s => `- ${s}`).join("\n")}\n\n`;
 
     const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf-8") : "";
+    // Deduplicate: skip if last 3 entries are similar (80%+ overlap)
+    if (existing) {
+      const lastLines = existing.split("\n").filter(l => l.startsWith("- ")).slice(-3);
+      const similar = lastLines.filter(ll => {
+        const overlap = sentences.filter(s => {
+          const words = new Set(s.toLowerCase().split(/\s+/));
+          const lw = new Set(ll.toLowerCase().split(/\s+/));
+          const common = [...words].filter(w => lw.has(w)).length;
+          return common > 3 && common / Math.max(words.size, 1) > 0.6;
+        });
+        return overlap.length > 0;
+      });
+      if (similar.length >= 2) return; // too similar to last entries, skip
+    }
+
     const combined = existing ? `${existing}${entry}` : entry;
-    fs.writeFileSync(filePath, combined, "utf-8");
+    // Keep last 20 entries max per file
+    const parts = combined.split("## Auto-learned:");
+    const kept = parts.slice(-20);
+    fs.writeFileSync(filePath, kept.join("## Auto-learned:").trimStart(), "utf-8");
   } catch { /* best-effort */ }
 }
 
 async function consolidateKnowledge() {
   try {
     ensureDirs();
-    // Read all knowledge files and all book files, synthesize into a compact summary
+    // Read all knowledge files and build a meaningful summary
     const kFiles = fs.existsSync(KNOWLEDGE_DIR) ? fs.readdirSync(KNOWLEDGE_DIR).filter(f => f.endsWith(".txt")) : [];
-    const learned = loadLearned(); // already formatted
-    if (kFiles.length === 0 && !learned) return;
+    if (kFiles.length === 0) return;
 
-    // Build a cross-reference: which tools found what on which targets
-    const summary = [`📚 Knowledge Synthesis (${new Date().toISOString().slice(0, 10)})`];
-    for (const f of kFiles.slice(0, 15)) {
+    // Build a data-rich synthesis: actual findings, not just counts
+    const summary = [`## Knowledge Synthesis (${new Date().toISOString().slice(0, 10)})`];
+    let totalEntries = 0;
+    for (const f of kFiles.slice(0, 10)) {
       const content = fs.readFileSync(resolve(KNOWLEDGE_DIR, f), "utf-8");
       const entries = content.split("\n").filter(Boolean);
-      summary.push(`  ${f.replace(".txt", "")}: ${entries.length} findings`);
+      totalEntries += entries.length;
+      const tag = f.replace(".txt", "").replace(/_/g, " ");
+      // Show the 2 most recent entries with actual data
+      const recent = entries.slice(-2);
+      summary.push(`\n### ${tag} (${entries.length} total)`);
+      for (const e of recent) summary.push(`  ${e}`);
     }
-    if (kFiles.length > 15) summary.push(`  … ${kFiles.length - 15} more knowledge files`);
-    summary.push("");
+    summary.push(`\n📊 ${totalEntries} total findings across ${kFiles.length} targets`);
+    if (kFiles.length > 10) summary.push(`(${kFiles.length - 10} more targets not shown)`);
 
     const synthesisFile = resolve(BOOKS_DIR, "_synthesis.txt");
     fs.writeFileSync(synthesisFile, summary.join("\n"), "utf-8");
@@ -515,6 +560,7 @@ class Agent {
       self_add_tool: "Auto-generate AND auto-integrate a new tool via LLM. Modifies both TS and MJS source, rebuilds, rolls back on failure. Input: tool description.",
       knowledge_add: "Add an entry to Phantom's persistent knowledge base. Format: tag1,tag2|content.",
       knowledge_search: "Search Phantom's knowledge base by tag or keyword. Input: search query.",
+      brain: "Search Phantom's entire learned knowledge: books, knowledge findings, and auto-extracted techniques. For use when you need to recall what you learned across sessions. Format: search query or tag.",
       playbook_create: "Create a new multi-step automation playbook. Uses LLM if OPENAI_API_KEY set. Input: name|description.",
       playbook_list: "List all available playbooks (built-in + custom).",
       playbook_run: "Execute a playbook against a target. Input: name|target=example.com.",
