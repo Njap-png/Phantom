@@ -2380,7 +2380,7 @@ class ConversationalUI {
     this._typing = false;
     spinner.start("thinking... ");
     const tickHandler = () => {
-      if (!this.agent || this._typing) return;
+      if (!this.agent) return;
       spinner.update(this.agent.status === "executing" ? "⚡ running... " : this.agent.status === "thinking" ? "🧠 analyzing... " : this.agent.status === "speaking" ? "💬 formulating... " : "⏳ working... ");
     };
     this._tickHandler = tickHandler;
@@ -2388,10 +2388,16 @@ class ConversationalUI {
     const toolPlanHandler = () => {}; // silent
     this._toolPlanHandler = toolPlanHandler;
     this.bus.on("agent:tool:plan", toolPlanHandler);
-    // Show agent's reasoning comments without stopping spinner
+    // Show agent's reasoning comments — always visible even while typing
     const thinkHandler = (comment) => {
-      if (this._typing) return;
-      if (comment) console.log(`${c("cyan")}◈${R} ${comment}`);
+      if (comment) {
+        // If user was typing, clear input line, print thought, redraw input
+        if (this._typing && this._queueBuf != null) {
+          process.stdout.write(`\r\x1b[K${c("cyan")}◈${R} ${comment}\n${c("yellow")}⚡${R} ${this._queueBuf || ""}`);
+        } else {
+          console.log(`${c("cyan")}◈${R} ${comment}`);
+        }
+      }
     };
     this._thinkHandler = thinkHandler;
     this.bus.on("agent:think", thinkHandler);
@@ -2399,7 +2405,6 @@ class ConversationalUI {
     this._toolStartHandler = toolStartHandler;
     this.bus.on("agent:tool:start", toolStartHandler);
     const toolResultHandler = ({ tool, result, args }) => {
-      if (this._typing) return;
       if (!result) { spinner.update("⚡ running... "); return; }
       const n = learnFromTool(tool, result, args);
       if (n > 0) this._growFacts += n;
@@ -2408,37 +2413,49 @@ class ConversationalUI {
     this._toolResultHandler = toolResultHandler;
     this.bus.on("agent:tool:result", toolResultHandler);
 
-    // ── Background input queue: type while agent works ──
-    // Spinner redraws on the first line. User types on the line below.
-    // On Enter the buffer gets queued and spinner resumes.
+    // ── Interruptible input: type while agent thinks ──
+    // Spinner stays visible. Typing appears on a new line below it.
+    // Enter interrupts the current agent and submits immediately.
     const queueHandler = (buf) => {
       const s = buf.toString();
       if (s === "\r" || s === "\n") {
         const q = this._queueBuf?.trim();
         this._queueBuf = "";
         if (q) {
-          this._typing = false;
-          this.promptQueue.push(q);
-          // Clear the input line, print queued confirmation
+          // Capture the input, clear line, interrupt agent, submit
           process.stdout.write(`\r\x1b[K`);
-          console.log(`${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${q}`);
-          // Restart spinner below our output
-          spinner.start("thinking... ");
-          this.log(`${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${q}`);
-        } else {
-          this._typing = false;
-          spinner.start("thinking... ");
+          console.log(`${c("yellow")}📤${R} Interrupt — submitting: ${q}`);
+          const qCopy = q;
+          setImmediate(() => {
+            // Teardown agent without calling cancel's setTimeout(prompt)
+            this._cancelled = true;
+            this._busy = false;
+            if (this._spinner) { try { this._spinner.stop(); } catch {} delete this._spinner; }
+            if (this._queueHandler) {
+              try { process.stdin.removeListener("data", this._queueHandler); } catch {}
+              this._queueHandler = null;
+            }
+            raw(false);
+            this.bus.off("tick", this._tickHandler);
+            this.bus.off("agent:tool:plan", this._toolPlanHandler);
+            this.bus.off("agent:tool:start", this._toolStartHandler);
+            this.bus.off("agent:tool:result", this._toolResultHandler);
+            this.bus.off("agent:think", this._thinkHandler);
+            this._queueBuf = "";
+            // Submit the interrupt input
+            this._busy = true;
+            this.handleInput(qCopy);
+          });
         }
         return;
       }
       // Ctrl+C during busy → cancel
-      if (s === "\x03") { this._typing = false; this.cancel(); return; }
-      // First character — clear spinner line, start typing
+      if (s === "\x03") { this.cancel(); return; }
+      // First character — move to new line below spinner
       if (!this._typing) {
         this._typing = true;
-        spinner.stop();
         this._queueBuf = "";
-        process.stdout.write(`\r\x1b[K${c("yellow")}⚡${R} `);
+        process.stdout.write(`\n${c("yellow")}⚡${R} `);
       }
       // Backspace
       if (s === "\x7f" || s === "\b") {
