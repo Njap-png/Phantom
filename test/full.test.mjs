@@ -138,7 +138,7 @@ describe("batch tool", () => {
   });
 
   it("returns error for missing file", async () => {
-    const r = await tools.batch("shell|echo hello");
+    const r = await tools.batch("shell|cat /tmp/nonexistent_phantom_test_xyz");
     assert.ok(r.includes("Error") || r.includes("error") || r.includes("ENOENT"));
   });
 });

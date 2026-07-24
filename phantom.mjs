@@ -1606,8 +1606,19 @@ class MinimalUI {
     this.am.spawnDefaults();
     if (!this.am.llm?.hasLLM) console.log(`${D}No LLM. Use @llm_config to set up a provider.${R}`);
     if (!ENV.interactive) {
-      // Non-interactive: just output and wait a bit then exit
-      setTimeout(() => process.exit(0), 2000);
+      // Non-interactive: process piped stdin commands then exit
+      const rl = readline.createInterface({
+        input: process.stdin,
+        terminal: false,
+      });
+      let hasInput = false;
+      rl.on('line', (line) => {
+        hasInput = true;
+        if (line.trim()) this.handleCommand(line.trim());
+      });
+      rl.on('close', () => {
+        if (!hasInput) process.exit(0);
+      });
     } else {
       this.prompt();
     }
@@ -1645,7 +1656,7 @@ class MinimalUI {
       case "debate": case "d": this.am.debate(args.join(" ") || "what should we build?"); break;
       case "evolve": case "e": this.am.evolveAll(); break;
       case "clear": case "c": this.log = []; break;
-      case "quit": case "q": this.running = false; log.ok("Bye."); process.exit(0);
+      case "quit": case "exit": case "q": this.running = false; log.ok("Bye."); process.exit(0);
       default: console.log(`? ${cmd}`);
     }
     if (this.running) this.prompt();
