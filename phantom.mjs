@@ -754,6 +754,12 @@ class Agent {
         iterCount += toolMatches.length;
         this.status = "executing";
         this.bus.emit("tick");
+        // Emit thinking comment — text before first @tool
+        const thinkEnd = text.search(/^@\w+\|/m);
+        if (thinkEnd > 0) {
+          const comment = text.slice(0, thinkEnd).replace(/\n+/g, " ").trim();
+          if (comment.length > 10) this.bus.emit("agent:think", comment.slice(0, 200));
+        }
         for (const tm of toolMatches) this.bus.emit("agent:tool:plan", { tool: tm[1], args: tm[2].trim() });
         const results = [];
         const toolFailures = {};
@@ -2359,6 +2365,13 @@ class ConversationalUI {
     const toolPlanHandler = () => {}; // silent
     this._toolPlanHandler = toolPlanHandler;
     this.bus.on("agent:tool:plan", toolPlanHandler);
+    // Show agent's reasoning comments without stopping spinner
+    const thinkHandler = (comment) => {
+      if (this._typing) return;
+      if (comment) console.log(`${c("cyan")}◈${R} ${comment}`);
+    };
+    this._thinkHandler = thinkHandler;
+    this.bus.on("agent:think", thinkHandler);
     const toolStartHandler = ({ tool, args }) => { this._toolCallCounter++; this.evolutionXP = Math.min(this.evolutionMaxXP, this.evolutionXP + 10); };
     this._toolStartHandler = toolStartHandler;
     this.bus.on("agent:tool:start", toolStartHandler);
@@ -2421,7 +2434,7 @@ class ConversationalUI {
     this._queueHandler = queueHandler;
     raw(true);
     process.stdin.on("data", queueHandler);
-    return { spinner, cleanup: { tickHandler, toolPlanHandler, toolStartHandler, toolResultHandler, queueHandler } };
+    return { spinner, cleanup: { tickHandler, toolPlanHandler, thinkHandler, toolStartHandler, toolResultHandler, queueHandler } };
   }
 
   teardownAgentHandlers(cleanup, spinner) {
@@ -2433,6 +2446,7 @@ class ConversationalUI {
     this.bus.off("agent:tool:plan", cleanup.toolPlanHandler);
     this.bus.off("agent:tool:start", cleanup.toolStartHandler);
     this.bus.off("agent:tool:result", cleanup.toolResultHandler);
+    this.bus.off("agent:think", cleanup.thinkHandler);
   }
 
   renderFooter() {
