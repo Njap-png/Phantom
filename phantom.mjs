@@ -2479,8 +2479,9 @@ class ConversationalUI {
       startupEvolve().then(async ev => {
         const { execSync } = $r("child_process");
         let ok = true;
-        for (const f of ["phantom.mjs", "lib/tools.mjs", "lib/visual.mjs", "lib/evolve.mjs"]) { try { execSync(`node --check ${f}`, { encoding: "utf-8", timeout: 5000 }); } catch { ok = false; break; } }
-        if (ok) { try { execSync(`node test/core.test.mjs`, { encoding: "utf-8", timeout: 30000 }); } catch { ok = false; } }
+        const phantomDir = resolve(homedir(), "Phantom");
+        for (const f of ["phantom.mjs", "lib/tools.mjs", "lib/visual.mjs", "lib/evolve.mjs"]) { try { execSync(`node --check "${resolve(phantomDir, f)}"`, { encoding: "utf-8", timeout: 5000 }); } catch { ok = false; break; } }
+        if (ok) { try { execSync(`node test/core.test.mjs`, { cwd: phantomDir, encoding: "utf-8", timeout: 30000 }); } catch { ok = false; } }
         if (ok) { this.evolutionXP = 0; console.log(`  ${c("dim")}✓ evolved${ev.wrappers_created > 0 ? ` +${ev.wrappers_created} wrappers` : ""}${R}`); }
         else console.log(`  ${c("dim")}⚠ evolve check failed — XP held${R}`);
       }).catch(() => {});
