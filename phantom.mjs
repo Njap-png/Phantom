@@ -2064,6 +2064,7 @@ class ConversationalUI {
     this.historyIdx = this.inputHistory.length;
     this.cursorPos = 0;
     this.inputLines = [];
+    this._ignoreInput = false;
 
     process.stdout.write(`${c("green")}❯${R} `);
 
@@ -2078,6 +2079,8 @@ class ConversationalUI {
 
   onKey(buf) {
     if (!this.running) return;
+    // Ignore input burst right after submit (paste split across data events)
+    if (this._ignoreInput) return;
     const str = buf.toString();
 
     // Up / Down arrows — suggestion navigation OR history
@@ -2213,6 +2216,9 @@ class ConversationalUI {
 
       raw(false);
       process.stdin.removeListener("data", this.inputHandler);
+      // Debounce: ignore residual data events from paste buffer
+      this._ignoreInput = true;
+      setTimeout(() => { this._ignoreInput = false; }, 50);
       process.stdout.write("\n");
 
       if (!fullInput) { this.prompt(); return; }
@@ -2224,6 +2230,12 @@ class ConversationalUI {
 
       // If agent is busy, queue the input instead of submitting
       if (this._busy) {
+        // Dedup: skip if same as last queued item
+        if (this.promptQueue.length > 0 && this.promptQueue[this.promptQueue.length - 1] === fullInput) {
+          this.sayLine(`${c("yellow")}📥${R} Duplicate skipped`, "yellow");
+          this.prompt();
+          return;
+        }
         this.promptQueue.push(fullInput);
         this.sayLine(`${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${fullInput}`, "yellow");
         this.prompt();
