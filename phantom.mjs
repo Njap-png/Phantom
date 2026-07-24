@@ -2347,9 +2347,11 @@ class ConversationalUI {
   setupAgentHandlers() {
     const spinner = createSpinner(this.startTime);
     this._spinner = spinner;
+    this._queueBuf = "";
+    this._typing = false;
     spinner.start("thinking... ");
     const tickHandler = () => {
-      if (!this.agent) return;
+      if (!this.agent || this._typing) return;
       spinner.update(this.agent.status === "executing" ? "⚡ running... " : this.agent.status === "thinking" ? "🧠 analyzing... " : this.agent.status === "speaking" ? "💬 formulating... " : "⏳ working... ");
     };
     this._tickHandler = tickHandler;
@@ -2361,6 +2363,7 @@ class ConversationalUI {
     this._toolStartHandler = toolStartHandler;
     this.bus.on("agent:tool:start", toolStartHandler);
     const toolResultHandler = ({ tool, result, args }) => {
+      if (this._typing) return;
       if (!result) { spinner.update("⚡ running... "); return; }
       const n = learnFromTool(tool, result, args);
       if (n > 0) this._growFacts += n;
@@ -2369,23 +2372,54 @@ class ConversationalUI {
     this._toolResultHandler = toolResultHandler;
     this.bus.on("agent:tool:result", toolResultHandler);
 
-    // Background input queue
+    // ── Background input queue: type while agent works ──
+    // Spinner redraws on the first line. User types on the line below.
+    // On Enter the buffer gets queued and spinner resumes.
     const queueHandler = (buf) => {
       const s = buf.toString();
       if (s === "\r" || s === "\n") {
         const q = this._queueBuf?.trim();
         this._queueBuf = "";
-        if (q) { this.promptQueue.push(q); process.stdout.write(`\r${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${q}\r\n`); this.log(`${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${q}`); }
-        process.stdout.write(`${c("yellow")}⚡${R}${this.promptQueue.length ? ` ${c("dim")}[${this.promptQueue.length} queued]${R}` : ""} `);
+        if (q) {
+          this._typing = false;
+          this.promptQueue.push(q);
+          // Clear the input line, print queued confirmation
+          process.stdout.write(`\r\x1b[K`);
+          console.log(`${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${q}`);
+          // Restart spinner below our output
+          spinner.start("thinking... ");
+          this.log(`${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${q}`);
+        } else {
+          this._typing = false;
+          spinner.start("thinking... ");
+        }
         return;
       }
-      if (s === "\x03") { this.cancel(); return; }
-      if (s === "\x7f" || s === "\b") { if (this._queueBuf?.length > 0) { this._queueBuf = this._queueBuf.slice(0, -1); process.stdout.write(`\r\x1b[K${c("yellow")}⚡${R} ${this._queueBuf}`); } return; }
-      if (s.length === 1 && s.charCodeAt(0) >= 32) { this._queueBuf = (this._queueBuf || "") + s; process.stdout.write(s); }
+      // Ctrl+C during busy → cancel
+      if (s === "\x03") { this._typing = false; this.cancel(); return; }
+      // First character — clear spinner line, start typing
+      if (!this._typing) {
+        this._typing = true;
+        spinner.stop();
+        this._queueBuf = "";
+        process.stdout.write(`\r\x1b[K${c("yellow")}⚡${R} `);
+      }
+      // Backspace
+      if (s === "\x7f" || s === "\b") {
+        if (this._queueBuf?.length > 0) {
+          this._queueBuf = this._queueBuf.slice(0, -1);
+          process.stdout.write(`\r\x1b[K${c("yellow")}⚡${R} ${this._queueBuf}`);
+        }
+        return;
+      }
+      // Regular characters
+      if (s.length === 1 && s.charCodeAt(0) >= 32) {
+        this._queueBuf = (this._queueBuf || "") + s;
+        process.stdout.write(s);
+      }
     };
     this._queueHandler = queueHandler;
     raw(true);
-    process.stdout.write(`\r${c("yellow")}⚡${R} `);
     process.stdin.on("data", queueHandler);
     return { spinner, cleanup: { tickHandler, toolPlanHandler, toolStartHandler, toolResultHandler, queueHandler } };
   }
