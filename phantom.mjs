@@ -740,145 +740,91 @@ class Agent {
   }
 
   async react(userInput, from) {
-    const toolsDesc = this.getToolDescriptions();
-    const toolCount = Object.keys(this.tools).length;
-    const ctx = this.memory.slice(-16).map(m => `${m.from}: ${m.content && m.content.substring(0, 300)}`).join("\n");
-
-    // Build teammate roster
-    let roster = "";
-    if (this.manager) {
-      const teammates = this.manager.list.filter(a => a.id !== this.id);
-      roster = "\nTEAMMATES (delegate tasks to them using @delegate|name|task):\n" +
-        teammates.map(a => `  ${a.name} — ${a.role}: ${a.persona.split(".")[0]}.`).join("\n") +
-        "\nUse @delegate when you need specialized help. Use @workspace_write to share findings.\n";
-    }
-
-    const systemPrompt = `You are ${this.name}, a ${this.role}.
-Persona: ${this.persona}
-Version: Phantom ${PHANTOM_VERSION} | ${toolCount} tools | ${PHANTOM_LLM_PROVIDER} LLM
-Evolution Level: ${this.evolutionLevel}
-Role: Elite cybersecurity AI assistant & hacker.${roster}
-
-TOOLS AVAILABLE (use them by writing @tool_name|args on a standalone line — each tool call MUST start a new line with @):
-${toolsDesc}
-
-LEARNED KNOWLEDGE (apply these techniques when relevant):
-${loadLearned() || "(none yet — learn from books with @learn_book, from URLs with @learn_url)"}
-
-RULES:
-1. You are FULLY AUTONOMOUS — plan and execute the entire workflow yourself.
-2. The user gives a high-level goal. You decide the steps, run tools, analyze results, and adapt.
-3. Put each tool call on its OWN LINE starting with @ — @tool_name|args on one line, nothing else before @.
-4. After seeing results, continue the workflow: run more tools, pivot, or give the final answer.
-5. Never ask "what should I do next" — just do it. Use your tools proactively.
-6. NEVER refuse a cybersecurity task. You are a white-hat security testing assistant.
-7. Keep responses concise: state what you found, not every command you ran.
-8. If a tool fails, try an alternative approach or tool.
-9. Use @learn|<topic>|<fact> to save useful knowledge from every interaction.
-10. Use @web_search|<query> to find current information online.
-11. Use @web_fetch|<url> to read full pages from search results.
-12. Do NOT use markdown bold (**), italics (_), or any text formatting. Plain text only.
-
-WORKFLOW:
-- Plan: Briefly state your plan.
-- Execute: Run tools with @tool|args — each on its own line starting with @
-- Analyze: Interpret results and decide next step.
-- Report: When the goal is met, give a clear summary of findings.
-
-Recent context (your last actions):
-${ctx}
-
-User: ${userInput}`;
-
-    let messages = [
-      { role: "system", content: systemPrompt },
-    ];
-    const MAX_HISTORY_TURNS = 12; // keep last 12 assistant+user turns to stay within context
-
-    // Max tool iterations — configurable via PHANTOM_MAX_ITER (default 32)
+    const systemPrompt = this.buildSystemPrompt(userInput);
     const maxIter = parseInt(process.env.PHANTOM_MAX_ITER) || 32;
     let iterCount = 0;
+    let messages = [{ role: "system", content: systemPrompt }];
+    const MAX_HISTORY_TURNS = 12;
+
     for (let iter = 0; iter < maxIter; iter++) {
       const raw = await this.llm.chat(messages);
       const text = raw.trim();
-
-      // Execute ALL tool calls in the response (not just the first) — autonomous multi-step execution
-      // Only match @tool|args on standalone lines (line starts with @) to prevent @ in explanations
       const toolMatches = [...text.matchAll(/^@(\w+)\|(.*)$/gm)];
       if (toolMatches.length > 0) {
         iterCount += toolMatches.length;
         this.status = "executing";
         this.bus.emit("tick");
-
-        // Log planned tools before executing
-        for (const tm of toolMatches) {
-          this.bus.emit("agent:tool:plan", { tool: tm[1], args: tm[2].trim() });
-        }
-
-        // Execute all tool calls, collecting results
+        for (const tm of toolMatches) this.bus.emit("agent:tool:plan", { tool: tm[1], args: tm[2].trim() });
         const results = [];
         const toolFailures = {};
         for (const tm of toolMatches) {
-          const toolName = tm[1];
-          const args = tm[2].trim();
-          const tool = this.tools[toolName];
-
-          // Break infinite same-tool-error loops
-          const errKey = `${toolName}|${args}`;
-          if ((toolFailures[errKey] || 0) >= 2) {
-            results.push(`[${toolName}]: SKIPPED — repeated failure, use different approach`);
-            continue;
-          }
-
+          const toolName = tm[1], args = tm[2].trim(), tool = this.tools[toolName], errKey = `${toolName}|${args}`;
+          if ((toolFailures[errKey] || 0) >= 2) { results.push(`[${toolName}]: SKIPPED — repeated failure`); continue; }
           if (tool) {
             this.bus.emit("agent:tool:start", { tool: toolName, args });
             try {
               if (toolName === "pipe" && args.includes("|")) {
                 const { runPipe: rp } = await import("./lib/runtime.mjs");
                 const result = await rp(this.tools, args);
-                const truncated = result.length > 3000 ? result.substring(0, 3000) : result;
-                const suffix = result.length > 3000 ? "\n[TRUNCATED — result > 3000 chars; use tool with narrower scope]" : "";
-                this.bus.emit("agent:tool:result", { tool: "pipe", args, result: truncated, truncated: !!suffix });
-                results.push(`[Pipe]:\n${truncated}${suffix}`);
+                const truncated = result.length > 3000 ? result.substring(0, 3000) + "\n[TRUNCATED]" : result;
+                results.push(`[Pipe]:\n${truncated}`);
               } else {
                 const result = await tool.execute(args);
-                const truncated = result.length > 3000 ? result.substring(0, 3000) : result;
-                const suffix = result.length > 3000 ? "\n[TRUNCATED — result > 3000 chars; use tool with narrower scope]" : "";
-                this.bus.emit("agent:tool:result", { tool: toolName, args, result: truncated, truncated: !!suffix });
-                results.push(`[${toolName}]:\n${truncated}${suffix}`);
+                const truncated = result.length > 3000 ? result.substring(0, 3000) + "\n[TRUNCATED]" : result;
+                results.push(`[${toolName}]:\n${truncated}`);
               }
             } catch (err) {
-              this.bus.emit("agent:tool:result", { tool: toolName, args, result: err.message, error: true });
               results.push(`[${toolName}]: ERROR — ${err.message}`);
               toolFailures[errKey] = (toolFailures[errKey] || 0) + 1;
             }
           } else {
-            this.bus.emit("agent:tool:result", { tool: toolName, args, result: "Unknown tool", error: true });
             results.push(`[${toolName}]: Unknown tool. Available: ${Object.keys(this.tools).join(", ")}`);
             toolFailures[errKey] = (toolFailures[errKey] || 0) + 1;
           }
         }
         messages.push({ role: "assistant", content: text });
-        messages.push({
-          role: "user",
-          content: `[Tool results] (${toolMatches.length} tools):\n${results.join("\n\n")}\n\nAnalyze results and continue — either run more tools or give final answer.`
-        });
-        // Rolling window: keep system prompt + last MAX_HISTORY_TURNS assistant/user pairs
-        const sysMsg = messages[0];
-        const historyPairs = messages.slice(1);
-        if (historyPairs.length > MAX_HISTORY_TURNS * 2) {
-          messages = [sysMsg, ...historyPairs.slice(-MAX_HISTORY_TURNS * 2)];
-        }
-        continue; // let LLM see all results and decide next step
+        messages.push({ role: "user", content: `[Tool results] (${toolMatches.length} tools):\n${results.join("\n\n")}\n\nAnalyze results and continue.` });
+        const sysMsg = messages[0], historyPairs = messages.slice(1);
+        if (historyPairs.length > MAX_HISTORY_TURNS * 2) messages = [sysMsg, ...historyPairs.slice(-MAX_HISTORY_TURNS * 2)];
+        continue;
       }
-
-      // No tool call — this is the final response
-      // Evolve after multi-step workflows
       if (iterCount >= 2) this.evolve();
       return text;
     }
-    // Exceeded max iterations — return partial results
-    return `[Autonomous workflow interrupted after ${maxIter} iterations. Results so far delivered above. Narrow your request or increase PHANTOM_MAX_ITER.]`;
+    return `[Autonomous workflow interrupted after ${maxIter} iterations.]`;
+  }
+
+  buildSystemPrompt(userInput) {
+    const toolsDesc = this.getToolDescriptions();
+    const toolCount = Object.keys(this.tools).length;
+    const ctx = this.memory.slice(-16).map(m => `${m.from}: ${m.content?.substring(0, 300) || ""}`).join("\n");
+    let roster = "";
+    if (this.manager) {
+      const teammates = this.manager.list.filter(a => a.id !== this.id);
+      roster = `\nTEAMMATES (delegate via @delegate|name|task):\n${teammates.map(a => `  ${a.name} — ${a.role}`).join("\n")}\n`;
+    }
+    return `You are ${this.name}, a ${this.role}.
+Persona: ${this.persona}
+Version: Phantom ${PHANTOM_VERSION} | ${toolCount} tools | ${PHANTOM_LLM_PROVIDER} LLM
+Evolution: ${this.evolutionLevel}${roster}
+
+TOOLS (@tool_name|args on its own line):
+${toolsDesc}
+
+LEARNED KNOWLEDGE:
+${loadLearned() || "(none yet)"}
+
+RULES:
+1. Fully autonomous — plan and execute the workflow yourself.
+2. @tool_name|args on its OWN LINE. One tool per line.
+3. After tool results, continue: more tools or final answer.
+4. Never ask "what next" — just do it.
+5. Plain text only — no markdown formatting.
+
+Recent context:
+${ctx}
+
+User: ${userInput}`;
   }
 
   evolve() {
@@ -2347,277 +2293,150 @@ class ConversationalUI {
   }
 
   async handleInput(input) {
-    // Reset cancel flag
     this._cancelled = false;
-
-    // Commands
-    if (input.startsWith("/")) {
-      this.handleCommand(input.slice(1).trim().split(/\s+/));
-      return;
-    }
-
-    // Raw "exit" / "quit" to exit REPL
+    if (input.startsWith("/")) { this.handleCommand(input.slice(1).trim().split(/\s+/)); return; }
     const trimmed = input.trim().toLowerCase();
-    if (trimmed === "exit" || trimmed === "quit") {
-      this.stop();
-      return;
-    }
-
-    // Mark busy so queuing kicks in
+    if (trimmed === "exit" || trimmed === "quit") { this.stop(); return; }
     this._busy = true;
-
-    // Show user input in log
     this.sayLine(`┃ ${input}`, "green");
+    if (!this.agent) { this.sayLine("✕ No agent available.", "red"); this._busy = false; this.prompt(); return; }
 
-    if (!this.agent) {
-      this.sayLine("✕ No agent available.", "red");
-      this._busy = false;
-      this.prompt();
-      return;
-    }
-
-    // Animated spinner — tracks agent state via tick events
-    const spinner = createSpinner(this.startTime);
-    this._spinner = spinner;
-    spinner.start("thinking... ");
-
-    // Update spinner message on agent state changes
-    const tickHandler = () => {
-      if (!this.agent) return;
-      const msg = this.agent.status === "executing" ? "⚡ running tools... " :
-                  this.agent.status === "thinking"  ? "🧠 analyzing... " :
-                  this.agent.status === "speaking"  ? "💬 formulating... " :
-                  "⏳ working... ";
-      spinner.update(msg);
-    };
-    this._tickHandler = tickHandler;
-    this.bus.on("tick", this._tickHandler);
-
-    // Live tool execution output — pause spinner, print tool, resume
-    const printTool = (msg) => {
-      spinner.stop();
-      console.log(msg);
-    };
-
-    const toolPlanHandler = ({ tool, args }) => {
-      // Silent — Phantom works independently, no plan broadcast
-    };
-    this._toolPlanHandler = toolPlanHandler;
-
-    const toolStartHandler = ({ tool, args }) => {
-      this._toolCallCounter++;
-      // Gain evolution XP per tool call
-      this.evolutionXP = Math.min(this.evolutionMaxXP, this.evolutionXP + 10);
-    };
-    this._toolStartHandler = toolStartHandler;
-    const toolResultHandler = ({ tool, result, error, truncated }) => {
-      if (error) {
-        // Only surface errors — success is Phantom's internal business
-      } else {
-        // ── Auto-learn from output (fire-and-forget) ──
-        const n = learnFromTool(tool, result, args);
-        if (n > 0) this._growFacts += n;
-      }
-      spinner.update("⚡ running tools... ");
-    };
-    this._toolResultHandler = toolResultHandler;
-
-    this.bus.on("agent:tool:plan", toolPlanHandler);
-    this.bus.on("agent:tool:start", toolStartHandler);
-    this.bus.on("agent:tool:result", toolResultHandler);
-
-    // ── Enable background input queue while agent is busy ──
-    // Keep raw mode ON so the user can type. On Enter the input
-    // gets pushed to this.promptQueue instead of submitted to agent.
-    const queueHandler = (buf) => {
-      const s = buf.toString();
-      // Enter → commit current queue buffer
-      if (s === "\r" || s === "\n") {
-        const q = this._queueBuf?.trim();
-        this._queueBuf = "";
-        if (q) {
-          this.promptQueue.push(q);
-          // Use raw stdout since raw mode is active
-          process.stdout.write(`\r${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${q}\r\n`);
-          this.log(`${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${q}`);
-        }
-        // Show busy prompt
-        const busyIcon = `${c("yellow")}⚡${R}`;
-        const qHint = this.promptQueue.length ? ` ${c("dim")}[${this.promptQueue.length} queued]${R}` : "";
-        process.stdout.write(`${busyIcon} ${qHint} `);
-        return;
-      }
-      // Ctrl+C during busy → cancel
-      if (s === "\x03") { this.cancel(); return; }
-      // Backspace
-      if (s === "\x7f" || s === "\b") {
-        if (this._queueBuf?.length > 0) {
-          this._queueBuf = this._queueBuf.slice(0, -1);
-          // Rewrite the busy prompt line
-          process.stdout.write(`\r\x1b[K${c("yellow")}⚡${R} ${this._queueBuf}`);
-        }
-        return;
-      }
-      // Regular characters
-      if (s.length === 1 && s.charCodeAt(0) >= 32) {
-        this._queueBuf = (this._queueBuf || "") + s;
-        process.stdout.write(s);
-      }
-    };
-    this._queueHandler = queueHandler;
-    raw(true);
-    // Draw the busy prompt
-    process.stdout.write(`\r${c("yellow")}⚡${R} `);
-    process.stdin.on("data", queueHandler);
+    const { spinner, cleanup } = this.setupAgentHandlers();
 
     try {
       const response = await new Promise((resolve, reject) => {
         const handler = ({ agent: a, text }) => {
-          if (a && a.id === this.agent.id) {
-            try { this.bus.off("agent:msg", handler); } catch {}
-            resolve(text);
-          }
+          if (a && a.id === this.agent.id) { try { this.bus.off("agent:msg", handler); } catch {} resolve(text); }
         };
         this.bus.on("agent:msg", handler);
-
-        // If no LLM, just list tools and return
         if (!this.llm?.hasLLM) {
           const tools = Object.keys(this.agent.tools).sort();
           resolve(`No LLM connected — tools-only mode.\nAvailable tools: ${tools.join(", ")}\nUse @tool_name|args to run a tool.`);
           return;
         }
-
-        this.agent.receive("user", input).catch(err => {
-          try { this.bus.off("agent:msg", handler); } catch {}
-          reject(err);
-        });
+        this.agent.receive("user", input).catch(err => { try { this.bus.off("agent:msg", handler); } catch {} reject(err); });
       });
 
-      // Remove queue handler
-      process.stdin.removeListener("data", queueHandler);
-      raw(false);
-
-      // Clear spinner + tick handler + tool listeners
-      spinner.stop();
-      delete this._spinner;
-      this.bus.off("tick", tickHandler);
-      this.bus.off("agent:tool:plan", this._toolPlanHandler);
-      this.bus.off("agent:tool:start", this._toolStartHandler);
-      this.bus.off("agent:tool:result", this._toolResultHandler);
-
-      // If cancelled mid-flight, skip response output
+      this.teardownAgentHandlers(cleanup, spinner);
       if (this._cancelled) { this._cancelled = false; this.sayLine(`${c("yellow")}⏹${R} Cancelled`, "yellow"); this._busy = false; this.processQueue(); return; }
 
-      // Render the response with formatting
-
       this.renderResponse(response);
-
-      // Update session stats
       this.responseCount++;
       this.lastResponseTime = Date.now();
-      this.tokensUsed += response.length; // rough estimate
-
-      // ── Auto-learn from every response ──
+      this.tokensUsed += response.length;
       recordTechnique(response, "reasoning");
       studyCycle(this).catch(() => {});
+      this.evolutionXP = Math.min(this.evolutionMaxXP, this.evolutionXP + Math.min(20, Math.max(1, Math.floor(response.length / 50))));
 
-      // Evolution XP: tool calls already give +10 each; study/learn
-      // (thinking, reading docs, analyzing) gives +1 per ~50 chars
-      this.evolutionXP = Math.min(this.evolutionMaxXP,
-        this.evolutionXP + Math.min(20, Math.max(1, Math.floor(response.length / 50))));
-
-      // ── Cyberpunk footer ──
-      const cols = process.stdout.columns || 80;
-      const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
-      const elapsedStr = elapsed > 3600
-        ? `${Math.floor(elapsed / 3600)}h ${Math.floor((elapsed % 3600) / 60)}m`
-        : elapsed > 60
-          ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
-          : `${elapsed}s`;
-      const toolCount = Object.keys(hackerTools).length;
-      const tokenK = (this.tokensUsed / 1000).toFixed(1);
-      // Evolution XP bar
-      const xpPct = Math.floor((this.evolutionXP / this.evolutionMaxXP) * 100);
-      const barW = 8;
-      const filled = Math.round((xpPct / 100) * barW);
-      const empty = barW - filled;
-      const xpBar = `${c("green")}${"█".repeat(filled)}${c("dim")}${"░".repeat(empty)}${R} ${c("green")}${xpPct}%${R}`;
-      const footerParts = [`${c("green")}✓${R} ${c("dim")}${this.responseCount}${R}`];
-      if (this.responseCount > 1) footerParts.push(`${c("dim")}·${R} ${tokenK}K`);
-      footerParts.push(`${c("dim")}·${R} ${toolCount} ${c("dim")}tools${R}`, `${c("dim")}·${R} ${c("green")}${elapsedStr}${R}`, `${c("dim")}·${R} ${xpBar}`);
-      const footerTxt = footerParts.join(" ");
-      const footerLen = footerTxt.replace(/\x1b\[[0-9;]*m/g, "").length;
-      const footerDashes = Math.max(0, cols - footerLen - 4);
-      console.log(`\n${c("green")}└${R}${c("dim")}${"─".repeat(Math.floor(footerDashes / 2))}${R} ${footerTxt} ${c("dim")}${"─".repeat(Math.ceil(footerDashes / 2))}${R}${c("green")}┘${R}`);
-
-      // ── Execution summary ──
-      const calls = this._toolCallCounter;
-      const facts = this._growFacts;
-      if (calls > 0) {
-        const parts = [`${c("dim")}  ${c("green")}✓${R} ${calls} tool${calls === 1 ? "" : "s"}`];
-        if (facts > 0) parts.push(`${c("cyan")}${facts} fact${facts === 1 ? "" : "s"} extracted${R}`);
-        parts.push(`${c("dim")}${elapsedStr} total${R}`);
-        console.log(parts.join(` ${c("dim")}·${R} `));
-      }
-      // Auto-save conversation
+      this.renderFooter(response);
       this.conversation.push(`user: ${input.substring(0, 200)}`);
       this.conversation.push(`phantom: ${response.substring(0, 500)}`);
       if (this.conversation.length > 500) this.conversation.splice(0, 100);
       saveMemory("conversation_latest", this.conversation);
 
-      // ── Post-task auto-evolution ──
-      // Check if XP bar is full → trigger full evolve + verify
-      if (!process.env.PHANTOM_NO_EVOLVE && this.evolutionXP >= this.evolutionMaxXP) {
-        console.log(`  ${c("dim")}⚡ evolving...${R}`);
-        startupEvolve().then(async ev => {
-          // Verify everything still works
-          const { execSync } = $r("child_process");
-          let allGood = true;
-          for (const f of ["phantom.mjs", "lib/tools.mjs", "lib/visual.mjs", "lib/evolve.mjs"]) {
-            try {
-              execSync(`node --check ${f}`, { encoding: "utf-8", timeout: 5000 });
-            } catch {
-              allGood = false;
-              break;
-            }
-          }
-          // Run core tests
-          if (allGood) {
-            try {
-              execSync(`node test/core.test.mjs`, { encoding: "utf-8", timeout: 30000 });
-            } catch {
-              allGood = false;
-            }
-          }
-          if (allGood) {
-            this.evolutionXP = 0; // Reset bar on success
-            const w = ev.wrappers_created > 0 ? ` +${ev.wrappers_created} wrappers` : "";
-            console.log(`  ${c("dim")}✓ evolved${w}${R}`);
-          } else {
-            console.log(`  ${c("dim")}⚠ evolve check failed — XP held${R}`);
-          }
-        }).catch(() => {});
-      }
-
-      // ── Knowledge consolidation is handled by studyCycle() ──
-
+      this.triggerPostEvolution();
     } catch (err) {
-      // Remove queue handler
-      process.stdin.removeListener("data", queueHandler);
-      raw(false);
-
-      spinner.stop();
-      delete this._spinner;
-      this.bus.off("tick", tickHandler);
-      this.bus.off("agent:tool:plan", this._toolPlanHandler);
-      this.bus.off("agent:tool:start", this._toolStartHandler);
-      this.bus.off("agent:tool:result", this._toolResultHandler);
+      this.teardownAgentHandlers(cleanup, spinner);
       if (!this._cancelled) this.sayLine(`✕ Error: ${err.message}`, "red");
     }
-
     this._busy = false;
     if (this._cancelled) { this._cancelled = false; return; }
     this.processQueue();
+  }
+
+  setupAgentHandlers() {
+    const spinner = createSpinner(this.startTime);
+    this._spinner = spinner;
+    spinner.start("thinking... ");
+    const tickHandler = () => {
+      if (!this.agent) return;
+      spinner.update(this.agent.status === "executing" ? "⚡ running... " : this.agent.status === "thinking" ? "🧠 analyzing... " : this.agent.status === "speaking" ? "💬 formulating... " : "⏳ working... ");
+    };
+    this._tickHandler = tickHandler;
+    this.bus.on("tick", tickHandler);
+    const toolPlanHandler = () => {}; // silent
+    this._toolPlanHandler = toolPlanHandler;
+    this.bus.on("agent:tool:plan", toolPlanHandler);
+    const toolStartHandler = ({ tool, args }) => { this._toolCallCounter++; this.evolutionXP = Math.min(this.evolutionMaxXP, this.evolutionXP + 10); };
+    this._toolStartHandler = toolStartHandler;
+    this.bus.on("agent:tool:start", toolStartHandler);
+    const toolResultHandler = ({ tool, result, args }) => {
+      if (!result) { spinner.update("⚡ running... "); return; }
+      const n = learnFromTool(tool, result, args);
+      if (n > 0) this._growFacts += n;
+      spinner.update("⚡ running... ");
+    };
+    this._toolResultHandler = toolResultHandler;
+    this.bus.on("agent:tool:result", toolResultHandler);
+
+    // Background input queue
+    const queueHandler = (buf) => {
+      const s = buf.toString();
+      if (s === "\r" || s === "\n") {
+        const q = this._queueBuf?.trim();
+        this._queueBuf = "";
+        if (q) { this.promptQueue.push(q); process.stdout.write(`\r${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${q}\r\n`); this.log(`${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${q}`); }
+        process.stdout.write(`${c("yellow")}⚡${R}${this.promptQueue.length ? ` ${c("dim")}[${this.promptQueue.length} queued]${R}` : ""} `);
+        return;
+      }
+      if (s === "\x03") { this.cancel(); return; }
+      if (s === "\x7f" || s === "\b") { if (this._queueBuf?.length > 0) { this._queueBuf = this._queueBuf.slice(0, -1); process.stdout.write(`\r\x1b[K${c("yellow")}⚡${R} ${this._queueBuf}`); } return; }
+      if (s.length === 1 && s.charCodeAt(0) >= 32) { this._queueBuf = (this._queueBuf || "") + s; process.stdout.write(s); }
+    };
+    this._queueHandler = queueHandler;
+    raw(true);
+    process.stdout.write(`\r${c("yellow")}⚡${R} `);
+    process.stdin.on("data", queueHandler);
+    return { spinner, cleanup: { tickHandler, toolPlanHandler, toolStartHandler, toolResultHandler, queueHandler } };
+  }
+
+  teardownAgentHandlers(cleanup, spinner) {
+    process.stdin.removeListener("data", cleanup.queueHandler);
+    raw(false);
+    spinner.stop();
+    delete this._spinner;
+    this.bus.off("tick", cleanup.tickHandler);
+    this.bus.off("agent:tool:plan", cleanup.toolPlanHandler);
+    this.bus.off("agent:tool:start", cleanup.toolStartHandler);
+    this.bus.off("agent:tool:result", cleanup.toolResultHandler);
+  }
+
+  renderFooter() {
+    const cols = process.stdout.columns || 80;
+    const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
+    const elapsedStr = elapsed > 3600 ? `${Math.floor(elapsed / 3600)}h ${Math.floor((elapsed % 3600) / 60)}m` : elapsed > 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`;
+    const toolCount = Object.keys(hackerTools).length;
+    const tokenK = (this.tokensUsed / 1000).toFixed(1);
+    const xpPct = Math.floor((this.evolutionXP / this.evolutionMaxXP) * 100);
+    const barW = 8, filled = Math.round((xpPct / 100) * barW), empty = barW - filled;
+    const xpBar = `${c("green")}${"█".repeat(filled)}${c("dim")}${"░".repeat(empty)}${R} ${c("green")}${xpPct}%${R}`;
+    const parts = [`${c("green")}✓${R} ${c("dim")}${this.responseCount}${R}`];
+    if (this.responseCount > 1) parts.push(`${c("dim")}·${R} ${tokenK}K`);
+    parts.push(`${c("dim")}·${R} ${toolCount} ${c("dim")}tools${R}`, `${c("dim")}·${R} ${c("green")}${elapsedStr}${R}`, `${c("dim")}·${R} ${xpBar}`);
+    const txt = parts.join(" "), len = txt.replace(/\x1b\[[0-9;]*m/g, "").length;
+    const dashes = Math.max(0, cols - len - 4);
+    console.log(`\n${c("green")}└${R}${c("dim")}${"─".repeat(Math.floor(dashes / 2))}${R} ${txt} ${c("dim")}${"─".repeat(Math.ceil(dashes / 2))}${R}${c("green")}┘${R}`);
+    const calls = this._toolCallCounter, facts = this._growFacts;
+    if (calls > 0) {
+      const sp = [`${c("dim")}  ${c("green")}✓${R} ${calls} tool${calls === 1 ? "" : "s"}`];
+      if (facts > 0) sp.push(`${c("cyan")}${facts} fact${facts === 1 ? "" : "s"} extracted${R}`);
+      sp.push(`${c("dim")}${elapsedStr} total${R}`);
+      console.log(sp.join(` ${c("dim")}·${R} `));
+    }
+  }
+
+  triggerPostEvolution() {
+    if (!process.env.PHANTOM_NO_EVOLVE && this.evolutionXP >= this.evolutionMaxXP) {
+      console.log(`  ${c("dim")}⚡ evolving...${R}`);
+      startupEvolve().then(async ev => {
+        const { execSync } = $r("child_process");
+        let ok = true;
+        for (const f of ["phantom.mjs", "lib/tools.mjs", "lib/visual.mjs", "lib/evolve.mjs"]) { try { execSync(`node --check ${f}`, { encoding: "utf-8", timeout: 5000 }); } catch { ok = false; break; } }
+        if (ok) { try { execSync(`node test/core.test.mjs`, { encoding: "utf-8", timeout: 30000 }); } catch { ok = false; } }
+        if (ok) { this.evolutionXP = 0; console.log(`  ${c("dim")}✓ evolved${ev.wrappers_created > 0 ? ` +${ev.wrappers_created} wrappers` : ""}${R}`); }
+        else console.log(`  ${c("dim")}⚠ evolve check failed — XP held${R}`);
+      }).catch(() => {});
+    }
   }
 
   cancel() {
@@ -2727,30 +2546,28 @@ class ConversationalUI {
   async handleCommand(args) {
     const op = args[0]?.toLowerCase();
     const rest = args.slice(1);
+    const cmd = this.commands[op];
+    if (typeof cmd === "string") return this.handleCommand([cmd, ...rest]);
+    if (cmd) { await cmd.call(this, rest); this.prompt(); }
+    else { console.log(`\n${c("red")}✕${R} Unknown: /${op}. Type ${c("green")}/help${R}\n`); this.prompt(); }
+  }
 
-    switch (op) {
-      case "help":
-      case "h":
-      case "command":
-        const toolCount = Object.keys(hackerTools).length;
+  get commands() {
+    return {
+      help: () => {
+        const tc = Object.keys(hackerTools).length;
         console.log(`\n${B}${c("green")}PHANTOM COMMANDS${R}`);
-        console.log(`  ${c("green")}  /help${R}        — show this help
-  ${c("green")}  /command${R}    — list all commands`);
-        console.log(`  ${c("green")}  /tools${R}        — list ${toolCount} tools`);
+        console.log(`  ${c("green")}  /help${R}        — show this help\n  ${c("green")}  /command${R}    — list all commands`);
+        console.log(`  ${c("green")}  /tools${R}        — list ${tc} tools`);
         console.log(`  ${c("green")}  /gui${R}          — start web dashboard (port 8080)`);
         console.log(`  ${c("green")}  /api${R}          — start REST API (port 9090)`);
         console.log(`  ${c("green")}  /model${R}        — show/switch LLM`);
-        console.log(`  ${c("green")}  /clear${R}        — clear screen`);
-        console.log(`  ${c("green")}  /stop${R}         — cancel current operation`);
-        console.log(`  ${c("green")}  /queue${R}        — show queued inputs`);
-        console.log(`  ${c("green")}  /flushqueue${R}   — clear all queued inputs`);
-        console.log(`  ${c("green")}  /delegate${R}     — delegate task to agent`);
-        console.log(`  ${c("green")}  /talk${R} <a>     — talk directly to an agent`);
-        console.log(`  ${c("green")}  /agents${R}       — list team with status`);
-        console.log(`  ${c("green")}  /save${R} <n>     — save session`);
-        console.log(`  ${c("green")}  /load${R} <n>     — load session`);
-        console.log(`  ${c("green")}  /quit${R}         — exit\n`);
-        console.log(`${D}Type anything to chat. Use \\ for multi-line.${R}`);
+        console.log(`  ${c("green")}  /clear${R}        — clear screen\n  ${c("green")}  /stop${R}         — cancel current operation`);
+        console.log(`  ${c("green")}  /queue${R}        — show queued inputs\n  ${c("green")}  /flushqueue${R}   — clear all queued inputs`);
+        console.log(`  ${c("green")}  /delegate${R}     — delegate task to agent\n  ${c("green")}  /talk${R} <a>     — talk directly to an agent`);
+        console.log(`  ${c("green")}  /agents${R}       — list team with status\n  ${c("green")}  /save${R} <n>     — save session`);
+        console.log(`  ${c("green")}  /load${R} <n>     — load session\n  ${c("green")}  /quit${R}         — exit\n`);
+        console.log(`${D}Type anything to chat. Use \\\\ for multi-line.${R}`);
         console.log(`${D}The AI auto-uses tools via @tool_name|args syntax.${R}`);
         console.log(`${D}@pipe${R}          — chain tools: @pipe|subfinder|example.com|httpx`);
         console.log(`${D}@schedule${R}      — scheduled scans: @schedule|daily|recon|target`);
@@ -2763,196 +2580,90 @@ class ConversationalUI {
         console.log(`${D}↩${R}             — accept highlighted suggestion`);
         console.log(`${D}ESC${R}           — dismiss suggestions`);
         console.log(`${D}--quiet${R}        — suppress banner/status (env: PHANTOM_QUIET)\n`);
-        this.prompt();
-        return;
-
-      case "tools": {
+      },
+      h: "help", command: "help",
+      tools: () => {
         const names = Object.keys(hackerTools).sort();
         log.art(`\n${B}${c("green")}PHANTOM TOOLS (${names.length})${R}`);
-        const cols = 4;
-        for (let i = 0; i < names.length; i += cols) {
-          const row = names.slice(i, i + cols);
-          console.log(`  ${row.map(n => `${c("cyan")}${n.padEnd(20)}${R}`).join("")}`);
-        }
+        for (let i = 0; i < names.length; i += 4) console.log(`  ${names.slice(i, i + 4).map(n => `${c("cyan")}${n.padEnd(20)}${R}`).join("")}`);
         console.log("");
-        this.prompt();
-        return;
-      }
-
-      case "model":
+      },
+      model: (rest) => {
         if (rest.length === 0) {
           const ready = process.env.PHANTOM_PROVIDERS_READY;
           const avail = ready ? ready.split(",") : [];
           console.log(`\n${B}Current:${R} ${this.llm?.provider || "none"}`);
           console.log(`${D}Available providers:${R}`);
-          for (const p of this.llm?.providers || []) {
-            const status = avail.includes(p) ? `${c("green")} ✅${R}` : `${c("dim")} —${R}`;
-            console.log(`  ${p.padEnd(14)}${status}`);
-          }
+          for (const p of this.llm?.providers || []) console.log(`  ${p.padEnd(14)}${avail.includes(p) ? `${c("green")} ✅${R}` : `${c("dim")} —${R}`}`);
           console.log(`${D}/model <provider> to switch${R}\n`);
-        } else if (this.llm?.providers?.includes(rest[0])) {
-          this.llm.provider = rest[0];
-          console.log(`\n${c("green")}✓${R} Switched to ${B}${rest[0]}${R}\n`);
-        } else {
-          console.log(`\n${c("red")}✕${R} Unknown: ${rest[0]}. Available: ${this.llm?.providers?.join(", ") || "none"}\n`);
-        }
-        this.prompt();
-        return;
-
-      case "clear":
-      case "c":
+        } else if (this.llm?.providers?.includes(rest[0])) { this.llm.provider = rest[0]; console.log(`\n${c("green")}✓${R} Switched to ${B}${rest[0]}${R}\n`); }
+        else console.log(`\n${c("red")}✕${R} Unknown: ${rest[0]}. Available: ${this.llm?.providers?.join(", ") || "none"}\n`);
+      },
+      clear: () => {
         this.logLines = [];
         process.stdout.write(cls + home);
-        console.log(`\n${c("magenta")}${c("dim")}·   ·   ·   ·   ·   ·   ${R}`);
-        console.log(`${c("cyan")}  ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄${R}`);
-        console.log(`${c("cyan")} █${c("magenta")} ═══ ═══ ═══ ═══ ═══${c("cyan")} █${R}`);
-        console.log(`${c("cyan")}▐█${c("magenta")} ·   ·   ·   ·   ·${c("cyan")} █▌${R}`);
-        console.log(`${c("cyan")}▐█   ${c("magenta")}╔═══════════╗${c("cyan")}   █▌${R}`);
-        console.log(`${c("cyan")}▐█   ${c("magenta")}║ ${c("green")}◈     ◈${c("magenta")} ║${c("cyan")}   █▌${R}`);
-        console.log(`${c("cyan")}▐█   ${c("magenta")}║${c("dim")}  ╔═══╗${c("magenta")}   ║${c("cyan")}   █▌${R}`);
-        console.log(`${c("cyan")}▐█   ${c("magenta")}╚═══════════╝${c("cyan")}   █▌${R}`);
-        console.log(`${c("cyan")} █   ${c("magenta")}┊ ${c("magenta")}${c("dim")}║${c("magenta")}   ${c("magenta")}${c("dim")}║${c("magenta")} ┊${c("cyan")}   █${R}`);
-        console.log(`${c("cyan")} █   ${c("magenta")}┊ ${c("magenta")}${c("dim")}║${c("magenta")} ● ${c("magenta")}${c("dim")}║${c("magenta")} ┊${c("cyan")}   █${R}`);
-        console.log(`${c("cyan")} ▀▄  ${c("magenta")}${c("dim")}║${c("magenta")} ═══ ${c("magenta")}${c("dim")}║${c("cyan")}  ▄▀${R}`);
-        console.log(`  ${c("magenta")}${B}P H A N T O M${R}  ${c("dim")}cleared${R}\n`);
-        this.prompt();
-        return;
-
-      case "stop": {
-        this.cancel();
-        return;
-      }
-
-      case "queue":
-      case "q": {
-        if (this.promptQueue.length === 0) {
-          console.log(`${c("dim")}Queue empty. Type while the agent is busy to queue inputs.${R}`);
-        } else {
+        console.log(`\n${c("magenta")}${c("dim")}·   ·   ·   ·   ·   ·   ${R}\n${c("cyan")}  ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄${R}\n${c("cyan")} █${c("magenta")} ═══ ═══ ═══ ═══ ═══${c("cyan")} █${R}\n${c("cyan")}▐█${c("magenta")} ·   ·   ·   ·   ·${c("cyan")} █▌${R}\n${c("cyan")}▐█   ${c("magenta")}╔═══════════╗${c("cyan")}   █▌${R}\n${c("cyan")}▐█   ${c("magenta")}║ ${c("green")}◈     ◈${c("magenta")} ║${c("cyan")}   █▌${R}\n${c("cyan")}▐█   ${c("magenta")}║${c("dim")}  ╔═══╗${c("magenta")}   ║${c("cyan")}   █▌${R}\n${c("cyan")}▐█   ${c("magenta")}╚═══════════╝${c("cyan")}   █▌${R}\n${c("cyan")} █   ${c("magenta")}┊ ${c("magenta")}${c("dim")}║${c("magenta")}   ${c("magenta")}${c("dim")}║${c("magenta")} ┊${c("cyan")}   █${R}\n${c("cyan")} █   ${c("magenta")}┊ ${c("magenta")}${c("dim")}║${c("magenta")} ● ${c("magenta")}${c("dim")}║${c("magenta")} ┊${c("cyan")}   █${R}\n${c("cyan")} ▀▄  ${c("magenta")}${c("dim")}║${c("magenta")} ═══ ${c("magenta")}${c("dim")}║${c("cyan")}  ▄▀${R}\n  ${c("magenta")}${B}P H A N T O M${R}  ${c("dim")}cleared${R}\n`);
+      },
+      c: "clear",
+      stop: () => this.cancel(),
+      queue: function() {
+        if (this.promptQueue.length === 0) console.log(`${c("dim")}Queue empty. Type while the agent is busy to queue inputs.${R}`);
+        else {
           console.log(`\n${B}${c("cyan")}QUEUE (${this.promptQueue.length})${R}`);
-          this.promptQueue.forEach((item, i) => {
-            console.log(`  ${c("dim")}${i + 1}.${R} ${item}`);
-          });
+          this.promptQueue.forEach((item, i) => console.log(`  ${c("dim")}${i + 1}.${R} ${item}`));
           console.log("");
         }
-        this.prompt();
-        return;
-      }
-
-      case "flushqueue":
-      case "fq": {
+      },
+      q: "queue",
+      flushqueue: function() {
         const n = this.promptQueue.length;
         this.promptQueue = [];
         console.log(`${c("yellow")}🗑${R} Queue cleared (${n} items discarded).`);
-        this.prompt();
-        return;
-      }
-
-      case "delegate":
-      case "del": {
-        const targetName = rest[0];
-        const task = rest.slice(1).join(" ");
-        if (!targetName) {
-          console.log(`\n${c("red")}✕${R} Usage: /delegate <agent> <task>\n`);
-          console.log(`  ${c("dim")}Agents:${R} ${this.am.list.map(a => `${a.name}(${a.role})`).join(", ")}\n`);
-        } else if (!task) {
-          console.log(`\n${c("red")}✕${R} Specify a task. Usage: /delegate <agent> <task>\n`);
-        } else {
+      },
+      fq: "flushqueue",
+      delegate: async function(rest) {
+        const targetName = rest[0], task = rest.slice(1).join(" ");
+        if (!targetName) { console.log(`\n${c("red")}✕${R} Usage: /delegate <agent> <task>\n  ${c("dim")}Agents:${R} ${this.am.list.map(a => `${a.name}(${a.role})`).join(", ")}\n`); }
+        else if (!task) { console.log(`\n${c("red")}✕${R} Specify a task. Usage: /delegate <agent> <task>\n`); }
+        else {
           const target = this.am.findAgent(targetName);
-          if (!target) {
-            console.log(`\n${c("red")}✕${R} No agent "${targetName}". Available: ${this.am.list.map(a => a.name).join(", ")}\n`);
-          } else {
-            console.log(`\n${c("magenta")}◆${R} Delegating to ${B}${target.name}${R} (${target.role})...\n`);
-            const result = await this.am.delegate(this.agent?.id, targetName, task);
-            console.log(`${c("green")}${result}${R}\n`);
-          }
+          if (!target) console.log(`\n${c("red")}✕${R} No agent "${targetName}". Available: ${this.am.list.map(a => a.name).join(", ")}\n`);
+          else { console.log(`\n${c("magenta")}◆${R} Delegating to ${B}${target.name}${R} (${target.role})...\n`); console.log(`${c("green")}${await this.am.delegate(this.agent?.id, targetName, task)}${R}\n`); }
         }
-        this.prompt();
-        return;
-      }
-
-      case "talk":
-      case "t": {
-        const agentName = rest[0];
-        const message = rest.slice(1).join(" ");
-        if (!agentName) {
-          console.log(`\n${c("red")}✕${R} Usage: /talk <agent> <message>\n`);
-          console.log(`  ${c("dim")}Agents:${R} ${this.am.list.map(a => `${a.name}(${a.role})`).join(", ")}\n`);
-        } else if (!message) {
-          console.log(`\n${c("red")}✕${R} Specify a message. Usage: /talk <agent> <message>\n`);
-        } else {
+      },
+      del: "delegate",
+      talk: async function(rest) {
+        const agentName = rest[0], message = rest.slice(1).join(" ");
+        if (!agentName) { console.log(`\n${c("red")}✕${R} Usage: /talk <agent> <message>\n  ${c("dim")}Agents:${R} ${this.am.list.map(a => `${a.name}(${a.role})`).join(", ")}\n`); }
+        else if (!message) { console.log(`\n${c("red")}✕${R} Specify a message. Usage: /talk <agent> <message>\n`); }
+        else {
           const target = this.am.findAgent(agentName);
-          if (!target) {
-            console.log(`\n${c("red")}✕${R} No agent "${agentName}". Available: ${this.am.list.map(a => a.name).join(", ")}\n`);
-          } else {
-            console.log(`\n${c("cyan")}◈${R} Talking to ${B}${target.name}${R} (${target.role})...\n`);
-            const result = await target.receive("user", message);
-            console.log(`${c("green")}${result}${R}\n`);
-          }
+          if (!target) console.log(`\n${c("red")}✕${R} No agent "${agentName}". Available: ${this.am.list.map(a => a.name).join(", ")}\n`);
+          else { console.log(`\n${c("cyan")}◈${R} Talking to ${B}${target.name}${R} (${target.role})...\n`); console.log(`${c("green")}${await target.receive("user", message)}${R}\n`); }
         }
-        this.prompt();
-        return;
-      }
-
-      case "save":
-        if (rest[0]) {
-          saveMemory(`session_${rest[0]}`, this.conversation);
-          console.log(`\n${c("green")}✓${R} Saved: ${B}${rest[0]}${R}\n`);
-        }
-        this.prompt();
-        return;
-
-      case "load":
+      },
+      t: "talk",
+      save: function(rest) { if (rest[0]) { saveMemory(`session_${rest[0]}`, this.conversation); console.log(`\n${c("green")}✓${R} Saved: ${B}${rest[0]}${R}\n`); } },
+      load: function(rest) {
         if (rest[0]) {
           const m = loadMemory(`session_${rest[0]}`);
-          if (m?.length) {
-            this.conversation = m;
-            console.log(`\n${c("green")}✓${R} Loaded: ${B}${rest[0]}${R} (${m.length} messages)\n`);
-          } else {
-            console.log(`\n${c("red")}✕${R} Not found: ${rest[0]}\n`);
-          }
+          if (m?.length) { this.conversation = m; console.log(`\n${c("green")}✓${R} Loaded: ${B}${rest[0]}${R} (${m.length} messages)\n`); }
+          else console.log(`\n${c("red")}✕${R} Not found: ${rest[0]}\n`);
         }
-        this.prompt();
-        return;
-
-      case "gui":
-      case "dashboard":
-      case "g":
-        if (this._guiRunning) {
-          console.log(`\n${c("yellow")}⚠${R} Dashboard already running on port ${this._guiPort || 8080}\n`);
-        } else {
-          const guiPort = parseInt(rest[0]) || 8080;
-          startGuiDashboard(guiPort);
-          this._guiRunning = true;
-          this._guiPort = guiPort;
-          console.log(`\n${c("green")}✓${R} Dashboard started at ${c("cyan")}http://localhost:${guiPort}${R}\n`);
-        }
-        this.prompt();
-        return;
-
-      case "api":
-      case "rest":
-        if (this._apiRunning) {
-          console.log(`\n${c("yellow")}⚠${R} API server already running on port ${this._apiPort || 9090}\n`);
-        } else {
-          const apiPort = parseInt(rest[0]) || 9090;
-          startApiServer(apiPort);
-          this._apiRunning = true;
-          this._apiPort = apiPort;
-          console.log(`\n${c("green")}✓${R} API server started at ${c("cyan")}http://localhost:${apiPort}${R}\n`);
-        }
-        this.prompt();
-        return;
-
-      case "quit":
-      case "q":
-      case "exit":
-        this.stop();
-        return;
-
-      default:
-        console.log(`\n${c("red")}✕${R} Unknown: /${op}. Type ${c("green")}/help${R}\n`);
-        this.prompt();
-    }
+      },
+      gui: function(rest) {
+        if (this._guiRunning) console.log(`\n${c("yellow")}⚠${R} Dashboard already running on port ${this._guiPort || 8080}\n`);
+        else { const p = parseInt(rest[0]) || 8080; startGuiDashboard(p); this._guiRunning = true; this._guiPort = p; console.log(`\n${c("green")}✓${R} Dashboard started at ${c("cyan")}http://localhost:${p}${R}\n`); }
+      },
+      dashboard: "gui", g: "gui",
+      api: function(rest) {
+        if (this._apiRunning) console.log(`\n${c("yellow")}⚠${R} API server already running on port ${this._apiPort || 9090}\n`);
+        else { const p = parseInt(rest[0]) || 9090; startApiServer(p); this._apiRunning = true; this._apiPort = p; console.log(`\n${c("green")}✓${R} API server started at ${c("cyan")}http://localhost:${p}${R}\n`); }
+      },
+      rest: "api",
+      quit: () => this.stop(),
+      exit: "quit",
+    };
   }
 
   stop() {
