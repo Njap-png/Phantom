@@ -2786,6 +2786,13 @@ __r.llmInstance = llmInstance;
     await new Promise(() => {}); // keep alive
   }
 
+  if (flag === "chat" || flag === "c") {
+    // Lightweight chat mode
+    const { runChat } = await import("./chat.mjs");
+    await runChat(createProvider());
+    process.exit(0);
+  }
+
   if (flag === "gui" || flag === "dashboard" || flag === "g") {
     const port = parseInt(process.env.PHANTOM_PORT || '8080');
     const dllm = createProvider();
