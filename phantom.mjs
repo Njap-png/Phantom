@@ -1729,26 +1729,14 @@ class ConversationalUI {
     ];
 
     // ── TUI init ──
-    this.tui = new TUI({
-      onExit: () => {
-        this.running = false;
-        try { raw(false); } catch {}
-        // Restore original console.log
-        if (this._origLog) {
-          console.log = this._origLog;
-        }
-      }
-    });
-    // Route all console.log through TUI when active
-    this._origLog = console.log.bind(console);
+    this.tui = new TUI({ onExit: () => { this.running = false; try { raw(false); } catch {} } });
+    // Route console.log through TUI when active (auto-redraws input bar after each write)
+    const _origLog = console.log.bind(console);
     const _self = this;
     console.log = function(...args) {
       const text = args.map(a => typeof a === "string" ? a : String(a)).join(" ");
-      if (_self.tui?.active) {
-        _self.tui.log(text);
-      } else {
-        _self._origLog(text);
-      }
+      if (_self.tui?.active) { _self.tui.log(text); }
+      else { _origLog(text); }
     };
   }
 
