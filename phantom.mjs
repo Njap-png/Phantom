@@ -1902,9 +1902,7 @@ class ConversationalUI {
 
   renderResponse(response) {
     if (!response) return;
-    // Strip markdown bold before processing
-    const clean = response.replace(/\*\*/g, "").replace(/___/g, "").replace(/__/g, "");
-    const lines = clean.split("\n");
+    const lines = response.split("\n");
     let inCode = false;
     let codeLang = "";
 
@@ -1913,17 +1911,16 @@ class ConversationalUI {
       const codeFence = trimmed.match(/^```(\w*)/);
       if (codeFence) {
         if (inCode) {
-          console.log(`${c("dim")}└${R}`);
           inCode = false;
         } else {
-          codeLang = codeFence[1] || "code";
-          console.log(`${c("dim")}┌─ ${c("yellow")}${codeLang}${R}`);
+          codeLang = codeFence[1] || "";
+          if (codeLang) process.stdout.write(`  ${c("dim")}${codeLang}${R}\n`);
           inCode = true;
         }
         continue;
       }
       if (inCode) {
-        console.log(`${c("dim")}│ ${R}${trimmed}`);
+        console.log(`  ${c("dim")}│${R} ${trimmed}`);
         continue;
       }
       // Tool calls shown during execution
@@ -1939,54 +1936,22 @@ class ConversationalUI {
       const heading = trimmed.match(/^(#{2,3}|\[)\s*(.+?)\]?\s*$/);
       if (heading) {
         const text = heading[2].trim();
-        console.log(`\n${c("magenta")}${"─".repeat(4)}${R} ${c("cyan")}${text}${R} ${c("magenta")}${"─".repeat(36)}${R}`);
+        console.log(`\n${c("magenta")}${text}${R}`);
         continue;
       }
       // Bullet points
       if (trimmed.match(/^[\s]*[-*•]\s/)) {
-        const bullet = trimmed.replace(/^[\s]*[-*•]\s/, "");
-        console.log(`  ${c("cyan")}•${R} ${bullet}`);
+        console.log(`  ${c("cyan")}•${R} ${trimmed.replace(/^[\s]*[-*•]\s/, "")}`);
         continue;
       }
       // Numbered lists
       if (trimmed.match(/^\s*\d+[.)]\s/)) {
-        console.log(`  ${c("magenta")}${trimmed}${R}`);
-        continue;
-      }
-      // Success indicators
-      if (trimmed.match(/^✅|✓|✔|\[OK\]|\[DONE\]|success|completed/i)) {
-        console.log(` ${c("green")}${trimmed}${R}`);
-        continue;
-      }
-      // Warning indicators
-      if (trimmed.match(/^⚠|\[WARN\]|warning|caution/i)) {
-        console.log(` ${c("yellow")}${trimmed}${R}`);
-        continue;
-      }
-      // Error indicators
-      if (trimmed.match(/^✕|✖|❌|\[ERROR\]|\[FAIL\]|error|failed/i)) {
-        console.log(` ${c("red")}${trimmed}${R}`);
-        continue;
-      }
-      // Summary boxes (text surrounded by === or ---)
-      if (trimmed.match(/^={3,}/)) {
-        console.log(`${c("green")}${trimmed}${R}`);
-        continue;
-      }
-      if (trimmed.match(/^-{3,}/)) {
-        console.log(`${c("dim")}${trimmed}${R}`);
-        continue;
-      }
-      // Key: value lines (first word followed by colon)
-      const kv = trimmed.match(/^(\w[\w\s]+?):\s(.+)/);
-      if (kv && kv[1].length < 30) {
-        console.log(` ${c("cyan")}${kv[1]}:${R} ${kv[2]}`);
+        console.log(`  ${trimmed}`);
         continue;
       }
       // Default: normal text
       console.log(` ${trimmed}`);
     }
-    if (inCode) console.log(`${c("dim")}└${R}`);
   }
 
   async start() {
@@ -1999,16 +1964,11 @@ class ConversationalUI {
     const modelLabel = typeof providerName === "string" ? providerName : "connected";
 
     // ── Shadow figlet logo ──
-    log.art(renderLogo({ wide: isWide, tools: toolCount }));
+    if (!process.env.PHANTOM_QUIET) log.art(renderLogo({ wide: isWide, tools: toolCount }));
 
-    // ── Cyberpunk header ──
-    const dashLen = Math.max(0, cols - 14);
-    console.log(`${c("green")}┌─[ ${B}${c("cyan")}PHANTOM${R}${c("green")} ]${R}${c("dim")}${"─".repeat(dashLen)}${R}${c("green")}┐${R}`);
-    const infoStr = `${c("dim")}│${R} ${c("yellow")}${toolCount}${R} ${c("dim")}tools · ${c("cyan")}${modelLabel}${R}${isTermux ? ` · ${c("dim")}📱${R}` : ""}${this.llm?.hasLLM ? ` · ${c("green")}ready${R}` : ` · ${c("yellow")}toolsonly${R}`}`;
-    const visLen = infoStr.replace(/\x1b\[[0-9;]*m/g, "").length;
-    const pad = " ".repeat(Math.max(0, cols - visLen - 1));
-    console.log(`${infoStr}${pad}${c("green")}│${R}`);
-    console.log(`${c("green")}└${R}${c("dim")}${"─".repeat(Math.max(0, cols - 2))}${R}${c("green")}┘${R}`);
+    // ── Hermes-style header ──
+    const infoStr = `${c("cyan")}${B}PHANTOM${R}${c("dim")} — ${toolCount} tools · ${modelLabel}${R}${isTermux ? ` ${c("dim")}📱${R}` : ""}${this.llm?.hasLLM ? ` ${c("green")}ready${R}` : ` ${c("yellow")}tools-only${R}`}`;
+    console.log(`${c("dim")}${infoStr}${R}`);
 
     // ── Spawn agents ──
     if (this.am.count === 0) {
@@ -2329,7 +2289,7 @@ class ConversationalUI {
     const trimmed = input.trim().toLowerCase();
     if (trimmed === "exit" || trimmed === "quit") { this.stop(); return; }
     this._busy = true;
-    this.sayLine(`┃ ${input}`, "green");
+    this.sayLine(`> ${input}`, "green");
     if (!this.agent) { this.sayLine("✕ No agent available.", "red"); this._busy = false; this.prompt(); return; }
 
     const { spinner, cleanup } = this.setupAgentHandlers();
@@ -2412,7 +2372,12 @@ class ConversationalUI {
     };
     this._thinkHandler = thinkHandler;
     this.bus.on("agent:think", thinkHandler);
-    const toolStartHandler = ({ tool, args }) => { this._toolCallCounter++; this.evolutionXP = Math.min(this.evolutionMaxXP, this.evolutionXP + 10); };
+    const toolStartHandler = ({ tool, args }) => {
+      this._toolCallCounter++;
+      this.evolutionXP = Math.min(this.evolutionMaxXP, this.evolutionXP + 10);
+      const truncated = (args || "").length > 60 ? (args || "").substring(0, 60) + "…" : (args || "");
+      console.log(`${c("dim")}⎿${R}  ${c("cyan")}${tool}${R}${truncated ? ` ${c("dim")}${truncated}${R}` : ""}`);
+    };
     this._toolStartHandler = toolStartHandler;
     this.bus.on("agent:tool:start", toolStartHandler);
     const toolResultHandler = ({ tool, result, args }) => {
@@ -2439,27 +2404,14 @@ class ConversationalUI {
   }
 
   renderFooter() {
-    const cols = process.stdout.columns || 80;
     const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
     const elapsedStr = elapsed > 3600 ? `${Math.floor(elapsed / 3600)}h ${Math.floor((elapsed % 3600) / 60)}m` : elapsed > 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`;
-    const toolCount = Object.keys(hackerTools).length;
-    const tokenK = (this.tokensUsed / 1000).toFixed(1);
-    const xpPct = Math.floor((this.evolutionXP / this.evolutionMaxXP) * 100);
-    const barW = 8, filled = Math.round((xpPct / 100) * barW), empty = barW - filled;
-    const xpBar = `${c("green")}${"█".repeat(filled)}${c("dim")}${"░".repeat(empty)}${R} ${c("green")}${xpPct}%${R}`;
-    const parts = [`${c("green")}✓${R} ${c("dim")}${this.responseCount}${R}`];
-    if (this.responseCount > 1) parts.push(`${c("dim")}·${R} ${tokenK}K`);
-    parts.push(`${c("dim")}·${R} ${toolCount} ${c("dim")}tools${R}`, `${c("dim")}·${R} ${c("green")}${elapsedStr}${R}`, `${c("dim")}·${R} ${xpBar}`);
-    const txt = parts.join(" "), len = txt.replace(/\x1b\[[0-9;]*m/g, "").length;
-    const dashes = Math.max(0, cols - len - 4);
-    console.log(`\n${c("green")}└${R}${c("dim")}${"─".repeat(Math.floor(dashes / 2))}${R} ${txt} ${c("dim")}${"─".repeat(Math.ceil(dashes / 2))}${R}${c("green")}┘${R}`);
-    const calls = this._toolCallCounter, facts = this._growFacts;
-    if (calls > 0) {
-      const sp = [`${c("dim")}  ${c("green")}✓${R} ${calls} tool${calls === 1 ? "" : "s"}`];
-      if (facts > 0) sp.push(`${c("cyan")}${facts} fact${facts === 1 ? "" : "s"} extracted${R}`);
-      sp.push(`${c("dim")}${elapsedStr} total${R}`);
-      console.log(sp.join(` ${c("dim")}·${R} `));
-    }
+    const calls = this._toolCallCounter;
+    const parts = [`${c("green")}✓${R} ${this.responseCount}`];
+    if (calls > 0) parts.push(`${c("dim")}${calls} tool${calls === 1 ? "" : "s"}${R}`);
+    if (this.tokensUsed > 0) parts.push(`${c("dim")}${(this.tokensUsed / 1000).toFixed(1)}K${R}`);
+    parts.push(`${c("dim")}${elapsedStr}${R}`);
+    console.log(`${c("dim")}${parts.join(" · ")}${R}`);
   }
 
   triggerPostEvolution() {
