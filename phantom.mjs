@@ -2188,7 +2188,7 @@ class ConversationalUI {
         return;
       }
 
-      // Not busy — submit and keep onKey alive for next input
+      // Not busy — submit, clear the prompt line
       process.stdout.write("\n");
       // Debounce: ignore residual data events from paste buffer
       this._ignoreInput = true;
@@ -2200,9 +2200,6 @@ class ConversationalUI {
       if (this.inputHistory.length === 0 || this.inputHistory[this.inputHistory.length - 1] !== fullInput) {
         this.inputHistory.push(fullInput);
       }
-
-      // Show prompt immediately so user can type while agent works
-      process.stdout.write(`${c("green")}❯${R} `);
 
       this.handleInput(fullInput);
       return;
@@ -2235,6 +2232,10 @@ class ConversationalUI {
 
     // Regular character
     if (str.length === 1 && str.charCodeAt(0) >= 32) {
+      // If agent is processing and user hasn't started typing yet, open a new prompt line
+      if (this._busy && !this.inputBuf) {
+        process.stdout.write(`\n${c("green")}❯${R} `);
+      }
       this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + str + this.inputBuf.slice(this.cursorPos);
       this.cursorPos++;
       this.redrawLine();
