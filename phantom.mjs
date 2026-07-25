@@ -741,7 +741,7 @@ class Agent {
 
   async react(userInput, from) {
     const systemPrompt = this.buildSystemPrompt(userInput);
-    const maxIter = parseInt(process.env.PHANTOM_MAX_ITER) || 32;
+    const maxIter = parseInt(process.env.PHANTOM_MAX_ITER) || 100;
     let iterCount = 0;
     let messages = [{ role: "system", content: systemPrompt }];
     const MAX_HISTORY_TURNS = 12;
