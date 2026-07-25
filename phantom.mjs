@@ -1701,6 +1701,7 @@ class ConversationalUI {
     this.selSuggestion = -1;      // -1 = none selected, 0+ = index into suggestions
     this.suggestionActive = false; // whether suggestion bar is visible
     this._suggestionBarHeight = 0; // lines drawn for suggestion bar (for cleanup)
+    this._lastSuggestions = [];    // post-response contextual hints
     // Build command list once
     this._commandList = [
       ["help", "show this help"],
@@ -2026,6 +2027,7 @@ class ConversationalUI {
     this.cursorPos = 0;
     this.inputLines = [];
     this._ignoreInput = false;
+    this._lastSuggestions = [];
 
     process.stdout.write(`\n${c("green")}>> ${R}`);
 
@@ -2239,6 +2241,17 @@ class ConversationalUI {
         this.cursorPos++;
         return;
       }
+      // Number key selects suggestion at empty prompt
+      if (this._lastSuggestions && this._lastSuggestions.length > 0 && !this.inputBuf && str >= "1" && str <= "3") {
+        const idx = parseInt(str) - 1;
+        if (idx < this._lastSuggestions.length) {
+          this.inputBuf = this._lastSuggestions[idx].label;
+          this.cursorPos = this.inputBuf.length;
+          this._lastSuggestions = [];
+          this.redrawLine();
+          return;
+        }
+      }
       this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + str + this.inputBuf.slice(this.cursorPos);
       this.cursorPos++;
       this.redrawLine();
@@ -2324,6 +2337,13 @@ class ConversationalUI {
       this.evolutionXP = Math.min(this.evolutionMaxXP, this.evolutionXP + Math.min(20, Math.max(1, Math.floor(response.length / 50))));
 
       this.renderFooter(response);
+      // Show contextual suggestions for next action
+      const hints = this._generateSuggestions(response);
+      this._lastSuggestions = hints;
+      if (hints.length > 0 && this.running && !this._cancelled) {
+        this.renderSuggestionHints(hints);
+      }
+
       this.conversation.push(`user: ${input.substring(0, 200)}`);
       this.conversation.push(`phantom: ${response.substring(0, 500)}`);
       if (this.conversation.length > 500) this.conversation.splice(0, 100);
@@ -2472,7 +2492,57 @@ class ConversationalUI {
     this.log(`${c(color)}${text}${R}`);
   }
 
-  // ── Hermes-style bars ────────────────────────────────────
+  // ── Suggestion Hints ────────────────────────────────────
+
+  _generateSuggestions(response) {
+    if (!response || !response.trim()) return [];
+    const words = response.toLowerCase().split(/[\s,.;:!?()\[\]{}'"]+/);
+    const seen = new Set();
+    const scored = [];
+
+    const tools = this._getToolNameList();
+    for (const [name, desc] of tools) {
+      const d = desc.toLowerCase();
+      // Score: count how many response words match tool name or description
+      let score = 0;
+      for (const w of words) {
+        if (w.length < 3) continue;
+        if (name.includes(w) || w.includes(name)) score += 3;
+        if (d.includes(w)) score += 1;
+      }
+      // Bonus for recent/topical patterns
+      if (response.toLowerCase().includes(name)) score += 5;
+      if (score > 0) scored.push({ label: `@${name}|`, desc, score });
+    }
+
+    // Also suggest relevant commands based on context
+    const cmdWords = response.toLowerCase();
+    for (const [name, desc] of this._commandList) {
+      if (name === "h" || name === "q" || name === "c" || name === "t") continue; // skip aliases
+      let score = 0;
+      if (cmdWords.includes(name)) score += 3;
+      if (cmdWords.includes(desc.split(" ")[0])) score += 2;
+      if (score > 0) scored.push({ label: `/${name} `, desc, score });
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, 6).map(s => ({ label: s.label, desc: s.desc }));
+  }
+
+  renderSuggestionHints(suggestions) {
+    if (!suggestions || suggestions.length === 0) return;
+    const cols = this.cols;
+    const count = Math.min(suggestions.length, 3);
+    for (let i = 0; i < count; i++) {
+      const s = suggestions[i];
+      const key = `${c("green")}${i + 1}${R}`;
+      const label = `${c("cyan")}${s.label}${R}`;
+      const desc = s.desc ? ` ${c("dim")}— ${s.desc.substring(0, 45)}${R}` : "";
+      let line = `  ${key}  ${label}${desc}`;
+      if (line.length > cols - 1) line = line.substring(0, cols - 4) + "…";
+      console.log(line);
+    }
+  }
 
   get cols() { return process.stdout.columns || 80; }
 
