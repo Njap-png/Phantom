@@ -2581,8 +2581,12 @@ class ConversationalUI {
       clear: () => {
         this.logLines = [];
         if (this.tui?.active) {
-          this.tui.buf.length = 0; // clear conversation buffer
-          this.tui._drawConversation();
+          this.tui._buf.length = 0; // clear conversation buffer
+          // Clear each line in scroll region
+          for (let r = this.tui._convTop; r <= this.tui._convBot; r++) {
+            process.stdout.write(`${CSI}${r};1H${CSI}2K`);
+          }
+          process.stdout.write(`${CSI}${this.tui._convTop};1H`);
           this.tui.setInput("");
         } else {
           process.stdout.write(cls + home);
