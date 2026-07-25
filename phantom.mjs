@@ -2175,17 +2175,17 @@ class ConversationalUI {
       this.inputBuf = "";
       this.cursorPos = 0;
 
-      // If agent is busy, queue input and keep the prompt open
+      // If agent is busy, queue input silently
       if (this._busy) {
         // Dedup: skip if same as last queued item
         if (this.promptQueue.length > 0 && this.promptQueue[this.promptQueue.length - 1] === fullInput) {
           this.sayLine(`${c("yellow")}📥${R} Duplicate skipped`, "yellow");
         } else if (fullInput) {
           this.promptQueue.push(fullInput);
-          this.sayLine(`${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${fullInput}`, "yellow");
+          this.sayLine(`${c("yellow")}📥${R} Queued (${this.promptQueue.length})`, "yellow");
         }
-        // Keep stdin listener active — prompt stays visible
-        process.stdout.write(`\n${c("green")}>> ${R}`);
+        this.inputBuf = "";
+        this.cursorPos = 0;
         return;
       }
 
@@ -2233,9 +2233,11 @@ class ConversationalUI {
 
     // Regular character
     if (str.length === 1 && str.charCodeAt(0) >= 32) {
-      // If agent is processing and user hasn't started typing yet, open a new prompt line
-      if (this._busy && !this.inputBuf) {
-        process.stdout.write(`\n${c("green")}>> ${R}`);
+      if (this._busy) {
+        // Silently buffer during processing — no stdout writes to avoid corruption
+        this.inputBuf += str;
+        this.cursorPos++;
+        return;
       }
       this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + str + this.inputBuf.slice(this.cursorPos);
       this.cursorPos++;
@@ -2293,8 +2295,6 @@ class ConversationalUI {
     this._busy = true;
     this.sayLine(`> ${input}`, "green");
     if (!this.agent) { this.sayLine("✕ No agent available.", "red"); this._busy = false; this.prompt(); return; }
-    // Keep prompt visible during processing
-    process.stdout.write(`${c("green")}>> ${R}`);
 
     const { spinner, cleanup } = this.setupAgentHandlers();
 
