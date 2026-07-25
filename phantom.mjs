@@ -1988,6 +1988,11 @@ class ConversationalUI {
     this.tui.setToolCount(toolCount);
     this.tui.enter();
 
+    // Startup info in conversation area
+    const providerName = this.llm?.provider || "no-llm";
+    const ready = this.llm?.hasLLM ? `${c("green")}ready${R}` : `${c("yellow")}tools-only${R}`;
+    this.tui.log(`  ${c("dim")}${providerName} ${ready} · ${toolCount} tools${R}`);
+
     // ── Spawn agents ──
     if (this.am.count === 0) {
       // Main agent
