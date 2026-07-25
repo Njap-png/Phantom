@@ -2366,7 +2366,23 @@ class ConversationalUI {
       this.triggerPostEvolution();
     } catch (err) {
       this.teardownAgentHandlers(cleanup, spinner);
-      if (!this._cancelled) this.sayLine(`✕ Error: ${err.message}`, "red");
+      if (!this._cancelled) {
+        this.sayLine(`✕ Error: ${err.message}`, "red");
+        // Auto-heal: run self-diagnosis and fix on error
+        this.sayLine("🧬 Running self-heal...", "yellow");
+        setImmediate(async () => {
+          try {
+            const { selfHeal } = await import("./lib/evolve.mjs");
+            const result = await selfHeal({ maxAttempts: 3 });
+            const fixed = result.log.filter(r => r.fixes?.some(f => f.fixed)).length;
+            if (result.clean) {
+              this.sayLine(`✅ Self-healed (${fixed} fix(es), ${(result.elapsed/1000).toFixed(1)}s)`, "green");
+            } else {
+              this.sayLine(`⚠ Self-heal partial (${fixed} fix(es), ${result.attempts} round(s))`, "yellow");
+            }
+          } catch {}
+        });
+      }
     }
     this._busy = false;
     if (this._cancelled) { this._cancelled = false; return; }
