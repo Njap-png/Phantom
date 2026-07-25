@@ -1963,12 +1963,13 @@ class ConversationalUI {
     const isTermux = !!(process.env.TERMUX_VERSION || process.env.PREFIX?.startsWith("/data/data/com.termux"));
     const modelLabel = typeof providerName === "string" ? providerName : "connected";
 
-    // ── Shadow figlet logo ──
-    if (!process.env.PHANTOM_QUIET) log.art(renderLogo({ wide: isWide, tools: toolCount }));
-
     // ── Hermes-style header ──
-    const infoStr = `${c("cyan")}${B}PHANTOM${R}${c("dim")} — ${toolCount} tools · ${modelLabel}${R}${isTermux ? ` ${c("dim")}📱${R}` : ""}${this.llm?.hasLLM ? ` ${c("green")}ready${R}` : ` ${c("yellow")}tools-only${R}`}`;
-    console.log(`${c("dim")}${infoStr}${R}`);
+    if (!process.env.PHANTOM_QUIET) {
+      log.art(renderLogo({ wide: isWide, tools: toolCount }));
+      const modelLabel = typeof providerName === "string" ? providerName : "connected";
+      const extra = `${isTermux ? ` ${c("dim")}📱${R}` : ""}${this.llm?.hasLLM ? ` ${c("green")}ready${R}` : ` ${c("yellow")}tools-only${R}`}`;
+      console.log(`  ${c("dim")}${modelLabel}${extra}${R}`);
+    }
 
     // ── Spawn agents ──
     if (this.am.count === 0) {
@@ -2292,6 +2293,8 @@ class ConversationalUI {
     this._busy = true;
     this.sayLine(`> ${input}`, "green");
     if (!this.agent) { this.sayLine("✕ No agent available.", "red"); this._busy = false; this.prompt(); return; }
+    // Keep prompt visible during processing
+    process.stdout.write(`${c("green")}❯${R} `);
 
     const { spinner, cleanup } = this.setupAgentHandlers();
 
@@ -2458,6 +2461,8 @@ class ConversationalUI {
       this._busy = true;
       setImmediate(() => this.handleInput(next));
     } else {
+      // Blank line separates conversation turns
+      process.stdout.write("\n");
       this.prompt();
     }
   }
