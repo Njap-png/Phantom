@@ -14,6 +14,7 @@ import { BASE_DIR, MEMORY_DIR, KNOWLEDGE_DIR, BOOKS_DIR, TOOLS_DIR, REPORTS_DIR,
 import { __r, runTool, runPipe, runScheduledScan } from "./lib/runtime.mjs";
 import { log } from "./lib/logger.mjs";
 import { renderLogo, renderBanner, prompt, icons, createSpinner, chatBorder } from "./lib/visual.mjs";
+import { TUI } from "./lib/tui.mjs";
 import { hackerTools } from "./lib/tools.mjs";
 import { initApiDeps, startApiServer, startGuiDashboard, setChatAgent } from "./lib/server.mjs";
 import { autoEvolve, startupEvolve, getEvolveStatus, analyzeError, loadAutoTools } from "./lib/evolve.mjs";
@@ -1726,6 +1727,29 @@ class ConversationalUI {
       ["q", "alias for quit"],
       ["exit", "alias for quit"],
     ];
+
+    // ── TUI init ──
+    this.tui = new TUI({
+      onExit: () => {
+        this.running = false;
+        try { raw(false); } catch {}
+        // Restore original console.log
+        if (this._origLog) {
+          console.log = this._origLog;
+        }
+      }
+    });
+    // Route all console.log through TUI when active
+    this._origLog = console.log.bind(console);
+    const _self = this;
+    console.log = function(...args) {
+      const text = args.map(a => typeof a === "string" ? a : String(a)).join(" ");
+      if (_self.tui?.active) {
+        _self.tui.log(text);
+      } else {
+        _self._origLog(text);
+      }
+    };
   }
 
   log(msg) { this.logLines.push(msg); if (this.logLines.length > 1000) this.logLines.shift(); }
@@ -1816,6 +1840,8 @@ class ConversationalUI {
 
   renderSuggestionBar() {
     if (!this.suggestionActive || this.suggestions.length === 0) return;
+    // In TUI mode, suggestion bar needs updated rendering — skip for now
+    if (this.tui?.active) return;
 
     const { cols } = getSize();
     const maxItems = Math.min(this.suggestions.length, 6);
@@ -1915,7 +1941,7 @@ class ConversationalUI {
           inCode = false;
         } else {
           codeLang = codeFence[1] || "";
-          if (codeLang) process.stdout.write(`  ${c("dim")}${codeLang}${R}\n`);
+          if (codeLang) { const _l = `  ${c("dim")}${codeLang}${R}`; if (this.tui?.active) this.tui.log(_l); else process.stdout.write(_l + "\n"); }
           inCode = true;
         }
         continue;
@@ -1956,21 +1982,11 @@ class ConversationalUI {
   }
 
   async start() {
-    process.stdout.write(cls + home);
     const toolCount = Object.keys(hackerTools).length;
-    const cols = process.stdout.columns || 80;
-    const isWide = cols >= 100;
-    const providerName = this.llm?.provider || "no-llm";
-    const isTermux = !!(process.env.TERMUX_VERSION || process.env.PREFIX?.startsWith("/data/data/com.termux"));
-    const modelLabel = typeof providerName === "string" ? providerName : "connected";
 
-    // ── Hermes-style header ──
-    if (!process.env.PHANTOM_QUIET) {
-      log.art(renderLogo({ wide: isWide, tools: toolCount }));
-      const modelLabel = typeof providerName === "string" ? providerName : "connected";
-      const extra = `${isTermux ? ` ${c("dim")}📱${R}` : ""}${this.llm?.hasLLM ? ` ${c("green")}ready${R}` : ` ${c("yellow")}tools-only${R}`}`;
-      console.log(`  ${c("dim")}${modelLabel}${extra}${R}`);
-    }
+    // ── TUI: enter alt-screen, draw fixed logo + input bar ──
+    this.tui.setToolCount(toolCount);
+    this.tui.enter();
 
     // ── Spawn agents ──
     if (this.am.count === 0) {
@@ -2029,7 +2045,7 @@ class ConversationalUI {
     this._ignoreInput = false;
     this._lastSuggestions = [];
 
-    process.stdout.write(`\n${c("green")}>> ${R}`);
+    this.tui.setInput("");
 
     raw(true);
     // Remove stale listener to prevent duplicate accumulation
@@ -2168,7 +2184,11 @@ class ConversationalUI {
         this.inputLines.push(this.inputBuf.slice(0, -1));
         this.inputBuf = "";
         this.cursorPos = 0;
-        process.stdout.write(`\n${c("green")}│${R} `);
+        if (this.tui?.active) {
+          this.redrawLine();
+        } else {
+          process.stdout.write(`\n${c("green")}│${R} `);
+        }
         return;
       }
       // Submit
@@ -2191,8 +2211,8 @@ class ConversationalUI {
         return;
       }
 
-      // Not busy — submit, clear the prompt line
-      process.stdout.write("\n");
+      // Not busy — submit
+      this.tui.log(""); // blank line to separate turn
       // Debounce: ignore residual data events from paste buffer
       this._ignoreInput = true;
       setTimeout(() => { this._ignoreInput = false; }, 50);
@@ -2259,42 +2279,16 @@ class ConversationalUI {
   }
 
   redrawLine() {
-    const stateIcon = this.agent?.status === "thinking" ? "🧠" : this.agent?.status === "speaking" ? "💬" : this.agent?.status === "executing" ? "⚡" : "👻";
-    const promptStr = this.inputLines.length > 0 ? `${c("green")}│${R} ` : `${c("green")}>> ${R}`;
-
-    // Clear previous suggestion bar if any
-    if (this._suggestionBarHeight > 0) {
-      // Move cursor UP from below the bar to the prompt line
-      process.stdout.write(`\x1b[${this._suggestionBarHeight}A`);
-      // Clear prompt line, then each bar line going down
-      for (let i = 0; i < this._suggestionBarHeight; i++) {
-        process.stdout.write(`\x1b[K\r\n`);
-      }
-      process.stdout.write(`\x1b[K`); // last line
-      // Move back up to the prompt line
-      process.stdout.write(`\x1b[${this._suggestionBarHeight}A`);
-      this._suggestionBarHeight = 0;
-    }
-
-    // Clear current line
-    process.stdout.write(`\r\x1b[K${promptStr}${this.inputBuf}`);
-
-    // Position cursor
-    const { cols } = getSize();
-    const strippedLen = promptStr.replace(/\x1b\[[0-9;]*m/g, "").length;
-    const visualCursorCol = (strippedLen + this.cursorPos) % cols;
-    if (this.cursorPos < this.inputBuf.length) {
-      process.stdout.write(`\r\x1b[${visualCursorCol + 1}C`);
-    }
-
+    // In TUI mode, update the fixed input bar
+    const promptStr = `>> `;
+    this.tui.setInput(`${promptStr}${this.inputBuf}`);
     // ── Render suggestion bar below ──
     this.updateSuggestions();
     if (this.suggestionActive && this.suggestions.length > 0) {
       this.renderSuggestionBar();
-      // Calculate lines drawn for next clear
       const itemLines = Math.min(this.suggestions.length, 6);
-      this._suggestionBarHeight = itemLines + 1; // items + footer hint
-      if (this.suggestions.length > 6) this._suggestionBarHeight++; // overflow line
+      this._suggestionBarHeight = itemLines + 1;
+      if (this.suggestions.length > 6) this._suggestionBarHeight++;
     } else {
       this._suggestionBarHeight = 0;
     }
@@ -2482,14 +2476,15 @@ class ConversationalUI {
       setImmediate(() => this.handleInput(next));
     } else {
       // Blank line separates conversation turns
-      process.stdout.write("\n");
+      this.tui.log("");
       this.prompt();
     }
   }
 
   sayLine(text, color = "fg") {
-    console.log(`${c(color)}${text}${R}`);
-    this.log(`${c(color)}${text}${R}`);
+    const formatted = `${c(color)}${text}${R}`;
+    this.tui.log(formatted);
+    this.log(formatted);
   }
 
   // ── Suggestion Hints ────────────────────────────────────
@@ -2663,8 +2658,14 @@ class ConversationalUI {
       },
       clear: () => {
         this.logLines = [];
-        process.stdout.write(cls + home);
-        console.log(`\n${c("magenta")}${c("dim")}·   ·   ·   ·   ·   ·   ${R}\n${c("cyan")}  ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄${R}\n${c("cyan")} █${c("magenta")} ═══ ═══ ═══ ═══ ═══${c("cyan")} █${R}\n${c("cyan")}▐█${c("magenta")} ·   ·   ·   ·   ·${c("cyan")} █▌${R}\n${c("cyan")}▐█   ${c("magenta")}╔═══════════╗${c("cyan")}   █▌${R}\n${c("cyan")}▐█   ${c("magenta")}║ ${c("green")}◈     ◈${c("magenta")} ║${c("cyan")}   █▌${R}\n${c("cyan")}▐█   ${c("magenta")}║${c("dim")}  ╔═══╗${c("magenta")}   ║${c("cyan")}   █▌${R}\n${c("cyan")}▐█   ${c("magenta")}╚═══════════╝${c("cyan")}   █▌${R}\n${c("cyan")} █   ${c("magenta")}┊ ${c("magenta")}${c("dim")}║${c("magenta")}   ${c("magenta")}${c("dim")}║${c("magenta")} ┊${c("cyan")}   █${R}\n${c("cyan")} █   ${c("magenta")}┊ ${c("magenta")}${c("dim")}║${c("magenta")} ● ${c("magenta")}${c("dim")}║${c("magenta")} ┊${c("cyan")}   █${R}\n${c("cyan")} ▀▄  ${c("magenta")}${c("dim")}║${c("magenta")} ═══ ${c("magenta")}${c("dim")}║${c("cyan")}  ▄▀${R}\n  ${c("magenta")}${B}P H A N T O M${R}  ${c("dim")}cleared${R}\n`);
+        if (this.tui?.active) {
+          this.tui.buf.length = 0; // clear conversation buffer
+          this.tui._drawConversation();
+          this.tui.setInput("");
+        } else {
+          process.stdout.write(cls + home);
+          console.log(`\n${c("magenta")}${c("dim")}·   ·   ·   ·   ·   ·   ${R}\n${c("cyan")}  ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄${R}\n${c("cyan")} █${c("magenta")} ═══ ═══ ═══ ═══ ═══${c("cyan")} █${R}\n${c("cyan")}▐█${c("magenta")} ·   ·   ·   ·   ·${c("cyan")} █▌${R}\n${c("cyan")}▐█   ${c("magenta")}╔═══════════╗${c("cyan")}   █▌${R}\n${c("cyan")}▐█   ${c("magenta")}║ ${c("green")}◈     ◈${c("magenta")} ║${c("cyan")}   █▌${R}\n${c("cyan")}▐█   ${c("magenta")}║${c("dim")}  ╔═══╗${c("magenta")}   ║${c("cyan")}   █▌${R}\n${c("cyan")}▐█   ${c("magenta")}╚═══════════╝${c("cyan")}   █▌${R}\n${c("cyan")} █   ${c("magenta")}┊ ${c("magenta")}${c("dim")}║${c("magenta")}   ${c("magenta")}${c("dim")}║${c("magenta")} ┊${c("cyan")}   █${R}\n${c("cyan")} █   ${c("magenta")}┊ ${c("magenta")}${c("dim")}║${c("magenta")} ● ${c("magenta")}${c("dim")}║${c("magenta")} ┊${c("cyan")}   █${R}\n${c("cyan")} ▀▄  ${c("magenta")}${c("dim")}║${c("magenta")} ═══ ${c("magenta")}${c("dim")}║${c("cyan")}  ▄▀${R}\n  ${c("magenta")}${B}P H A N T O M${R}  ${c("dim")}cleared${R}\n`);
+        }
       },
       c: "clear",
       stop: () => this.cancel(),
@@ -2729,6 +2730,7 @@ class ConversationalUI {
   }
 
   stop() {
+    this.tui.exit();
     this.running = false;
     raw(false);
     try { if (this.inputHandler) process.stdin.removeListener("data", this.inputHandler); } catch {}
