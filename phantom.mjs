@@ -2942,10 +2942,10 @@ if (ENV.interactive) {
   } catch {}
 }
 
-// Launch chat (default mode)
-const { runChat } = await import("./chat.mjs");
-await runChat(llm);
-process.exit(0);
+// ── Launch ConversationalUI (default) ──
+const am = new AgentManager(llm);
+const ui = selectUI(am);
+ui.start();
 
 process.on("SIGINT", () => { try { process.stdout.write(show); } catch {} process.exit(0); });
 process.on("SIGTERM", () => { try { process.stdout.write(show); } catch {} process.exit(0); });
