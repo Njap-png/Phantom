@@ -2214,34 +2214,35 @@ class ConversationalUI {
       this.inputBuf = "";
       this.cursorPos = 0;
 
-      raw(false);
-      process.stdin.removeListener("data", this.inputHandler);
+      // If agent is busy, queue input and keep the prompt open
+      if (this._busy) {
+        // Dedup: skip if same as last queued item
+        if (this.promptQueue.length > 0 && this.promptQueue[this.promptQueue.length - 1] === fullInput) {
+          this.sayLine(`${c("yellow")}📥${R} Duplicate skipped`, "yellow");
+        } else if (fullInput) {
+          this.promptQueue.push(fullInput);
+          this.sayLine(`${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${fullInput}`, "yellow");
+        }
+        // Keep stdin listener active — prompt stays visible
+        process.stdout.write(`\n${c("green")}❯${R} `);
+        return;
+      }
+
+      // Not busy — submit and keep onKey alive for next input
+      process.stdout.write("\n");
       // Debounce: ignore residual data events from paste buffer
       this._ignoreInput = true;
       setTimeout(() => { this._ignoreInput = false; }, 50);
-      process.stdout.write("\n");
 
-      if (!fullInput) { this.prompt(); return; }
+      if (!fullInput) { this.redrawLine(); return; }
 
       // Save to input history
       if (this.inputHistory.length === 0 || this.inputHistory[this.inputHistory.length - 1] !== fullInput) {
         this.inputHistory.push(fullInput);
       }
 
-      // If agent is busy, queue the input instead of submitting
-      if (this._busy) {
-        // Dedup: skip if same as last queued item
-        if (this.promptQueue.length > 0 && this.promptQueue[this.promptQueue.length - 1] === fullInput) {
-          this.sayLine(`${c("yellow")}📥${R} Duplicate skipped`, "yellow");
-          // Don't call prompt() — queueHandler is already listening
-          return;
-        }
-        this.promptQueue.push(fullInput);
-        this.sayLine(`${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${fullInput}`, "yellow");
-        // Don't call prompt() — queueHandler handles stdin while busy.
-        // Calling prompt() would install onKey alongside queueHandler, causing double-processing.
-        return;
-      }
+      // Show prompt immediately so user can type while agent works
+      process.stdout.write(`${c("green")}❯${R} `);
 
       this.handleInput(fullInput);
       return;
@@ -2405,16 +2406,9 @@ class ConversationalUI {
     const toolPlanHandler = () => {}; // silent
     this._toolPlanHandler = toolPlanHandler;
     this.bus.on("agent:tool:plan", toolPlanHandler);
-    // Show agent's reasoning comments — always visible even while typing
+    // Show agent's reasoning comments
     const thinkHandler = (comment) => {
-      if (comment) {
-        // If user was typing, clear input line, print thought, redraw input
-        if (this._typing && this._queueBuf != null) {
-          process.stdout.write(`\r\x1b[K${c("cyan")}◈${R} ${comment}\n${c("yellow")}⚡${R} ${this._queueBuf || ""}`);
-        } else {
-          console.log(`${c("cyan")}◈${R} ${comment}`);
-        }
-      }
+      if (comment) console.log(`${c("cyan")}◈${R} ${comment}`);
     };
     this._thinkHandler = thinkHandler;
     this.bus.on("agent:think", thinkHandler);
@@ -2430,77 +2424,11 @@ class ConversationalUI {
     this._toolResultHandler = toolResultHandler;
     this.bus.on("agent:tool:result", toolResultHandler);
 
-    // ── Interruptible input: type while agent thinks ──
-    // Spinner stays visible. Typing appears on a new line below it.
-    // Enter interrupts the current agent and submits immediately.
-    const queueHandler = (buf) => {
-      const s = buf.toString();
-      if (s === "\r" || s === "\n") {
-        const q = this._queueBuf?.trim();
-        this._queueBuf = "";
-        if (q) {
-          // Capture the input, clear line, interrupt agent, submit
-          process.stdout.write(`\r\x1b[K`);
-          console.log(`${c("yellow")}📤${R} Interrupt — submitting: ${q}`);
-          const qCopy = q;
-          setImmediate(() => {
-            // Teardown agent without calling cancel's setTimeout(prompt)
-            this._cancelled = true;
-            this._busy = false;
-            if (this._spinner) { try { this._spinner.stop(); } catch {} delete this._spinner; }
-            if (this._queueHandler) {
-              try { process.stdin.removeListener("data", this._queueHandler); } catch {}
-              this._queueHandler = null;
-            }
-            raw(false);
-            this.bus.off("tick", this._tickHandler);
-            this.bus.off("agent:tool:plan", this._toolPlanHandler);
-            this.bus.off("agent:tool:start", this._toolStartHandler);
-            this.bus.off("agent:tool:result", this._toolResultHandler);
-            this.bus.off("agent:think", this._thinkHandler);
-            this._queueBuf = "";
-            // Submit the interrupt input
-            this._busy = true;
-            this.handleInput(qCopy);
-          });
-        }
-        return;
-      }
-      // Ctrl+C during busy → cancel
-      if (s === "\x03") { this.cancel(); return; }
-      // First character — move to new line below spinner
-      if (!this._typing) {
-        this._typing = true;
-        this._queueBuf = "";
-        process.stdout.write(`\n${c("yellow")}⚡${R} `);
-      }
-      // Backspace
-      if (s === "\x7f" || s === "\b") {
-        if (this._queueBuf?.length > 0) {
-          this._queueBuf = this._queueBuf.slice(0, -1);
-          process.stdout.write(`\r\x1b[K${c("yellow")}⚡${R} ${this._queueBuf}`);
-        }
-        return;
-      }
-      // Regular characters
-      if (s.length === 1 && s.charCodeAt(0) >= 32) {
-        this._queueBuf = (this._queueBuf || "") + s;
-        process.stdout.write(s);
-      }
-    };
-    this._queueHandler = queueHandler;
-    // Strip any stale onKey listener that could collide with queueHandler
-    if (this.inputHandler) {
-      try { process.stdin.removeListener("data", this.inputHandler); } catch {}
-    }
-    raw(true);
-    process.stdin.on("data", queueHandler);
-    return { spinner, cleanup: { tickHandler, toolPlanHandler, thinkHandler, toolStartHandler, toolResultHandler, queueHandler } };
+    return { spinner, cleanup: { tickHandler, toolPlanHandler, thinkHandler, toolStartHandler, toolResultHandler, queueHandler: null } };
   }
 
   teardownAgentHandlers(cleanup, spinner) {
-    process.stdin.removeListener("data", cleanup.queueHandler);
-    raw(false);
+    // Don't touch stdin — onKey handles it throughout
     spinner.stop();
     delete this._spinner;
     this.bus.off("tick", cleanup.tickHandler);
@@ -2554,12 +2482,8 @@ class ConversationalUI {
     this._cancelled = true;
     this._busy = false;
     if (this._spinner) { try { this._spinner.stop(); } catch {} delete this._spinner; }
-    // Clean up queue handler if active
-    if (this._queueHandler) {
-      try { process.stdin.removeListener("data", this._queueHandler); } catch {}
-      this._queueHandler = null;
-    }
-    raw(false);
+    // Stdin stays with onKey — no cleanup needed
+    this._queueBuf = "";
     this.bus.off("tick", this._tickHandler);
     this.bus.off("agent:tool:plan", this._toolPlanHandler);
     this.bus.off("agent:tool:start", this._toolStartHandler);
