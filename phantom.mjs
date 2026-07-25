@@ -2027,7 +2027,7 @@ class ConversationalUI {
     this.inputLines = [];
     this._ignoreInput = false;
 
-    process.stdout.write(`\n${c("green")}❯${R} `);
+    process.stdout.write(`\n${c("green")}>> ${R}`);
 
     raw(true);
     // Remove stale listener to prevent duplicate accumulation
@@ -2185,7 +2185,7 @@ class ConversationalUI {
           this.sayLine(`${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${fullInput}`, "yellow");
         }
         // Keep stdin listener active — prompt stays visible
-        process.stdout.write(`\n${c("green")}❯${R} `);
+        process.stdout.write(`\n${c("green")}>> ${R}`);
         return;
       }
 
@@ -2235,7 +2235,7 @@ class ConversationalUI {
     if (str.length === 1 && str.charCodeAt(0) >= 32) {
       // If agent is processing and user hasn't started typing yet, open a new prompt line
       if (this._busy && !this.inputBuf) {
-        process.stdout.write(`\n${c("green")}❯${R} `);
+        process.stdout.write(`\n${c("green")}>> ${R}`);
       }
       this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + str + this.inputBuf.slice(this.cursorPos);
       this.cursorPos++;
@@ -2245,7 +2245,7 @@ class ConversationalUI {
 
   redrawLine() {
     const stateIcon = this.agent?.status === "thinking" ? "🧠" : this.agent?.status === "speaking" ? "💬" : this.agent?.status === "executing" ? "⚡" : "👻";
-    const promptStr = this.inputLines.length > 0 ? `${c("green")}│${R} ` : `${c("green")}❯${R} `;
+    const promptStr = this.inputLines.length > 0 ? `${c("green")}│${R} ` : `${c("green")}>> ${R}`;
 
     // Clear previous suggestion bar if any
     if (this._suggestionBarHeight > 0) {
@@ -2294,7 +2294,7 @@ class ConversationalUI {
     this.sayLine(`> ${input}`, "green");
     if (!this.agent) { this.sayLine("✕ No agent available.", "red"); this._busy = false; this.prompt(); return; }
     // Keep prompt visible during processing
-    process.stdout.write(`${c("green")}❯${R} `);
+    process.stdout.write(`${c("green")}>> ${R}`);
 
     const { spinner, cleanup } = this.setupAgentHandlers();
 
