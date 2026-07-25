@@ -2233,12 +2233,13 @@ class ConversationalUI {
         // Dedup: skip if same as last queued item
         if (this.promptQueue.length > 0 && this.promptQueue[this.promptQueue.length - 1] === fullInput) {
           this.sayLine(`${c("yellow")}📥${R} Duplicate skipped`, "yellow");
-          this.prompt();
+          // Don't call prompt() — queueHandler is already listening
           return;
         }
         this.promptQueue.push(fullInput);
         this.sayLine(`${c("yellow")}📥${R} Queued (${this.promptQueue.length}): ${fullInput}`, "yellow");
-        this.prompt();
+        // Don't call prompt() — queueHandler handles stdin while busy.
+        // Calling prompt() would install onKey alongside queueHandler, causing double-processing.
         return;
       }
 
@@ -2488,6 +2489,10 @@ class ConversationalUI {
       }
     };
     this._queueHandler = queueHandler;
+    // Strip any stale onKey listener that could collide with queueHandler
+    if (this.inputHandler) {
+      try { process.stdin.removeListener("data", this.inputHandler); } catch {}
+    }
     raw(true);
     process.stdin.on("data", queueHandler);
     return { spinner, cleanup: { tickHandler, toolPlanHandler, thinkHandler, toolStartHandler, toolResultHandler, queueHandler } };
