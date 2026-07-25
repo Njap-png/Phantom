@@ -2242,16 +2242,18 @@ class ConversationalUI {
     if (str.length > 1) {
       this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + str + this.inputBuf.slice(this.cursorPos);
       this.cursorPos += str.length;
-      this.redrawLine();
+      if (this._busy) { this.tui.setInput(this.inputBuf); }
+      else { this.redrawLine(); }
       return;
     }
 
     // Regular character
     if (str.length === 1 && str.charCodeAt(0) >= 32) {
       if (this._busy) {
-        // Silently buffer during processing — no stdout writes to avoid corruption
+        // Queue silently but SHOW in input bar in real-time
         this.inputBuf += str;
         this.cursorPos++;
+        this.tui.setInput(this.inputBuf);
         return;
       }
       // Number key selects suggestion at empty prompt
@@ -2273,8 +2275,7 @@ class ConversationalUI {
 
   redrawLine() {
     // In TUI mode, update the fixed input bar
-    const promptStr = `>> `;
-    this.tui.setInput(`${promptStr}${this.inputBuf}`);
+    this.tui.setInput(this.inputBuf);
     // ── Render suggestion bar below ──
     this.updateSuggestions();
     if (this.suggestionActive && this.suggestions.length > 0) {
