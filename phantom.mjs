@@ -2026,7 +2026,7 @@ class ConversationalUI {
     this.inputLines = [];
     this._ignoreInput = false;
 
-    process.stdout.write(`${c("green")}❯${R} `);
+    process.stdout.write(`\n${c("green")}❯${R} `);
 
     raw(true);
     // Remove stale listener to prevent duplicate accumulation
