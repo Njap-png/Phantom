@@ -2581,11 +2581,12 @@ class ConversationalUI {
       clear: () => {
         this.logLines = [];
         if (this.tui?.active) {
-          this.tui._buf.length = 0; // clear conversation buffer
-          // Clear each line in scroll region
+          this.tui._buf.length = 0;
+          // Clear scroll region lines, reset cursor
           for (let r = this.tui._convTop; r <= this.tui._convBot; r++) {
             process.stdout.write(`${CSI}${r};1H${CSI}2K`);
           }
+          this.tui._cursorRow = this.tui._convTop;
           process.stdout.write(`${CSI}${this.tui._convTop};1H`);
           this.tui.setInput("");
         } else {
