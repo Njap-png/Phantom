@@ -2248,8 +2248,13 @@ class ConversationalUI {
       for (let i = 1; i < parts.length; i++) {
         if (parts[i].length || i < parts.length - 1) this.inputLines.push(parts[i]);
       }
-      if (this._busy) { this.tui.setInput(this.inputBuf); }
-      else { this.redrawLine(); }
+      if (this._busy) {
+        let display = this.inputBuf;
+        if (this.inputLines.length > 0) {
+          display += ` ${c("dim")}(+${this.inputLines.length} more)${R}`;
+        }
+        this.tui.setInput(display);
+      } else { this.redrawLine(); }
       return;
     }
 
@@ -2259,7 +2264,11 @@ class ConversationalUI {
         // Queue silently but SHOW in input bar in real-time
         this.inputBuf += str;
         this.cursorPos++;
-        this.tui.setInput(this.inputBuf);
+        let display = this.inputBuf;
+        if (this.inputLines.length > 0) {
+          display += ` ${c("dim")}(+${this.inputLines.length} more)${R}`;
+        }
+        this.tui.setInput(display);
         return;
       }
       this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + str + this.inputBuf.slice(this.cursorPos);
@@ -2269,8 +2278,16 @@ class ConversationalUI {
   }
 
   redrawLine() {
-    // In TUI mode, update the fixed input bar
-    this.tui.setInput(this.inputBuf);
+    // In TUI mode, show inputBuf + extra-lines indicator
+    let display = this.inputBuf;
+    if (this.inputLines.length > 0) {
+      display += ` ${c("dim")}(+${this.inputLines.length} more line${this.inputLines.length > 1 ? 's' : ''})${R}`;
+    }
+    this.tui.setInput(display);
+    // Reposition cursor at end of actual inputBuf (not the indicator)
+    if (this.tui?.active) {
+      process.stdout.write(`\x1b[${this.tui._rows};${4 + this.inputBuf.length}H`);
+    }
     // ── Render suggestion bar below ──
     this.updateSuggestions();
     if (this.suggestionActive && this.suggestions.length > 0) {
