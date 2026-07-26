@@ -2344,7 +2344,14 @@ class ConversationalUI {
   }
 
   setupAgentHandlers() {
-    const spinner = createSpinner(this.startTime);
+    const tui = this.tui?.active ? this.tui : null;
+    const spinner = createSpinner(this.startTime, {
+      write: tui ? (s) => {
+        // Position at current cursorRow in scroll region, write, redraw input
+        process.stdout.write(`\x1b[${tui._cursorRow};1H\x1b[2K${s.replace(/\r/g, '')}`);
+        tui._redrawInput();
+      } : undefined
+    });
     this._spinner = spinner;
     this._queueBuf = "";
     this._typing = false;
@@ -2584,10 +2591,10 @@ class ConversationalUI {
           this.tui._buf.length = 0;
           // Clear scroll region lines, reset cursor
           for (let r = this.tui._convTop; r <= this.tui._convBot; r++) {
-            process.stdout.write(`${CSI}${r};1H${CSI}2K`);
+            process.stdout.write(`\x1b[${r};1H\x1b[2K`);
           }
           this.tui._cursorRow = this.tui._convTop;
-          process.stdout.write(`${CSI}${this.tui._convTop};1H`);
+          process.stdout.write(`\x1b[${this.tui._convTop};1H`);
           this.tui.setInput("");
         } else {
           process.stdout.write(cls + home);
