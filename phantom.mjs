@@ -2187,6 +2187,7 @@ class ConversationalUI {
       this.inputLines = [];
       this.inputBuf = "";
       this.cursorPos = 0;
+      if (this.tui?.active) this.tui.setInput("");
 
       // If agent is busy, queue input silently
       if (this._busy) {
@@ -2197,8 +2198,6 @@ class ConversationalUI {
           this.promptQueue.push(fullInput);
           this.sayLine(`${c("yellow")}📥${R} Queued (${this.promptQueue.length})`, "yellow");
         }
-        this.inputBuf = "";
-        this.cursorPos = 0;
         return;
       }
 
