@@ -2598,8 +2598,8 @@ class ConversationalUI {
         if (this.tui?.active) {
           this.tui._buf.length = 0;
           // Clear conversation rows (between separator and input bar)
-          const top = this.tui._scrollClear + 1;
-          const bot = this.tui._rows - 2;
+          const top = this.tui._convTop;
+          const bot = this.tui._convBot;
           for (let r = top; r <= bot; r++) {
             process.stdout.write(`\x1b[${r};1H\x1b[2K`);
           }
