@@ -2225,10 +2225,15 @@ class ConversationalUI {
         const { execSync } = $r("child_process");
         const isTermux = !!(process.env.TERMUX_VERSION || process.env.PREFIX?.startsWith("/data/data/com.termux"));
         const pasteCmd = isTermux ? "termux-clipboard-get" : process.platform === "darwin" ? "pbpaste" : "xclip -selection clipboard -o";
-        const clip = execSync(pasteCmd, { encoding: "utf-8", timeout: 3000 }).toString().trim();
+        const clip = execSync(pasteCmd, { encoding: "utf-8", timeout: 3000 }).toString();
         if (clip) {
-          this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + clip + this.inputBuf.slice(this.cursorPos);
-          this.cursorPos += clip.length;
+          const parts = clip.split("\n");
+          // First line goes to inputBuf, rest to inputLines (multi-line)
+          this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + parts[0] + this.inputBuf.slice(this.cursorPos);
+          this.cursorPos += parts[0].length;
+          for (let i = 1; i < parts.length; i++) {
+            if (parts[i].length) this.inputLines.push(parts[i]);
+          }
           this.redrawLine();
         }
       } catch {}
@@ -2236,10 +2241,14 @@ class ConversationalUI {
     }
 
     // Paste detection: terminal dumped multi-char text (not a control sequence)
-    // Catches right-click paste, Ctrl+Shift+V, Termux paste button, etc.
     if (str.length > 1) {
-      this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + str + this.inputBuf.slice(this.cursorPos);
-      this.cursorPos += str.length;
+      const parts = str.split("\n");
+      // First line to inputBuf, rest to inputLines
+      this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + parts[0] + this.inputBuf.slice(this.cursorPos);
+      this.cursorPos += parts[0].length;
+      for (let i = 1; i < parts.length; i++) {
+        if (parts[i].length || i < parts.length - 1) this.inputLines.push(parts[i]);
+      }
       if (this._busy) { this.tui.setInput(this.inputBuf); }
       else { this.redrawLine(); }
       return;
