@@ -2597,12 +2597,14 @@ class ConversationalUI {
         this.logLines = [];
         if (this.tui?.active) {
           this.tui._buf.length = 0;
-          // Clear scroll region lines, reset cursor
-          for (let r = this.tui._convTop; r <= this.tui._convBot; r++) {
+          // Clear conversation rows (between separator and input bar)
+          const top = this.tui._scrollClear + 1;
+          const bot = this.tui._rows - 2;
+          for (let r = top; r <= bot; r++) {
             process.stdout.write(`\x1b[${r};1H\x1b[2K`);
           }
-          this.tui._cursorRow = this.tui._convTop;
-          process.stdout.write(`\x1b[${this.tui._convTop};1H`);
+          this.tui._cursorRow = top;
+          process.stdout.write(`\x1b[${top};1H`);
           this.tui.setInput("");
         } else {
           process.stdout.write(cls + home);
