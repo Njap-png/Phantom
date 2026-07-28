@@ -1475,10 +1475,21 @@ class TermuxUI {
 
   draw() {
     if (!this.running) return;
-    const { rows } = getSize();
-    const lines = this.log.slice(-(rows - 4));
+    const { rows, cols } = getSize();
+    // Count lines from the end, accounting for multi-line entries
+    const available = rows - 4;
+    const visible = [];
+    let lineCount = 0;
+    for (let i = this.log.length - 1; i >= 0 && lineCount < available; i--) {
+      const entry = this.log[i];
+      const entryLines = entry ? Math.max(1, Math.ceil(entry.replace(/\x1b\[[0-9;]*[mK]/g, '').split("\n").reduce((n, l) => n + Math.max(1, Math.ceil(l.length / Math.max(cols, 1))), 0))) : 1;
+      if (lineCount + entryLines <= available || visible.length === 0) {
+        visible.unshift(entry);
+        lineCount += entryLines;
+      } else break;
+    }
     process.stdout.write(home + cls);
-    lines.forEach(l => process.stdout.write(l + "\n"));
+    visible.forEach(l => process.stdout.write(l + "\n"));
   }
 
   async handleCommand(cmd) {
