@@ -49,7 +49,7 @@ function createProvider() {
         let url = `${p.url}${p.chatPath.replace("{model}", model)}`;
         const h = { "Content-Type": "application/json", ...p.auth(key) };
         const body = JSON.stringify(p.fmt({ model, messages }));
-        const r = await fetch(url, { method: "POST", headers: h, body });
+        const r = await fetch(url, { method: "POST", headers: h, body, signal: AbortSignal.timeout(60000) });
         if (!r.ok) { const t = await r.text().catch(() => ""); return `[${r.status}] ${t.substring(0, 200)}`; }
         const d = await r.json();
         return p.parse(d) || "...";
