@@ -2383,9 +2383,8 @@ class ConversationalUI {
     const tui = this.tui?.active ? this.tui : null;
     const spinner = createSpinner(this.startTime, {
       write: tui ? (s) => {
-        // Position at current cursorRow in scroll region, write, redraw input
-        process.stdout.write(`\x1b[${tui._cursorRow};1H\x1b[2K${s.replace(/\r/g, '')}`);
-        tui._redrawInput();
+        // Write spinner at the last line of conversation area (just above input bar)
+        process.stdout.write(`\x1b[${tui._rows - 2};1H\x1b[2K${s.replace(/\r/g, '')}`);
       } : undefined
     });
     this._spinner = spinner;
