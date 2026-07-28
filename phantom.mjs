@@ -31,8 +31,8 @@ loadAutoTools().then(at => {
       added.push(name);
     }
   }
-  if (added.length > 0) {
-    console.debug(`[auto-tools] merged ${added.length} tool(s): ${added.join(", ")}`);
+  if (added.length > 0 && !process.argv.includes("--json")) {
+    process.stderr.write(`[auto-tools] merged ${added.length} tool(s): ${added.join(", ")}\n`);
   }
 }).catch(() => {});
 
@@ -57,8 +57,8 @@ const LEARNED_DIR = resolve(new URL(".", import.meta.url).pathname, "lib", "lear
         }
       } catch {}
     }
-    if (count > 0) {
-      console.debug(`[self-improve] loaded ${count} learned module(s)`);
+    if (count > 0 && !process.argv.includes("--json")) {
+      process.stderr.write(`[self-improve] loaded ${count} learned module(s)\n`);
     }
   } catch {}
 })();
@@ -2742,6 +2742,14 @@ llmInstance = llm;
 __r.llmInstance = llmInstance;
 initApiDeps(hackerTools, __r, REPORTS_DIR);
 const args = process.argv.slice(2);
+
+// Pre-scan for --quiet flag (can appear anywhere)
+const quietIdx = args.indexOf("--quiet");
+if (quietIdx !== -1) {
+  process.env.PHANTOM_QUIET = "1";
+  args.splice(quietIdx, 1);
+}
+
 if (args.length > 0 && !args[0].startsWith("--")) {
   // No --flag: pass as interactive input to phantom
 } else if (args.length > 0) {
