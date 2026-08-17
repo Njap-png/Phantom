@@ -1,0 +1,12 @@
+node_modules/
+dist/
+test/
+src/
+.git/
+.github/
+.gitignore
+.gitattributes
+.prettierrc
+.editorconfig
+*.log
+tsconfig.json

@@ -1,0 +1,49 @@
+{
+  "name": "phantom-ai",
+  "version": "0.2.0",
+  "description": "Space-evolving multi-agent terminal UI — zero-setup, works on desktop & Termux",
+  "main": "phantom.mjs",
+  "type": "module",
+  "preferGlobal": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "phantom.mjs",
+    "lib/",
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "bin": {
+    "phantom": "./phantom.mjs"
+  },
+  "scripts": {
+    "start": "node phantom.mjs",
+    "build": "tsc",
+    "dashboard": "node phantom.mjs --gui",
+    "dev": "tsx src/index.ts",
+    "dev:build": "node dist/index.js",
+    "clean": "rm -rf dist",
+    "test": "node --test test/*.test.mjs",
+    "quiet": "node phantom.mjs --quiet",
+    "run": "node phantom.mjs"
+  },
+  "keywords": [
+    "agent",
+    "terminal",
+    "ai",
+    "multi-agent",
+    "termux"
+  ],
+  "license": "MIT",
+  "optionalDependencies": {
+    "blessed": "^0.1.81"
+  },
+  "devDependencies": {
+    "@types/blessed": "^0.1.25",
+    "@types/node": "^20.14.0",
+    "tsx": "^4.23.1",
+    "typescript": "^5.5.0"
+  }
+}
