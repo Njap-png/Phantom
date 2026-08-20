@@ -2750,7 +2750,6 @@ class ConversationalUI {
     if (trimmed === "exit" || trimmed === "quit") { this.stop(); return; }
     
     // ─── NATURAL LANGUAGE PARSER (works without LLM) ───
-    const nlResult = this.parseNaturalLanguage(input);
     if (nlResult) {
       this._busy = true;
       this.sayLine(`> ${input}`, "green");
