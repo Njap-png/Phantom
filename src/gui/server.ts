@@ -30,6 +30,67 @@ function broadcast(data: any) {
   }
 }
 
+// Broadcast helpers for specific events
+function broadcastHealth() {
+  const mem = process.memoryUsage();
+  const uptime = process.uptime();
+  broadcast({
+    type: "health",
+    data: {
+      status: "ok",
+      uptime: Math.floor(uptime),
+      uptimeHuman: formatUptime(uptime),
+      memory: {
+        rss: Math.round(mem.rss / 1024 / 1024) + "MB",
+        heapUsed: Math.round(mem.heapUsed / 1024 / 1024) + "MB",
+        heapTotal: Math.round(mem.heapTotal / 1024 / 1024) + "MB",
+        external: Math.round(mem.external / 1024 / 1024) + "MB"
+      },
+      pid: process.pid,
+      platform: process.platform,
+      nodeVersion: process.version,
+      usbMounted: existsSync("/root/usb/Phantom"),
+      timestamp: new Date().toISOString()
+    }
+  });
+}
+
+function broadcastMissions() {
+  const missions: any[] = [];
+  if (existsSync(MISSIONS_DIR)) {
+    for (const f of readdirSync(MISSIONS_DIR).filter((f: string) => f.endsWith(".json"))) {
+      const m = JSON.parse(readFileSync(resolve(MISSIONS_DIR, f), "utf-8"));
+      missions.push({
+        id: m.id,
+        programName: m.programName,
+        programHandle: m.programHandle,
+        status: m.status,
+        createdAt: m.createdAt,
+        updatedAt: m.updatedAt,
+        inScopeCount: m.scope?.inScope?.length || 0,
+        objectives: m.objectives?.length || 0
+      });
+    }
+  }
+  missions.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  broadcast({ type: "missions", data: missions });
+}
+
+function broadcastSchedules() {
+  const schedules = (globalThis as any).__phantomSchedules || [];
+  broadcast({
+    type: "schedules",
+    data: schedules.map((s: any) => ({
+      id: s.id,
+      tool: s.tool,
+      target: s.target,
+      interval: s.interval,
+      nextAt: s.nextAt,
+      nextAtHuman: new Date(s.nextAt).toLocaleString()
+    }))
+  });
+}
+
 const HTML = `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -225,8 +286,8 @@ function connectWS() {
     try {
       const msg = JSON.parse(event.data);
       if (msg.type === 'health') updateHealth(msg.data);
-      else if (msg.type === 'mission') updateMission(msg.data);
-      else if (msg.type === 'schedule') updateSchedule(msg.data);
+      else if (msg.type === 'missions') renderMissions(msg.data);
+      else if (msg.type === 'schedules') renderSchedules(msg.data);
     } catch(e) {}
   };
 }
@@ -484,6 +545,13 @@ function switchTab(name) {
 // Initialize
 loadTools();
 connectWS();
+
+// WebSocket message handler
+function handleWSMessage(msg) {
+  if (msg.type === "health") updateHealth(msg.data);
+  else if (msg.type === "missions") renderMissions(msg.data);
+  else if (msg.type === "schedules") renderSchedules(msg.data);
+}
 </script></body></html>`;
 
 export function startGui(port: number = parseInt(process.env.PHANTOM_PORT || "8080")): void {
@@ -674,6 +742,11 @@ export function startGui(port: number = parseInt(process.env.PHANTOM_PORT || "80
       // Send initial state
       ws.send(JSON.stringify({ type: "welcome", timestamp: new Date().toISOString() }));
     });
+
+    // Periodic broadcasts for real-time updates
+    setInterval(broadcastHealth, 5000);
+    setInterval(broadcastMissions, 30000);
+    setInterval(broadcastSchedules, 10000);
   }
 
   server.listen(port, () => {
