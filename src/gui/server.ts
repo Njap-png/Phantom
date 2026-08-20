@@ -235,6 +235,14 @@ header span{color:#5a6a7a;font-size:11px}
     <div class="stat"><span class="stat-label">Node</span><span class="stat-value" id="sysNode">—</span></div>
     <div class="stat"><span class="stat-label">PID</span><span class="stat-value" id="sysPid">—</span></div>
     <div class="stat"><span class="stat-label">USB Mount</span><span class="stat-value ok" id="sysUsb">✓ Mounted</span></div>
+    <div class="stat"><span class="stat-label">Platform</span><span class="stat-value" id="sysPlatform">—</span></div>
+    <div class="stat"><span class="stat-label">Version</span><span class="stat-value" id="sysVersion">—</span></div>
+    <div class="stat"><span class="stat-label">Network</span><span class="stat-value" id="sysNet">—</span></div>
+    <div class="stat"><span class="stat-label">Disk I/O</span><span class="stat-value" id="sysDiskIO">—</span></div>
+    <div class="stat"><span class="stat-label">Uptime (raw)</span><span class="stat-value" id="sysUptime2">—</span></div>
+    <div class="stat"><span class="stat-label">Platform</span><span class="stat-value" id="sysPlatform">—</span></div>
+    <div class="stat"><span class="stat-label">Version</span><span class="stat-value" id="sysVersion">—</span></div>
+    <div class="stat"><span class="stat-label">PID</span><span class="stat-value" id="sysPid2">—</span></div>
   </div>
 
   <div class="monitor-card">
@@ -701,27 +709,38 @@ async function runTaskFromMonitor(name) {
   out.scrollTop = out.scrollHeight;
 }
 
-async function loadHealth() {
-  try {
-    const h = await api('/api/health');
-    updateHealth(h);
-  } catch(e) {}
-}
-
 function updateHealth(h) {
-  document.getElementById('sysUptime').textContent = h.uptimeHuman;
-  document.getElementById('sysMemory').textContent = \`\${h.memory.heapUsed} / \${h.memory.heapTotal} (RSS: \${h.memory.rss})\`;
+  document.getElementById('sysUptime').textContent = h.uptimeHuman || (Math.floor(h.uptime) + 's');
+  document.getElementById('sysMemory').textContent = h.memory.heapUsed + ' / ' + h.memory.heapTotal + ' (RSS: ' + h.memory.rss + ')';
   document.getElementById('sysNode').textContent = h.nodeVersion;
   document.getElementById('sysPid').textContent = h.pid;
   document.getElementById('sysUsb').textContent = h.usbMounted ? '✓ Mounted' : '✗ Not mounted';
   document.getElementById('sysUsb').className = 'stat-value ' + (h.usbMounted ? 'ok' : 'error');
+  // New fields
+  const platformEl = document.getElementById('sysPlatform');
+  if (platformEl) platformEl.textContent = h.platform;
+  const versionEl = document.getElementById('sysVersion');
+  if (versionEl) versionEl.textContent = h.nodeVersion;
 }
 
 async function loadSystem() {
   try {
     const s = await api('/api/system');
     document.getElementById('sysLoad').textContent = s.loadAvg || '—';
-    document.getElementById('sysDisk').textContent = s.disk ? s.disk.split('\\n')[1]?.trim() || '—' : '—';
+    document.getElementById('sysDisk').textContent = s.disk ? s.disk.split('\n')[1]?.trim() || '—' : '—';
+    // New fields
+    const netEl = document.getElementById('sysNet');
+    if (netEl) netEl.textContent = s.netDev ? s.netDev.split('\n').length + ' interfaces' : '—';
+    const diskIOEl = document.getElementById('sysDiskIO');
+    if (diskIOEl) diskIOEl.textContent = s.diskIO ? s.diskIO.split('\n').length + ' devices' : '—';
+    const uptimeEl = document.getElementById('sysUptime2');
+    if (uptimeEl) uptimeEl.textContent = Math.floor(s.uptime) + 's';
+    const platformEl = document.getElementById('sysPlatform');
+    if (platformEl) platformEl.textContent = s.platform;
+    const versionEl = document.getElementById('sysVersion');
+    if (versionEl) versionEl.textContent = s.nodeVersion;
+    const pidEl = document.getElementById('sysPid2');
+    if (pidEl) pidEl.textContent = s.pid;
   } catch(e) {}
 }
 
