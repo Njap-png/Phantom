@@ -112,3 +112,68 @@ describe("schedule tool", () => {
     assert.match(r, /Unknown tool/);
   });
 });
+
+describe("hackerone tool", () => {
+  it("returns help for no args", async () => {
+    const r = await hackerTools.hackerone("");
+    assert.match(r, /HackerOne Tool/);
+    assert.match(r, /programs/);
+    assert.match(r, /scope/);
+    assert.match(r, /reports/);
+    assert.match(r, /report/);
+    assert.match(r, /submit/);
+    assert.match(r, /me/);
+    assert.match(r, /test/);
+  });
+
+  it("returns help for 'help' command", async () => {
+    const r = await hackerTools.hackerone("help");
+    assert.match(r, /HackerOne Tool/);
+  });
+
+  it("returns help for 'list' command", async () => {
+    const r = await hackerTools.hackerone("list");
+    assert.match(r, /HackerOne Tool/);
+  });
+
+  it("handles 'programs' command (credentials may or may not work)", async () => {
+    const r = await hackerTools.hackerone("programs");
+    // Just verify it returns a string response (not an exception)
+    assert.ok(typeof r === "string" && r.length > 0);
+  });
+
+  it("handles 'scope' command (credentials may or may not work)", async () => {
+    const r = await hackerTools.hackerone("scope acme-corp");
+    assert.ok(typeof r === "string" && r.length > 0);
+  });
+
+  it("handles 'reports' command (credentials may or may not work)", async () => {
+    const r = await hackerTools.hackerone("reports acme-corp");
+    assert.ok(typeof r === "string" && r.length > 0);
+  });
+
+  it("handles 'report' command (credentials may or may not work)", async () => {
+    const r = await hackerTools.hackerone("report 1234567");
+    assert.ok(typeof r === "string" && r.length > 0);
+  });
+
+  it("handles 'submit' command (credentials may or may not work)", async () => {
+    const r = await hackerTools.hackerone('submit acme-corp "XSS" high "details"');
+    assert.ok(typeof r === "string" && r.length > 0);
+  });
+
+  it("handles 'me' command (credentials may or may not work)", async () => {
+    const r = await hackerTools.hackerone("me");
+    assert.ok(typeof r === "string" && r.length > 0);
+  });
+
+  it("handles 'test' command (credentials may or may not work)", async () => {
+    const r = await hackerTools.hackerone("test");
+    assert.ok(typeof r === "string" && r.length > 0);
+  });
+
+  it("returns unknown command error for invalid command", async () => {
+    const r = await hackerTools.hackerone("invalid_command");
+    assert.match(r, /Unknown command/);
+  });
+});
