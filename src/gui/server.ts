@@ -420,16 +420,16 @@ async function loadMissions() {
 function renderMissions(list) {
   const div = document.getElementById('missionList');
   if (!list.length) { div.innerHTML = '<div style="color:#5a6a7a">No missions found.</div>'; return; }
-  div.innerHTML = list.map(m => \`
-    <div class="mission-item">
-      <div class="header">
-        <span class="name">\${m.id}</span>
-        <span class="status \${m.status}">\${m.status.toUpperCase()}</span>
-      </div>
-      <div class="meta">\${m.programName} (\${m.programHandle}) • Updated: \${new Date(m.updatedAt).toLocaleString()}</div>
-      <div class="scope">In-scope: \${m.inScopeCount} assets • Objectives: \${m.objectives}</div>
-    </div>
-  \`).join('');
+  div.innerHTML = list.map(function(m) {
+    return '<div class="mission-item" onclick="showMissionDetail(\'' + m.id + '\')">' +
+      '<div class="header">' +
+        '<span class="name">' + m.id + '</span>' +
+        '<span class="status ' + m.status + '">' + m.status.toUpperCase() + '</span>' +
+      '</div>' +
+      '<div class="meta">' + m.programName + ' (' + m.programHandle + ') • Updated: ' + new Date(m.updatedAt).toLocaleString() + '</div>' +
+      '<div class="scope">In-scope: ' + m.inScopeCount + ' assets • Objectives: ' + m.objectives + '</div>' +
+    '</div>';
+  }).join('');
 }
 
 function filterMissions(q) {
@@ -438,6 +438,150 @@ function filterMissions(q) {
     const text = item.textContent.toLowerCase();
     item.style.display = text.includes(q.toLowerCase()) ? '' : 'none';
   });
+}
+
+async function showMissionDetail(missionId) {
+  try {
+    const m = await api('/api/missions/' + encodeURIComponent(missionId));
+    if (!m) { alert('Mission not found'); return; }
+    
+    const detailHtml = 
+      '<div class="mission-detail-panel" style="position:fixed;top:60px;right:0;bottom:0;width:500px;background:#0c0c18;border-left:1px solid #1a1a2e;z-index:100;padding:16px;overflow-y:auto">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">' +
+          '<h3 style="color:#c084fc">🎯 ' + m.id + '</h3>' +
+          '<button onclick="closeMissionDetail()" style="background:none;border:none;color:#5a6a7a;font-size:18px;cursor:pointer">×</button>' +
+        '</div>' +
+        '<div style="margin-bottom:12px">' +
+          '<span class="status ' + m.status + '" style="font-size:10px;padding:2px 8px;border-radius:3px;background:' + 
+            (['planning','ready'].includes(m.status) ? '#a855f722' : 
+             m.status === 'paused' ? '#f8717122' : 
+             m.status === 'reconnaissance' ? '#22d3ee22' : 
+             m.status === 'completed' ? '#34d39922' : 
+             m.status === 'cancelled' ? '#f8717122' : '#5a6a7a22') + 
+            ';color:' + 
+            (['planning','ready'].includes(m.status) ? '#c084fc' : 
+             m.status === 'paused' ? '#f87171' : 
+             m.status === 'reconnaissance' ? '#22d3ee' : 
+             m.status === 'completed' ? '#34d399' : 
+             m.status === 'cancelled' ? '#f87171' : '#5a6a7a') + 
+          '">' + m.status.toUpperCase() + '</span>' +
+        '</div>' +
+        '<div style="color:#5a6a7a;font-size:11px;margin-bottom:16px">' +
+          '<div>Program: ' + m.programName + ' (' + m.programHandle + ')</div>' +
+          '<div>URL: <a href="' + m.programUrl + '" target="_blank" style="color:#22d3ee">' + m.programUrl + '</a></div>' +
+          '<div>Created: ' + new Date(m.createdAt).toLocaleString() + '</div>' +
+          '<div>Updated: ' + new Date(m.updatedAt).toLocaleString() + '</div>' +
+        '</div>' +
+        '<hr style="border-color:#1a1a2e;margin:16px 0">' +
+        '<h4 style="color:#c084fc;margin-bottom:8px">📋 Scope (' + m.inScopeCount + ' assets)</h4>' +
+        '<div id="missionScope" style="max-height:200px;overflow:auto;font-size:10px;color:#c8d6e5">' +
+          '<div style="color:#5a6a7a">Loading scope...</div>' +
+        '</div>' +
+        '<hr style="border-color:#1a1a2e;margin:16px 0">' +
+        '<h4 style="color:#c084fc;margin-bottom:8px">🎯 Objectives</h4>' +
+        '<ul style="font-size:11px;color:#c8d6e5;margin-left:16px">' +
+          (m.objectives?.map(function(o) { return '<li>' + o + '</li>'; }).join('') || '<li style="color:#5a6a7a">No objectives</li>') +
+        '</ul>' +
+        '<hr style="border-color:#1a1a2e;margin:16px 0">' +
+        '<h4 style="color:#c084fc;margin-bottom:8px">📋 Activity Log</h4>' +
+        '<div id="missionActivity" style="max-height:200px;overflow:auto;font-size:10px;color:#5a6a7a">' +
+          '<div>Loading activity...</div>' +
+        '</div>' +
+        '<div style="margin-top:16px;display:flex;gap:8px">' +
+          '<button onclick="runMissionRecon(\'' + m.id + '\')" style="flex:1;background:#a855f722;color:#c084fc;border:1px solid #a855f744;padding:8px;border-radius:4px;cursor:pointer">▶ Run Recon</button>' +
+          '<button onclick="closeMissionDetail()" style="flex:1;background:#1a1a2e;color:#c8d6e5;border:1px solid #1a1a2e;padding:8px;border-radius:4px;cursor:pointer">Close</button>' +
+        '</div>' +
+      '</div>';
+    
+    // Remove existing detail panel
+    const existing = document.getElementById('missionDetailPanel');
+    if (existing) existing.remove();
+    
+    const panel = document.createElement('div');
+    panel.id = 'missionDetailPanel';
+    panel.innerHTML = detailHtml;
+    document.body.appendChild(panel);
+    
+    // Load scope and activity
+    loadMissionScope(missionId);
+    loadMissionActivity(missionId);
+  } catch(e) {
+    console.error(e);
+    alert('Error loading mission: ' + e.message);
+  }
+}
+
+function closeMissionDetail() {
+  const panel = document.getElementById('missionDetailPanel');
+  if (panel) panel.remove();
+}
+
+async function loadMissionScope(missionId) {
+  try {
+    const m = await api('/api/missions/' + encodeURIComponent(missionId));
+    if (!m || !m.scope) { document.getElementById('missionScope').innerHTML = '<div style="color:#5a6a7a">No scope data</div>'; return; }
+    
+    let html = '';
+    if (m.scope.inScope?.length) {
+      html += '<div style="color:#34d399;margin-bottom:8px">✅ IN SCOPE:</div>';
+      html += m.scope.inScope.map(s => 
+        '<div style="margin:4px 0;padding:4px 8px;background:#34d39911;border-radius:3px">' + 
+        (s.isWildcard ? '🌐 ' : '🎯 ') + s.identifier + 
+        ' <span style="color:#5a6a7a;font-size:9px">(' + s.assetType + ')</span>' +
+        (s.instruction ? ' <span style="color:#fbbf24;font-size:9px">— ' + s.instruction + '</span>' : '') +
+        '</div>'
+      ).join('');
+    }
+    if (m.scope.exclusions?.length) {
+      html += '<div style="color:#f87171;margin:12px 0 8px">❌ EXCLUSIONS:</div>';
+      html += m.scope.exclusions.map(s => 
+        '<div style="margin:4px 0;padding:4px 8px;background:#f8717111;border-radius:3px">🚫 ' + s.identifier + 
+        (s.instruction ? ' <span style="color:#fbbf24;font-size:9px">— ' + s.instruction + '</span>' : '') +
+        '</div>'
+      ).join('');
+    }
+    if (m.scope.restrictions?.length) {
+      html += '<div style="color:#fbbf24;margin:12px 0 8px">⚠️ RESTRICTIONS:</div>';
+      html += m.scope.restrictions.map(r => 
+        '<div style="margin:4px 0;padding:4px 8px;background:#fbbf2411;border-radius:3px">📝 ' + r.asset + ': ' + r.restriction + ' [' + r.severity + ']</div>'
+      ).join('');
+    }
+    if (!html) html = '<div style="color:#5a6a7a">No scope data</div>';
+    document.getElementById('missionScope').innerHTML = html;
+  } catch(e) {
+    document.getElementById('missionScope').innerHTML = '<div style="color:#f87171">Error loading scope: ' + e.message + '</div>';
+  }
+}
+
+async function loadMissionActivity(missionId) {
+  try {
+    const m = await api('/api/missions/' + encodeURIComponent(missionId));
+    if (!m || !m.activityLog?.length) { document.getElementById('missionActivity').innerHTML = '<div style="color:#5a6a7a">No activity log</div>'; return; }
+    
+    const html = m.activityLog.slice(-20).reverse().map(a => 
+      '<div style="margin:4px 0;padding:4px 8px;background:#0a0a0f;border-radius:3px">' +
+      '<span style="color:#5a6a7a;font-size:9px">' + new Date(a.timestamp).toLocaleTimeString() + '</span> ' +
+      '<span style="color:#c084fc;font-weight:600">[' + a.action + ']</span> ' +
+      '<span style="color:#c8d6e5;font-size:10px">' + (a.details || '') + '</span>' +
+      '</div>'
+    ).join('');
+    document.getElementById('missionActivity').innerHTML = html;
+  } catch(e) {
+    document.getElementById('missionActivity').innerHTML = '<div style="color:#f87171">Error loading activity: ' + e.message + '</div>';
+  }
+}
+
+async function runMissionRecon(missionId) {
+  closeMissionDetail();
+  const out = document.getElementById('output');
+  out.classList.add('show');
+  out.innerHTML += '<span class="prompt">$</span> @mission_recon start ' + missionId + '\\\\\\\\n';
+  out.scrollTop = out.scrollHeight;
+  try {
+    const r = await api('/api/run', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tool:'mission_recon', args:'start ' + missionId}) });
+    out.innerHTML += '<span class=ok>' + r.result + '</span>\\\\\\\\n\\\\\\\\n';
+  } catch(e) { out.innerHTML += '<span class=err>⛔ ' + e.message + '</span>\\\\\\\\n\\\\\\\\n'; }
+  out.scrollTop = out.scrollHeight;
 }
 
 async function loadSchedules() {
