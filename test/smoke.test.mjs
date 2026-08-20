@@ -3,7 +3,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-const CWD = "/root/Phantom_clone";
+const CWD = "/root/usb/Phantom";
 
 describe("CLI smoke", () => {
   it("--list runs without error", async () => {

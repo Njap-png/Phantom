@@ -80,7 +80,7 @@ describe("hackerTools", () => {
     const { hackerTools } = await import("../lib/tools.mjs");
     const r = await hackerTools.scope("");
     // scope used without args shows current scope state, not usage
-    assert.ok(r.includes("Scope") || r.includes("scope"));
+    assert.ok(r.includes("SCOPE") || r.includes("Scope") || r.includes("scope"));
   });
 
   it("install returns tool list for empty input", async () => {

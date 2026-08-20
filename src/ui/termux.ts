@@ -1,10 +1,10 @@
 import * as readline from "readline";
-import { EventBus, EventHandler } from "../core/eventbus.js";
-import { AgentManager } from "../agents/manager.js";
-import { AgentIdentity } from "../agents/types.js";
-import { phantomTheme } from "./theme.js";
-import { loadConfig } from "../core/config.js";
-import { createOpenAIProvider, createOllamaProvider, LLMProvider } from "../providers/openai.js";
+import { EventBus, EventHandler } from "../core/eventbus";
+import { AgentManager } from "../agents/manager";
+import { AgentIdentity } from "../agents/types";
+import { phantomTheme } from "./theme";
+import { loadConfig } from "../core/config";
+import { createOpenAIProvider, createOllamaProvider, LLMProvider } from "../providers/openai";
 
 const R = "\x1b[0m";
 const BOLD = "\x1b[1m";

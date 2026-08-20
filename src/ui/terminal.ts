@@ -1,11 +1,11 @@
 import blessed from "blessed";
 import { phantomTheme } from "./theme.js";
-import { PanelManager } from "./panels.js";
-import { AgentManager } from "../agents/manager.js";
-import { EventBus, EventHandler } from "../core/eventbus.js";
-import { AgentIdentity } from "../agents/types.js";
-import { loadConfig } from "../core/config.js";
-import { createOpenAIProvider, createOllamaProvider, LLMProvider } from "../providers/openai.js";
+import { PanelManager } from "./panels";
+import { AgentManager } from "../agents/manager";
+import { EventBus, EventHandler } from "../core/eventbus";
+import { AgentIdentity } from "../agents/types";
+import { loadConfig } from "../core/config";
+import { createOpenAIProvider, createOllamaProvider, LLMProvider } from "../providers/openai";
 
 export class PhantomTerminal {
   private screen: blessed.Widgets.Screen;

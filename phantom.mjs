@@ -1836,6 +1836,341 @@ class ConversationalUI {
     this.suggestionActive = false;
   }
 
+  // ── Natural Language Parser ─────────────────────────────────
+  // Maps common phrases to existing tool/command calls
+  parseNaturalLanguage(input) {
+    const lower = input.trim().toLowerCase();
+    
+    // List tasks / show tasks
+    if (lower === "list tasks" || lower === "show tasks" || lower === "tasks") {
+      return "/command"; // Special command that will list tasks
+    }
+    
+    // Run task aliases
+    if (lower.startsWith("run ")) {
+      const task = lower.slice(4).trim();
+      if (task.startsWith("h1:") || task.startsWith("hackerone")) return `hackerone programs`;
+      if (task.startsWith("recon:") || task.startsWith("recon ")) return `recon ${task.replace("recon:", "").replace("recon ", "").trim()}`;
+      if (task.startsWith("net:") || task.startsWith("port scan")) return `port_scan ${task.replace("net:", "").replace("port scan", "").trim()}`;
+      if (task.startsWith("vuln:") || task.startsWith("cve ")) return `cve_search ${task.replace("vuln:", "").replace("cve ", "").trim()}`;
+    }
+    
+    // Direct hackerone commands
+    if (lower.startsWith("hackerone ")) {
+      const sub = lower.slice(10).trim();
+      if (sub === "programs" || sub === "list") return "hackerone programs";
+      if (sub.startsWith("scope ")) return `hackerone scope ${sub.slice(6).trim()}`;
+      if (sub.startsWith("reports ")) return `hackerone reports ${sub.slice(8).trim()}`;
+      if (sub.startsWith("report ")) return `hackerone report ${sub.slice(7).trim()}`;
+      if (sub === "me" || sub === "whoami") return "hackerone me";
+      if (sub === "test" || sub === "auth") return "hackerone test";
+    }
+    
+    // Direct recon commands
+    if (lower.startsWith("recon ")) {
+      const target = lower.slice(6).trim();
+      return `recon ${target}`;
+    }
+    if (lower.startsWith("recon subdomain ")) {
+      const target = lower.slice(16).trim();
+      return `sub_enum ${target}`;
+    }
+    
+    // Port scan
+    if (lower.startsWith("port scan ")) {
+      const target = lower.slice(10).trim();
+      return `port_scan ${target}`;
+    }
+    if (lower.startsWith("scan ")) {
+      const target = lower.slice(5).trim();
+      return `port_scan ${target}`;
+    }
+    
+    // SSL check
+    if (lower.startsWith("ssl check ") || lower.startsWith("ssl ")) {
+      const target = lower.replace("ssl check ", "").replace("ssl ", "").trim();
+      return `ssl_check ${target}`;
+    }
+    
+    // CVE search
+    if (lower.startsWith("cve ") || lower.startsWith("cve search ")) {
+      const query = lower.replace("cve search ", "").replace("cve ", "").trim();
+      return `cve_search ${query}`;
+    }
+    
+    // Exploit
+    if (lower.startsWith("exploit ") || lower.startsWith("exploit search ")) {
+      const query = lower.replace("exploit search ", "").replace("exploit ", "").trim();
+      return `searchsploit ${query}`;
+    }
+    
+    // Crawl
+    if (lower.startsWith("crawl ") || lower.startsWith("spider ")) {
+      const url = lower.replace("crawl ", "").replace("spider ", "").trim();
+      return `crawl ${url}`;
+    }
+    
+    // Tech detect
+    if (lower.startsWith("tech detect ") || lower.startsWith("tech ")) {
+      const target = lower.replace("tech detect ", "").replace("tech ", "").trim();
+      return `whatweb ${target}`;
+    }
+    
+    // Mission auto
+    if (lower.startsWith("mission auto ")) {
+      const mission = lower.slice(13).trim();
+      return `mission auto ${mission}`;
+    }
+    if (lower.startsWith("auto ")) {
+      const mission = lower.slice(5).trim();
+      return `mission auto ${mission}`;
+    }
+    
+    // DNS lookup
+    if (lower.startsWith("dns ")) {
+      const target = lower.slice(4).trim();
+      return `dns_lookup ${target}`;
+    }
+    
+    // WHOIS
+    if (lower.startsWith("whois ")) {
+      const target = lower.slice(6).trim();
+      return `whois ${target}`;
+    }
+    
+    // Hash
+    if (lower.startsWith("hash ")) {
+      const data = lower.slice(5).trim();
+      return `hash ${data}`;
+    }
+    
+    // Decode
+    if (lower.startsWith("decode ")) {
+      const data = lower.slice(7).trim();
+      return `decode ${data}`;
+    }
+    
+    // Subdomain enum
+    if (lower.startsWith("subdomain ") || lower.startsWith("subdomains ")) {
+      const target = lower.replace("subdomain ", "").replace("subdomains ", "").trim();
+      return `sub_enum ${target}`;
+    }
+    
+    // Wayback
+    if (lower.startsWith("wayback ") || lower.startsWith("archive ")) {
+      const target = lower.replace("wayback ", "").replace("archive ", "").trim();
+      return `wayback ${target}`;
+    }
+    
+    // Cert expiry
+    if (lower.startsWith("cert ")) {
+      const target = lower.slice(5).trim();
+      return `cert_expiry ${target}`;
+    }
+    
+    // HTTP headers
+    if (lower.startsWith("headers ")) {
+      const target = lower.slice(8).trim();
+      return `http_headers ${target}`;
+    }
+    
+    // Dir bruteforce
+    if (lower.startsWith("dir brute") || lower.startsWith("dirb ")) {
+      const target = lower.replace("dir brute", "").replace("dirb ", "").trim();
+      return `dir_bruteforce ${target}`;
+    }
+    
+    // XSS scan
+    if (lower.startsWith("xss ")) {
+      const target = lower.slice(4).trim();
+      return `xss_scan ${target}`;
+    }
+    
+    // SQLi
+    if (lower.startsWith("sqli ") || lower.startsWith("sql ")) {
+      const target = lower.replace("sqli ", "").replace("sql ", "").trim();
+      return `sql_detect ${target}`;
+    }
+    
+    // Open redirect
+    if (lower.startsWith("redirect ")) {
+      const target = lower.slice(9).trim();
+      return `open_redirect ${target}`;
+    }
+    
+    // Shodan
+    if (lower.startsWith("shodan ")) {
+      const query = lower.slice(7).trim();
+      return `shodan_search ${query}`;
+    }
+    
+    // Email breach
+    if (lower.startsWith("breach ") || lower.startsWith("email breach ")) {
+      const email = lower.replace("email breach ", "").replace("breach ", "").trim();
+      return `email_breach ${email}`;
+    }
+    
+    // GitHub dork
+    if (lower.startsWith("github dork ") || lower.startsWith("gh dork ")) {
+      const query = lower.replace("github dork ", "").replace("gh dork ", "").trim();
+      return `github_dork ${query}`;
+    }
+    
+    // Subdomain takeover
+    if (lower.startsWith("takeover ") || lower.startsWith("sub takeover ")) {
+      const target = lower.replace("sub takeover ", "").replace("takeover ", "").trim();
+      return `sub_takeover ${target}`;
+    }
+    
+    // VirusTotal
+    if (lower.startsWith("vt ") || lower.startsWith("virustotal ")) {
+      const query = lower.replace("virustotal ", "").replace("vt ", "").trim();
+      return `vt_check ${query}`;
+    }
+    
+    // Hash crack
+    if (lower.startsWith("crack ")) {
+      const hash = lower.slice(6).trim();
+      return `hash_crack ${hash}`;
+    }
+    
+    // JWT decode
+    if (lower.startsWith("jwt ")) {
+      const token = lower.slice(4).trim();
+      return `jwt_decode ${token}`;
+    }
+    
+    // Robots.txt
+    if (lower.startsWith("robots ")) {
+      const target = lower.slice(7).trim();
+      return `robots_txt ${target}`;
+    }
+    
+    // Email verify
+    if (lower.startsWith("verify email ") || lower.startsWith("email verify ")) {
+      const email = lower.replace("verify email ", "").replace("email verify ", "").trim();
+      return `email_verify ${email}`;
+    }
+    
+    // GeoIP
+    if (lower.startsWith("geoip ")) {
+      const target = lower.slice(6).trim();
+      return `geoip ${target}`;
+    }
+    
+    // DNS zone
+    if (lower.startsWith("dns zone ")) {
+      const target = lower.slice(9).trim();
+      return `dns_zone ${target}`;
+    }
+    
+    // HTTP methods
+    if (lower.startsWith("methods ")) {
+      const target = lower.slice(8).trim();
+      return `http_methods ${target}`;
+    }
+    
+    // Reverse DNS
+    if (lower.startsWith("rdns ") || lower.startsWith("reverse dns ")) {
+      const target = lower.replace("rdns ", "").replace("reverse dns ", "").trim();
+      return `reverse_dns ${target}`;
+    }
+    
+    // CORS test
+    if (lower.startsWith("cors ")) {
+      const target = lower.slice(5).trim();
+      return `cors_test ${target}`;
+    }
+    
+    // Report save
+    if (lower.startsWith("save report ")) {
+      const parts = lower.slice(12).split("|");
+      if (parts.length >= 2) return `report_save ${parts[0].trim()}|${parts.slice(1).join("|")}`;
+    }
+    
+    // Report export
+    if (lower.startsWith("export report ")) {
+      const parts = lower.slice(14).split("|");
+      if (parts.length >= 2) return `report_export ${parts[0].trim()}|${parts.slice(1).join("|")}`;
+    }
+    
+    // Playbook commands
+    if (lower.startsWith("playbook ")) {
+      const sub = lower.slice(9).trim();
+      if (sub.startsWith("run ")) return `playbook_run ${sub.slice(4).trim()}`;
+      if (sub === "list") return "playbook_list";
+      if (sub.startsWith("create ")) return `playbook_create ${sub.slice(7).trim()}`;
+    }
+    
+    // Scope commands
+    if (lower.startsWith("scope ")) {
+      const sub = lower.slice(6).trim();
+      if (sub === "list" || sub === "") return "scope list";
+      if (sub.startsWith("add ")) return `scope add ${sub.slice(4).trim()}`;
+      if (sub.startsWith("remove ")) return `scope remove ${sub.slice(7).trim()}`;
+    }
+    
+    // Schedule commands
+    if (lower.startsWith("schedule ")) {
+      const sub = lower.slice(9).trim();
+      if (sub === "list") return "schedule list";
+      if (sub.startsWith("daily ")) return `schedule daily ${sub.slice(6).trim()}`;
+      if (sub.startsWith("hourly ")) return `schedule hourly ${sub.slice(7).trim()}`;
+      if (sub.startsWith("remove ")) return `schedule remove ${sub.slice(7).trim()}`;
+    }
+    
+    // Plugin commands
+    if (lower.startsWith("plugin ")) {
+      const sub = lower.slice(7).trim();
+      if (sub === "list") return "plugin_load list";
+      if (sub.startsWith("load ")) return `plugin_load ${sub.slice(5).trim()}`;
+      if (sub.startsWith("create ")) return `plugin_create ${sub.slice(7).trim()}`;
+    }
+    
+    // Config commands
+    if (lower.startsWith("config ")) {
+      const sub = lower.slice(7).trim();
+      if (sub === "list" || sub === "") return "config list";
+      if (sub.startsWith("get ")) return `config get ${sub.slice(4).trim()}`;
+      if (sub.startsWith("set ")) return `config set ${sub.slice(4).trim()}`;
+      if (sub.startsWith("path")) return "config path";
+    }
+    
+    // LLM config
+    if (lower.startsWith("llm ") || lower.startsWith("model ")) {
+      const sub = lower.replace("llm ", "").replace("model ", "").trim();
+      if (sub === "list") return "llm_config list";
+      if (sub.startsWith("set ")) return `llm_config set ${sub.slice(4).trim()}`;
+    }
+    
+    // Help
+    if (lower === "help" || lower === "?" || lower === "how") {
+      return "/help";
+    }
+    
+    // Clear
+    if (lower === "clear" || lower === "cls") {
+      return "/clear";
+    }
+    
+    // Agents
+    if (lower === "agents" || lower === "list agents") {
+      return "/agents";
+    }
+    
+    // Save/load session
+    if (lower.startsWith("save ")) {
+      const name = lower.slice(5).trim();
+      return `session_save ${name}`;
+    }
+    if (lower.startsWith("load ")) {
+      const name = lower.slice(5).trim();
+      return `session_load ${name}`;
+    }
+    
+    return null; // No match
+  }
+
   renderSuggestionBar() {
     if (!this.suggestionActive || this.suggestions.length === 0) return;
     // In TUI mode, suggestion bar needs updated rendering — skip for now
@@ -2314,6 +2649,14 @@ class ConversationalUI {
   async handleInput(input) {
     this._cancelled = false;
     if (input.startsWith("/")) { this.handleCommand(input.slice(1).trim().split(/\s+/)); return; }
+    
+    // Try natural language parsing first (before LLM)
+    const nlResult = this.parseNaturalLanguage(input);
+    if (nlResult) {
+      this.handleInput(nlResult); // Recursively handle the mapped command
+      return;
+    }
+    
     const trimmed = input.trim().toLowerCase();
     if (trimmed === "exit" || trimmed === "quit") { this.stop(); return; }
     this._busy = true;
@@ -2603,6 +2946,71 @@ class ConversationalUI {
         console.log(`${D}--quiet${R}        — suppress banner/status (env: PHANTOM_QUIET)\n`);
       },
       h: "help", command: "help",
+      command: () => {
+        console.log(`\n${B}${c("green")}PHANTOM TASKS${R}`);
+        console.log(`${D}Core commands:${R}`);
+        console.log(`  ${c("green")}help${R} / ${c("green")}?${R} / ${c("green")}command${R}    — show this help`);
+        console.log(`  ${c("green")}tools${R}                       — list all 149 tools`);
+        console.log(`  ${c("green")}clear${R} / ${c("green")}cls${R}                     — clear screen`);
+        console.log(`  ${c("green")}quit${R} / ${c("green")}exit${R}                    — exit Phantom`);
+        console.log(`\n${D}Bug Bounty / HackerOne:${R}`);
+        console.log(`  ${c("green")}hackerone programs${R}          — list all HackerOne programs`);
+        console.log(`  ${c("green")}hackerone scope <program>${R}    — view program scope`);
+        console.log(`  ${c("green")}hackerone reports <program>${R}  — view submitted reports`);
+        console.log(`  ${c("green")}hackerone report <id>${R}        — view single report`);
+        console.log(`  ${c("green")}hackerone me${R}                 — authenticated user info`);
+        console.log(`  ${c("green")}hackerone test${R}               — test auth`);
+        console.log(`\n${D}Recon & Scanning:${R}`);
+        console.log(`  ${c("green")}recon <domain>${R}               — full recon pipeline`);
+        console.log(`  ${c("green")}port scan <target>${R}           — port scan`);
+        console.log(`  ${c("green")}subdomain <domain>${R}           — subdomain enumeration`);
+        console.log(`  ${c("green")}ssl check <domain>${R}           — SSL certificate check`);
+        console.log(`  ${c("green")}tech detect <domain>${R}         — technology detection`);
+        console.log(`  ${c("green")}crawl <url>${R}                  — web crawl`);
+        console.log(`  ${c("green")}dns <domain>${R}                 — DNS lookup`);
+        console.log(`  ${c("green")}whois <domain>${R}               — WHOIS lookup`);
+        console.log(`\n${D}Vulnerability Research:${R}`);
+        console.log(`  ${c("green")}cve <query>${R}                  — search CVEs`);
+        console.log(`  ${c("green")}exploit <query>${R}              — search exploits`);
+        console.log(`  ${c("green")}xss <url>${R}                    — XSS scan`);
+        console.log(`  ${c("green")}sqli <url>${R}                   — SQL injection scan`);
+        console.log(`  ${c("green")}dir brute <url>${R}              — directory bruteforce`);
+        console.log(`  ${c("green")}redirect <url>${R}               — open redirect test`);
+        console.log(`\n${D}OSINT & Intel:${R}`);
+        console.log(`  ${c("green")}shodan <query>${R}               — Shodan search`);
+        console.log(`  ${c("green")}breach <email>${R}               — email breach check`);
+        console.log(`  ${c("green")}github dork <query>${R}          — GitHub dorks`);
+        console.log(`  ${c("green")}takeover <domain>${R}            — subdomain takeover`);
+        console.log(`  ${c("green")}vt <hash>${R}                    — VirusTotal check`);
+        console.log(`  ${c("green")}wayback <domain>${R}             — Wayback Machine`);
+        console.log(`  ${c("green")}geoip <ip>${R}                   — GeoIP lookup`);
+        console.log(`\n${D}Crypto & Hashes:${R}`);
+        console.log(`  ${c("green")}hash <data>${R}                  — multiple hash formats`);
+        console.log(`  ${c("green")}decode <encoded>${R}             — decode base64/url/hex`);
+        console.log(`  ${c("green")}crack <hash>${R}                 — hash cracking`);
+        console.log(`  ${c("green")}jwt <token>${R}                  — JWT decode`);
+        console.log(`\n${D}Mission/Automation:${R}`);
+        console.log(`  ${c("green")}mission auto <name>${R}          — autonomous recon`);
+        console.log(`  ${c("green")}auto <name>${R}                  — alias for mission auto`);
+        console.log(`  ${c("green")}scope add <target>${R}           — add to scope`);
+        console.log(`  ${c("green")}schedule daily <tool> <target>${R} — schedule scan`);
+        console.log(`\n${D}Session & Config:${R}`);
+        console.log(`  ${c("green")}config list${R}                  — show config`);
+        console.log(`  ${c("green")}config set <key> <value>${R}     — set config`);
+        console.log(`  ${c("green")}save <name>${R}                  — save session`);
+        console.log(`  ${c("green")}load <name>${R}                  — load session`);
+        console.log(`  ${c("green")}agents${R}                       — list AI agents`);
+        console.log(`\n${D}Agent Commands (ESC then type):${R}`);
+        console.log(`  ${c("green")}spawn [name] [role]${R}          — create agent`);
+        console.log(`  ${c("green")}list${R}                         — list agents`);
+        console.log(`  ${c("green")}broadcast <msg>${R}              — message all agents`);
+        console.log(`  ${c("green")}debate <topic>${R}               — agents debate`);
+        console.log(`  ${c("green")}evolve${R}                       — evolve all agents`);
+        console.log(`\n${D}Direct tool usage:${R}`);
+        console.log(`  ${c("cyan")}@tool_name|args${R}               — run any tool directly`);
+        console.log(`  ${c("cyan")}@pipe|tool1|args | tool2|args${R}  — chain tools`);
+        console.log(`\n${D}Type naturally (e.g. "hackerone programs", "recon example.com")${R}\n`);
+      },
       tools: () => {
         const names = Object.keys(hackerTools).sort();
         log.art(`\n${B}${c("green")}PHANTOM TOOLS (${names.length})${R}`);

@@ -216,7 +216,7 @@ describe("exit command", () => {
   it("exit via stdin exits cleanly", async () => {
     const { execSync } = await import("child_process");
     try {
-      execSync("echo exit | timeout 5 node phantom.mjs", { cwd: "/root/Phantom_clone", encoding: "utf-8", timeout: 8000 });
+      execSync("echo exit | timeout 5 node phantom.mjs", { cwd: "/root/usb/Phantom", encoding: "utf-8", timeout: 8000 });
     } catch (e) {
       assert.fail(`exit should not throw: ${e.stderr}`);
     }
@@ -225,7 +225,7 @@ describe("exit command", () => {
   it("quit via stdin exits cleanly", async () => {
     const { execSync } = await import("child_process");
     try {
-      execSync("echo quit | timeout 5 node phantom.mjs", { cwd: "/root/Phantom_clone", encoding: "utf-8", timeout: 8000 });
+      execSync("echo quit | timeout 5 node phantom.mjs", { cwd: "/root/usb/Phantom", encoding: "utf-8", timeout: 8000 });
     } catch (e) {
       assert.fail(`quit should not throw: ${e.stderr}`);
     }
@@ -251,20 +251,20 @@ describe("runPipe extras", () => {
 describe("CLI flags", () => {
   it("--version prints version", async () => {
     const { execSync } = await import("child_process");
-    const out = execSync("node phantom.mjs --version 2>&1", { cwd: "/root/Phantom_clone", encoding: "utf-8", timeout: 8000 });
+    const out = execSync("node phantom.mjs --version 2>&1", { cwd: "/root/usb/Phantom", encoding: "utf-8", timeout: 8000 });
     assert.match(out, /0\.2\.0|Phantom/);
   });
 
   it("--quiet via env var", async () => {
     const { execSync } = await import("child_process");
-    const out = execSync("PHANTOM_QUIET=1 node phantom.mjs --list 2>&1", { cwd: "/root/Phantom_clone", encoding: "utf-8", timeout: 15000 });
+    const out = execSync("PHANTOM_QUIET=1 node phantom.mjs --list 2>&1", { cwd: "/root/usb/Phantom", encoding: "utf-8", timeout: 15000 });
     // Should suppress banner art but still show tools
     assert.ok(out.length > 0);
   });
 
   it("--help shows PHANTOM", async () => {
     const { execSync } = await import("child_process");
-    const out = execSync("node phantom.mjs --help 2>&1", { cwd: "/root/Phantom_clone", encoding: "utf-8", timeout: 8000 });
+    const out = execSync("node phantom.mjs --help 2>&1", { cwd: "/root/usb/Phantom", encoding: "utf-8", timeout: 8000 });
     assert.match(out, /PHANTOM/i);
   });
 });
