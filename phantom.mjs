@@ -1762,6 +1762,95 @@ class ConversationalUI {
     return Object.entries(src).map(([n, t]) => [n, t.description || '']);
   }
 
+  // ─── NATURAL LANGUAGE PARSER (works without LLM) ───
+  parseNaturalLanguage(input) {
+    const text = input.trim().toLowerCase();
+    
+    // Mission/task commands
+    if (text.includes("task") || text.includes("list tasks")) {
+      return this.runMissionTasks();
+    }
+    if (text.startsWith("run ") || text.startsWith("execute ")) {
+      const taskPart = text.replace(/^(run|execute)\s+/, "");
+      return this.runMissionTask(taskPart);
+    }
+    
+    // HackerOne
+    if (text.includes("hackerone") || text.includes("bug bounty")) {
+      if (text.includes("program")) return hackerTools.hackerone("programs");
+      if (text.includes("scope")) {
+        const match = text.match(/scope\s+(\S+)/);
+        return match ? hackerTools.hackerone(`scope ${match[1]}`) : "Usage: hackerone scope <program>";
+      }
+      if (text.includes("report")) return hackerTools.hackerone("reports");
+      return hackerTools.hackerone("programs");
+    }
+    
+    // Recon
+    if (text.includes("recon") || text.includes("scan") || text.includes("enumerate")) {
+      const targetMatch = text.match(/(?:recon|scan|enumerate)\s+(\S+)/) || text.match(/(\S+\.\S+)/);
+      const target = targetMatch?.[1] || "";
+      if (target) {
+        if (text.includes("subdomain")) return hackerTools.sub_enum(target);
+        if (text.includes("dns")) return hackerTools.dns_lookup(target);
+        if (text.includes("http") || text.includes("header")) return hackerTools.http_headers(target);
+        if (text.includes("port")) return hackerTools.port_scan(target);
+        if (text.includes("ssl")) return hackerTools.ssl_check(target);
+        if (text.includes("whois")) return hackerTools.whois(target);
+        return hackerTools.recon(target);
+      }
+      return "Please specify a target domain (e.g., 'recon example.com')";
+    }
+    
+    // Network tools
+    if (text.includes("port scan") || text.includes("portscan")) {
+      const targetMatch = text.match(/(\S+\.\S+)/);
+      return targetMatch ? hackerTools.port_scan(targetMatch[1]) : "Usage: port scan <target>";
+    }
+    if (text.includes("ssl") || text.includes("cert")) {
+      const targetMatch = text.match(/(\S+\.\S+)/);
+      return targetMatch ? hackerTools.ssl_check(targetMatch[1]) : "Usage: ssl check <target>";
+    }
+    if (text.includes("whois")) {
+      const targetMatch = text.match(/(\S+\.\S+)/);
+      return targetMatch ? hackerTools.whois(targetMatch[1]) : "Usage: whois <target>";
+    }
+    
+    // Vulnerability
+    if (text.includes("cve")) {
+      const query = text.replace(/cve\s+/, "");
+      return query ? hackerTools.cve_search(query) : "Usage: cve <query>";
+    }
+    if (text.includes("exploit")) {
+      const query = text.replace(/exploit\s+/, "");
+      return query ? hackerTools.searchsploit(query) : "Usage: exploit <query>";
+    }
+    
+    // Web
+    if (text.includes("crawl")) {
+      const targetMatch = text.match(/(\S+\.\S+)/);
+      return targetMatch ? hackerTools.crawl(targetMatch[1]) : "Usage: crawl <url>";
+    }
+    if (text.includes("tech") || text.includes("whatweb")) {
+      const targetMatch = text.match(/(\S+\.\S+)/);
+      return targetMatch ? hackerTools.whatweb(targetMatch[1]) : "Usage: tech detect <target>";
+    }
+    
+    // Mission auto
+    if (text.includes("auto") && text.includes("mission")) {
+      const match = text.match(/mission\s+(\S+)/);
+      return match ? hackerTools.mission(`auto ${match[1]}`) : "Usage: mission auto <mission-id>";
+    }
+    
+    // OSINT
+    if (text.includes("dns enum") || text.includes("dns enumeration")) {
+      const targetMatch = text.match(/(\S+\.\S+)/);
+      return targetMatch ? hackerTools.sub_enum(targetMatch[1]) : "Usage: dns enum <target>";
+    }
+    
+    return null; // No match - let LLM handle
+  }
+
   updateSuggestions() {
     const buf = this.inputBuf;
     this.suggestions = [];
@@ -2659,6 +2748,50 @@ class ConversationalUI {
     
     const trimmed = input.trim().toLowerCase();
     if (trimmed === "exit" || trimmed === "quit") { this.stop(); return; }
+    
+    // ─── NATURAL LANGUAGE PARSER (works without LLM) ───
+    const nlResult = this.parseNaturalLanguage(input);
+    if (nlResult) {
+      this._busy = true;
+      this.sayLine(`> ${input}`, "green");
+      const { spinner, cleanup } = this.setupAgentHandlers();
+      try {
+        this.teardownAgentHandlers(cleanup, spinner);
+        this.renderResponse(nlResult);
+        this.responseCount++;
+        this.lastResponseTime = Date.now();
+        recordTechnique(nlResult, "reasoning");
+        this.evolutionXP = Math.min(this.evolutionMaxXP, this.evolutionXP + Math.min(20, Math.max(1, Math.floor(nlResult.length / 50))));
+        this.renderFooter(nlResult);
+        this.conversation.push(`user: ${input.substring(0, 200)}`);
+        this.conversation.push(`phantom: ${nlResult.substring(0, 500)}`);
+        if (this.conversation.length > 500) this.conversation.splice(0, 100);
+        saveMemory("conversation_latest", this.conversation);
+        this.triggerPostEvolution();
+      } catch (err) {
+        if (!this._cancelled) {
+          this.sayLine(`✕ Error: ${err.message}`, "red");
+          this.sayLine("🧬 Running self-heal...", "yellow");
+          setImmediate(async () => {
+            try {
+              const { selfHeal } = await import("./lib/evolve.mjs");
+              const result = await selfHeal({ maxAttempts: 3 });
+              const fixed = result.log.filter(r => r.fixes?.some(f => f.fixed)).length;
+              if (result.clean) {
+                this.sayLine(`✅ Self-healed (${fixed} fix(es), ${(result.elapsed/1000).toFixed(1)}s)`, "green");
+              } else {
+                this.sayLine(`⚠ Self-heal partial (${fixed} fix(es), ${result.attempts} round(s))`, "yellow");
+              }
+            } catch {}
+          });
+        }
+      }
+      this._busy = false;
+      if (this._cancelled) { this._cancelled = false; return; }
+      this.processQueue();
+      return;
+    }
+
     this._busy = true;
     this.sayLine(`> ${input}`, "green");
     if (!this.agent) { this.sayLine("✕ No agent available.", "red"); this._busy = false; this.prompt(); return; }
@@ -3114,6 +3247,94 @@ class ConversationalUI {
     log.ok(`\n${c("green")}Phantom terminated.${R}`);
     saveSession({ stats: { toolsUsed: Object.keys(hackerTools).length, lastExit: Date.now() } });
     process.exit(0);
+  }
+
+  // ─── MISSION TASK SYSTEM ───
+  async runMissionTasks() {
+    const tasks = [
+      { id: "h1:programs", source: "hackerone", title: "List all HackerOne programs", category: "bug-bounty" },
+      { id: "h1:scope", source: "hackerone", title: "View program scope", category: "bug-bounty" },
+      { id: "h1:reports", source: "hackerone", title: "View submitted reports", category: "bug-bounty" },
+      { id: "recon:passive", source: "recon", title: "Passive reconnaissance (subfinder, dnsx, httpx)", category: "recon" },
+      { id: "recon:subdomain", source: "recon", title: "Subdomain enumeration", category: "recon" },
+      { id: "recon:dns", source: "recon", title: "DNS resolution and records", category: "recon" },
+      { id: "recon:http", source: "recon", title: "HTTP probing and tech detection", category: "recon" },
+      { id: "net:portscan", source: "network", title: "Port scanning", category: "network" },
+      { id: "net:ssl", source: "network", title: "SSL/TLS certificate check", category: "network" },
+      { id: "net:whois", source: "network", title: "WHOIS lookup", category: "network" },
+      { id: "vuln:cve", source: "vulnerability", title: "CVE search", category: "vulnerability" },
+      { id: "vuln:exploit", source: "vulnerability", title: "Exploit search", category: "vulnerability" },
+      { id: "web:crawl", source: "web", title: "Web crawling", category: "web" },
+      { id: "web:headers", source: "web", title: "HTTP headers analysis", category: "web" },
+      { id: "web:tech", source: "web", title: "Technology detection", category: "web" },
+      { id: "mission:recon", source: "mission", title: "Autonomous mission recon", category: "mission" },
+      { id: "mission:scope", source: "mission", title: "Scope checking", category: "mission" },
+      { id: "osint:whois", source: "osint", title: "WHOIS lookup", category: "osint" },
+      { id: "osint:dns", source: "osint", title: "DNS enumeration", category: "osint" },
+      { id: "osint:cert", source: "osint", title: "Certificate transparency", category: "osint" },
+    ];
+
+    const byCategory = {};
+    for (const t of tasks) {
+      if (!byCategory[t.category]) byCategory[t.category] = [];
+      byCategory[t.category].push(t);
+    }
+
+    let out = `📋 Available Tasks (${tasks.length} total)\n`;
+    for (const [cat, items] of Object.entries(byCategory)) {
+      out += `\n${cat.toUpperCase()}:\n`;
+      for (const t of items) {
+        out += `  ${t.id.padEnd(25)} — ${t.title}\n`;
+      }
+    }
+    out += `\nUsage: run <task_id> [target]`;
+    return out;
+  }
+
+  async runMissionTask(input) {
+    const taskId = input.trim();
+    if (!taskId) return "[mission run] Usage: run <task_id> [target]";
+    
+    const taskMap = {
+      "h1:programs": () => hackerTools.hackerone("programs"),
+      "h1:scope": (id) => hackerTools.hackerone(`scope ${id}`),
+      "h1:reports": () => hackerTools.hackerone("reports"),
+      "recon:passive": (target) => hackerTools.recon(target),
+      "recon:subdomain": (target) => hackerTools.sub_enum(target),
+      "recon:dns": (target) => hackerTools.dns_lookup(target),
+      "recon:http": (target) => hackerTools.http_headers(target),
+      "net:portscan": (target) => hackerTools.port_scan(target),
+      "net:ssl": (target) => hackerTools.ssl_check(target),
+      "net:whois": (target) => hackerTools.whois(target),
+      "vuln:cve": (query) => hackerTools.cve_search(query),
+      "vuln:exploit": (query) => hackerTools.searchsploit(query),
+      "web:crawl": (target) => hackerTools.crawl(target),
+      "web:headers": (target) => hackerTools.http_headers(target),
+      "web:tech": (target) => hackerTools.whatweb(target),
+      "mission:recon": (id) => hackerTools.mission(`auto ${id}`),
+      "mission:scope": (id) => hackerTools.mission(`scope-check ${id}`),
+      "osint:whois": (target) => hackerTools.whois(target),
+      "osint:dns": (target) => hackerTools.sub_enum(target),
+      "osint:cert": (target) => hackerTools.ssl_check(target),
+    };
+    
+    const parts = input.trim().split(" ");
+    const taskKey = parts[0];
+    const target = parts.slice(1).join(" ");
+    
+    if (!taskMap[taskKey]) {
+      return `[mission run] Unknown task: ${taskKey}\nUse "list tasks" to see available tasks`;
+    }
+    
+    const needsTarget = ["h1:scope", "recon:passive", "recon:subdomain", "recon:dns", "recon:http",
+      "net:portscan", "net:ssl", "net:whois", "vuln:cve", "vuln:exploit",
+      "web:crawl", "web:headers", "web:tech", "mission:scope", "osint:whois", "osint:dns", "osint:cert"].includes(taskKey);
+    
+    if (needsTarget && !target) {
+      return `[mission run] Usage: run ${taskKey} <target>`;
+    }
+    
+    return await taskMap[taskKey](target);
   }
 }
 

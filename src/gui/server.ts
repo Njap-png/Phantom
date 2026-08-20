@@ -4,10 +4,31 @@ import { resolve } from "path";
 import { homedir } from "os";
 import { hackerTools } from "../core/hacker-tools.js";
 import { readFile, writeFile } from "fs/promises";
+// WebSocket imported dynamically to avoid build issues on USB
+let WebSocketServer: any;
+let WebSocket: any;
+try {
+  const ws = require("ws");
+  WebSocketServer = ws.WebSocketServer;
+  WebSocket = ws.WebSocket;
+} catch {}
 
 const REPORTS_DIR = resolve(homedir(), ".config", "phantom", "reports");
 const PLAYBOOKS_DIR = resolve(homedir(), ".config", "phantom", "playbooks");
 const SESSIONS_DIR = resolve(homedir(), ".config", "phantom", "sessions");
+const MISSIONS_DIR = resolve(homedir(), ".config", "phantom", "missions");
+
+// WebSocket clients for real-time updates
+const wsClients = new Set<WebSocket>();
+
+function broadcast(data: any) {
+  const msg = JSON.stringify(data);
+  for (const client of wsClients) {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(msg);
+    }
+  }
+}
 
 const HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -66,14 +87,64 @@ header span{color:#5a6a7a;font-size:11px}
 ::-webkit-scrollbar{width:4px}
 ::-webkit-scrollbar-track{background:#0a0a0f}
 ::-webkit-scrollbar-thumb{background:#1a1a2e;border-radius:2px}
-@media(max-width:600px){.tool-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}.content{padding:10px 12px}header{padding:10px 12px}}
+
+/* Monitoring specific styles */
+.monitor-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.monitor-card{background:#0f0f1a;border:1px solid #1a1a2e;border-radius:4px;padding:16px}
+.monitor-card h3{color:#00ff88;font-size:13px;margin-bottom:12px;border-bottom:1px solid #1a1a2e;padding-bottom:8px}
+.monitor-card .stat{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #0d0d14}
+.monitor-card .stat:last-child{border-bottom:none}
+.monitor-card .stat-label{color:#5a6a7a;font-size:11px}
+.monitor-card .stat-value{color:#c8d6e5;font-size:11px;font-weight:500}
+.monitor-card .stat-value.ok{color:#44ff88}
+.monitor-card .stat-value.warn{color:#ffaa00}
+.monitor-card .stat-value.error{color:#ff4444}
+.monitor-card .stat-value.running{color:#00ff88}
+
+.mission-list{max-height:400px;overflow:auto}
+.mission-item{background:#0f0f1a;border:1px solid #1a1a2e;border-radius:4px;padding:10px;margin-bottom:8px;cursor:pointer;transition:.2s}
+.mission-item:hover{border-color:#00ff8844}
+.mission-item .header{display:flex;justify-content:space-between;margin-bottom:6px}
+.mission-item .name{color:#00ff88;font-size:12px;font-weight:700}
+.mission-item .status{font-size:10px;padding:2px 6px;border-radius:3px}
+.mission-item .status.planning{background:#5a7aff22;color:#5a7aff}
+.mission-item .status.ready{background:#ffaa0022;color:#ffaa00}
+.mission-item .status.reconnaissance{background:#00ff8822;color:#00ff88}
+.mission-item .status.paused{background:#ff880022;color:#ff8800}
+.mission-item .status.completed{background:#44ff8822;color:#44ff88}
+.mission-item .status.cancelled{background:#ff444422;color:#ff4444}
+.mission-item .status.failed{background:#ff444422;color:#ff4444}
+.mission-item .meta{color:#5a6a7a;font-size:10px}
+.mission-item .scope{color:#3a4a5a;font-size:10px;margin-top:4px}
+
+.schedule-item{background:#0f0f1a;border:1px solid #1a1a2e;border-radius:4px;padding:10px;margin-bottom:8px}
+.schedule-item .header{display:flex;justify-content:space-between;margin-bottom:6px}
+.schedule-item .tool{color:#ffaa00;font-size:12px;font-weight:700}
+.schedule-item .next{color:#5a6a7a;font-size:10px}
+.schedule-item .target{color:#c8d6e5;font-size:11px}
+.schedule-item .interval{color:#3a4a5a;font-size:10px}
+
+.task-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}
+.task-card{background:#0f0f1a;border:1px solid #1a1a2e;border-radius:4px;padding:10px 12px;cursor:pointer;transition:.2s}
+.task-card:hover{border-color:#00ff8844;background:#12122a}
+.task-card .name{color:#5a7aff;font-size:11px;font-weight:700}
+.task-card .category{color:#3a4a5a;font-size:9px;text-transform:uppercase}
+
+.health-indicator{display:inline-flex;align-items:center;gap:6px}
+.health-dot{width:8px;height:8px;border-radius:50%}
+.health-dot.ok{background:#44ff88}
+.health-dot.warn{background:#ffaa00}
+.health-dot.error{background:#ff4444}
+
+@media(max-width:600px){.tool-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}.content{padding:10px 12px}header{padding:10px 12px}.monitor-grid{grid-template-columns:1fr}}
 </style></head>
 <body>
-<header><h1>🔮 PHANTOM</h1><span id="status">● offline</span></header>
+<header><h1>🔮 PHANTOM</h1><span id="status"><span class="health-dot ok"></span> online</span></header>
 <div class="tabs">
 <div class="tab active" onclick="switchTab('tools')">🛠 Tools</div>
 <div class="tab" onclick="switchTab('playbooks')">📋 Playbooks</div>
 <div class="tab" onclick="switchTab('reports')">📄 Reports</div>
+<div class="tab" onclick="switchTab('monitor')">📊 Monitor</div>
 </div>
 
 <div id="tools" class="content active">
@@ -91,11 +162,74 @@ header span{color:#5a6a7a;font-size:11px}
 <div id="reportViewer"></div>
 </div>
 
+<div id="monitor" class="content">
+<div class="monitor-grid">
+  <div class="monitor-card">
+    <h3>🖥 System Health</h3>
+    <div class="stat"><span class="stat-label">Status</span><span class="stat-value ok" id="sysStatus"><span class="health-dot ok"></span> OK</span></div>
+    <div class="stat"><span class="stat-label">Uptime</span><span class="stat-value" id="sysUptime">—</span></div>
+    <div class="stat"><span class="stat-label">Memory</span><span class="stat-value" id="sysMemory">—</span></div>
+    <div class="stat"><span class="stat-label">CPU Load</span><span class="stat-value" id="sysLoad">—</span></div>
+    <div class="stat"><span class="stat-label">Disk (USB)</span><span class="stat-value" id="sysDisk">—</span></div>
+    <div class="stat"><span class="stat-label">Node</span><span class="stat-value" id="sysNode">—</span></div>
+    <div class="stat"><span class="stat-label">PID</span><span class="stat-value" id="sysPid">—</span></div>
+    <div class="stat"><span class="stat-label">USB Mount</span><span class="stat-value ok" id="sysUsb">✓ Mounted</span></div>
+  </div>
+
+  <div class="monitor-card">
+    <h3>🎯 Active Missions</h3>
+    <input class="search-box" id="missionSearch" placeholder="Filter missions..." oninput="filterMissions(this.value)" style="margin-bottom:12px;padding:6px 10px;font-size:11px">
+    <div class="mission-list" id="missionList"><div class="loading">Loading missions...</div></div>
+  </div>
+
+  <div class="monitor-card">
+    <h3>⏰ Active Schedules</h3>
+    <div id="scheduleList"><div class="loading">Loading schedules...</div></div>
+  </div>
+
+  <div class="monitor-card">
+    <h3>📋 All Tasks (Searchable)</h3>
+    <input class="search-box" id="taskSearch" placeholder="Search tasks..." oninput="filterTasks(this.value)" style="margin-bottom:12px;padding:6px 10px;font-size:11px">
+    <div class="task-grid" id="taskGrid"><div class="loading">Loading tasks...</div></div>
+  </div>
+</div>
+</div>
+
 <div class="status-bar"><span id="toolCount">—</span><span id="connStatus" class="ok">● connected</span></div>
 
 <script>
 const BASE = '';
 let tools = [];
+let missions = [];
+let tasks = [];
+let ws = null;
+
+// WebSocket connection for real-time updates
+function connectWS() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(protocol + '//' + location.host);
+  ws.onopen = () => {
+    document.getElementById('connStatus').textContent = '● connected';
+    document.getElementById('connStatus').className = 'ok';
+  };
+  ws.onclose = () => {
+    document.getElementById('connStatus').textContent = '○ disconnected';
+    document.getElementById('connStatus').className = '';
+    setTimeout(connectWS, 3000); // reconnect
+  };
+  ws.onerror = () => {
+    document.getElementById('connStatus').textContent = '● error';
+    document.getElementById('connStatus').className = '';
+  };
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'health') updateHealth(msg.data);
+      else if (msg.type === 'mission') updateMission(msg.data);
+      else if (msg.type === 'schedule') updateSchedule(msg.data);
+    } catch(e) {}
+  };
+}
 
 async function api(path, opts = {}) {
   const r = await fetch(BASE + path, opts);
@@ -138,12 +272,12 @@ async function runTool(name, i) {
   const input = document.getElementById('tinput' + i).value;
   const out = document.getElementById('output');
   out.classList.add('show');
-  out.innerHTML += '<span class="prompt">$</span> @' + name + '|' + input + '\\n';
+  out.innerHTML += '<span class="prompt">$</span> @' + name + '|' + input + '\\\\n';
   out.scrollTop = out.scrollHeight;
   try {
     const r = await api('/api/run', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tool:name, args:input}) });
-    out.innerHTML += r.result + '\\n\\n';
-  } catch(e) { out.innerHTML += '<span class="error">[Error] ' + e.message + '</span>\\n\\n'; }
+    out.innerHTML += r.result + '\\\\n\\\\n';
+  } catch(e) { out.innerHTML += '<span class="error">[Error] ' + e.message + '</span>\\\\n\\\\n'; }
   out.scrollTop = out.scrollHeight;
 }
 
@@ -151,7 +285,7 @@ function filterTools(q) {
   const cards = document.querySelectorAll('.tool-card');
   cards.forEach((c, i) => {
     const name = tools[i] || '';
-    c.style.display = name.includes(q.toLowerCase()) ? '' : 'none';
+    c.style.display = name.toLowerCase().includes(q.toLowerCase()) ? '' : 'none';
   });
 }
 
@@ -182,12 +316,12 @@ async function runPb(name, i) {
   const vars = document.getElementById('pbvars'+i).value;
   const out = document.getElementById('output');
   out.classList.add('show');
-  out.innerHTML += '<span class="prompt">$</span> 📋 playbook_run|' + name + '|' + vars + '\\n';
+  out.innerHTML += '<span class="prompt">$</span> 📋 playbook_run|' + name + '|' + vars + '\\\\n';
   out.scrollTop = out.scrollHeight;
   try {
     const r = await api('/api/playbook/run', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, vars}) });
-    out.innerHTML += r.result + '\\n\\n';
-  } catch(e) { out.innerHTML += '<span class="error">[Error] ' + e.message + '</span>\\n\\n'; }
+    out.innerHTML += r.result + '\\\\n\\\\n';
+  } catch(e) { out.innerHTML += '<span class="error">[Error] ' + e.message + '</span>\\\\n\\\\n'; }
   out.scrollTop = out.scrollHeight;
 }
 
@@ -214,6 +348,129 @@ async function viewReport(name) {
   } catch(e) { v.textContent = 'Error: ' + e.message; v.classList.add('show'); }
 }
 
+// ── Monitoring ──
+async function loadMissions() {
+  try {
+    missions = await api('/api/missions');
+    renderMissions(missions);
+  } catch(e) { document.getElementById('missionList').innerHTML = '<div class="error">' + e.message + '</div>'; }
+}
+
+function renderMissions(list) {
+  const div = document.getElementById('missionList');
+  if (!list.length) { div.innerHTML = '<div style="color:#5a6a7a">No missions found.</div>'; return; }
+  div.innerHTML = list.map(m => \`
+    <div class="mission-item">
+      <div class="header">
+        <span class="name">\${m.id}</span>
+        <span class="status \${m.status}">\${m.status.toUpperCase()}</span>
+      </div>
+      <div class="meta">\${m.programName} (\${m.programHandle}) • Updated: \${new Date(m.updatedAt).toLocaleString()}</div>
+      <div class="scope">In-scope: \${m.inScopeCount} assets • Objectives: \${m.objectives}</div>
+    </div>
+  \`).join('');
+}
+
+function filterMissions(q) {
+  const items = document.querySelectorAll('.mission-item');
+  items.forEach(item => {
+    const text = item.textContent.toLowerCase();
+    item.style.display = text.includes(q.toLowerCase()) ? '' : 'none';
+  });
+}
+
+async function loadSchedules() {
+  try {
+    const list = await api('/api/schedules');
+    renderSchedules(list);
+  } catch(e) { document.getElementById('scheduleList').innerHTML = '<div class="error">' + e.message + '</div>'; }
+}
+
+function renderSchedules(list) {
+  const div = document.getElementById('scheduleList');
+  if (!list.length) { div.innerHTML = '<div style="color:#5a6a7a">No active schedules. Use @schedule|daily|tool|target to create one.</div>'; return; }
+  div.innerHTML = list.map(s => \`
+    <div class="schedule-item">
+      <div class="header">
+        <span class="tool">@\${s.tool}</span>
+        <span class="next">Next: \${s.nextAtHuman}</span>
+      </div>
+      <div class="target">Target: \${s.target}</div>
+      <div class="interval">Interval: \${s.interval} • ID: \${s.id}</div>
+    </div>
+  \`).join('');
+}
+
+async function loadTasks() {
+  try {
+    tasks = await api('/api/tasks');
+    renderTasks(tasks);
+  } catch(e) { document.getElementById('taskGrid').innerHTML = '<div class="error">' + e.message + '</div>'; }
+}
+
+function renderTasks(list) {
+  const grid = document.getElementById('taskGrid');
+  grid.innerHTML = list.map(t => \`
+    <div class="task-card" onclick="runTaskFromMonitor('\${t.name}')">
+      <div class="name">@\${t.name}</div>
+      <div class="category">\${t.category}</div>
+    </div>
+  \`).join('');
+}
+
+function filterTasks(q) {
+  const cards = document.querySelectorAll('.task-card');
+  cards.forEach(c => {
+    const name = c.querySelector('.name').textContent.toLowerCase();
+    const cat = c.querySelector('.category').textContent.toLowerCase();
+    c.style.display = (name.includes(q.toLowerCase()) || cat.includes(q.toLowerCase())) ? '' : 'none';
+  });
+}
+
+async function runTaskFromMonitor(name) {
+  const input = prompt('Enter arguments for @' + name + ':');
+  if (input === null) return;
+  const out = document.getElementById('output');
+  out.classList.add('show');
+  out.innerHTML += '<span class="prompt">$</span> @' + name + '|' + input + '\\\\n';
+  out.scrollTop = out.scrollHeight;
+  try {
+    const r = await api('/api/run', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tool:name, args:input}) });
+    out.innerHTML += r.result + '\\\\n\\\\n';
+  } catch(e) { out.innerHTML += '<span class="error">[Error] ' + e.message + '</span>\\\\n\\\\n'; }
+  out.scrollTop = out.scrollHeight;
+}
+
+async function loadHealth() {
+  try {
+    const h = await api('/api/health');
+    updateHealth(h);
+  } catch(e) {}
+}
+
+function updateHealth(h) {
+  document.getElementById('sysUptime').textContent = h.uptimeHuman;
+  document.getElementById('sysMemory').textContent = \`\${h.memory.heapUsed} / \${h.memory.heapTotal} (RSS: \${h.memory.rss})\`;
+  document.getElementById('sysNode').textContent = h.nodeVersion;
+  document.getElementById('sysPid').textContent = h.pid;
+  document.getElementById('sysUsb').textContent = h.usbMounted ? '✓ Mounted' : '✗ Not mounted';
+  document.getElementById('sysUsb').className = 'stat-value ' + (h.usbMounted ? 'ok' : 'error');
+}
+
+async function loadSystem() {
+  try {
+    const s = await api('/api/system');
+    document.getElementById('sysLoad').textContent = s.loadAvg || '—';
+    document.getElementById('sysDisk').textContent = s.disk ? s.disk.split('\\n')[1]?.trim() || '—' : '—';
+  } catch(e) {}
+}
+
+// Periodic refresh
+setInterval(loadHealth, 10000);
+setInterval(loadSystem, 15000);
+setInterval(loadMissions, 30000);
+setInterval(loadSchedules, 10000);
+
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
@@ -221,9 +478,12 @@ function switchTab(name) {
   document.getElementById(name).classList.add('active');
   if (name === 'playbooks') loadPlaybooks();
   if (name === 'reports') loadReports();
+  if (name === 'monitor') { loadMissions(); loadSchedules(); loadTasks(); loadHealth(); loadSystem(); }
 }
 
+// Initialize
 loadTools();
+connectWS();
 </script></body></html>`;
 
 export function startGui(port: number = parseInt(process.env.PHANTOM_PORT || "8080")): void {
@@ -302,6 +562,99 @@ export function startGui(port: number = parseInt(process.env.PHANTOM_PORT || "80
         return;
       }
 
+      // ── Monitoring API endpoints ──
+      if (path === "/api/missions") {
+        const missions: any[] = [];
+        if (existsSync(MISSIONS_DIR)) {
+          for (const f of readdirSync(MISSIONS_DIR).filter((f: string) => f.endsWith(".json"))) {
+            const m = JSON.parse(readFileSync(resolve(MISSIONS_DIR, f), "utf-8"));
+            missions.push({
+              id: m.id,
+              programName: m.programName,
+              programHandle: m.programHandle,
+              status: m.status,
+              createdAt: m.createdAt,
+              updatedAt: m.updatedAt,
+              inScopeCount: m.scope?.inScope?.length || 0,
+              objectives: m.objectives?.length || 0
+            });
+          }
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(missions.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())));
+        return;
+      }
+
+      if (path === "/api/schedules") {
+        // Access globalThis.__phantomSchedules from the main process
+        const schedules = (globalThis as any).__phantomSchedules || [];
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(schedules.map((s: any) => ({
+          id: s.id,
+          tool: s.tool,
+          target: s.target,
+          interval: s.interval,
+          nextAt: s.nextAt,
+          nextAtHuman: new Date(s.nextAt).toLocaleString()
+        }))));
+        return;
+      }
+
+      if (path === "/api/tasks") {
+        // Get all available tasks from hackerTools
+        const tasks = Object.keys(hackerTools).map(name => ({
+          name,
+          category: categorizeTool(name)
+        }));
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(tasks));
+        return;
+      }
+
+      if (path === "/api/health") {
+        const mem = process.memoryUsage();
+        const uptime = process.uptime();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          status: "ok",
+          uptime: Math.floor(uptime),
+          uptimeHuman: formatUptime(uptime),
+          memory: {
+            rss: Math.round(mem.rss / 1024 / 1024) + "MB",
+            heapUsed: Math.round(mem.heapUsed / 1024 / 1024) + "MB",
+            heapTotal: Math.round(mem.heapTotal / 1024 / 1024) + "MB",
+            external: Math.round(mem.external / 1024 / 1024) + "MB"
+          },
+          pid: process.pid,
+          platform: process.platform,
+          nodeVersion: process.version,
+          usbMounted: existsSync("/root/usb/Phantom"),
+          timestamp: new Date().toISOString()
+        }));
+        return;
+      }
+
+      if (path === "/api/system") {
+        const { execFileSync } = await import("child_process");
+        let diskInfo = "";
+        let loadAvg = "";
+        try {
+          diskInfo = execFileSync("df", ["-h", "/root/usb"], { encoding: "utf-8", timeout: 5000 }).trim();
+        } catch {}
+        try {
+          loadAvg = execFileSync("cat", ["/proc/loadavg"], { encoding: "utf-8", timeout: 5000 }).trim();
+        } catch {}
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          disk: diskInfo,
+          loadAvg: loadAvg,
+          cpus: require("os").cpus().length,
+          totalMem: Math.round(require("os").totalmem() / 1024 / 1024 / 1024 * 10) / 10 + "GB",
+          freeMem: Math.round(require("os").freemem() / 1024 / 1024 / 1024 * 10) / 10 + "GB"
+        }));
+        return;
+      }
+
       // Serve HTML for everything else
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(HTML);
@@ -310,6 +663,18 @@ export function startGui(port: number = parseInt(process.env.PHANTOM_PORT || "80
       res.end(JSON.stringify({ error: e.message }));
     }
   });
+
+  // WebSocket server for real-time updates
+  if (WebSocketServer) {
+    const wss = new WebSocketServer({ server });
+    wss.on("connection", (ws: any) => {
+      wsClients.add(ws);
+      ws.on("close", () => wsClients.delete(ws));
+      ws.on("error", () => wsClients.delete(ws));
+      // Send initial state
+      ws.send(JSON.stringify({ type: "welcome", timestamp: new Date().toISOString() }));
+    });
+  }
 
   server.listen(port, () => {
     console.log(`\n  🌐 Phantom Dashboard: http://localhost:${port}\n`);
@@ -329,4 +694,28 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return bytes + "B";
   if (bytes < 1048576) return (bytes / 1024).toFixed(1) + "KB";
   return (bytes / 1048576).toFixed(1) + "MB";
+}
+
+function categorizeTool(name: string): string {
+  if (name.startsWith("mission") || name.startsWith("hackerone")) return "mission";
+  if (name.startsWith("recon") || name === "subfinder" || name === "dnsx" || name === "httpx" || name === "sub_enum" || name === "wayback" || name === "amass") return "recon";
+  if (name.startsWith("net:") || name === "port_scan" || name === "ssl_check" || name === "whois" || name === "geoip" || name === "dns_lookup" || name === "reverse_dns" || name === "nmap" || name === "naabu") return "network";
+  if (name.startsWith("vuln:") || name === "cve_search" || name === "exploit_search" || name === "nuclei" || name === "nikto" || name === "sqlmap" || name === "sql_detect" || name === "xss_scan") return "vulnerability";
+  if (name.startsWith("web:") || name === "crawl" || name === "http_headers" || name === "web_fetch" || name === "web_links" || name === "web_snapshot" || name === "whatweb" || name === "wafw00f" || name === "robots_txt" || name === "dir_bruteforce" || name === "ffuf" || name === "gobuster") return "web";
+  if (name.startsWith("osint:") || name === "email_verify" || name === "email_breach" || name === "github_dork" || name === "shodan_search" || name === "vt_check" || name === "cert_expiry") return "osint";
+  if (name.startsWith("schedule") || name === "cron" || name === "batch" || name === "pipe" || name === "session" || name === "playbook") return "automation";
+  return "other";
+}
+
+function formatUptime(seconds: number): string {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  const parts = [];
+  if (d) parts.push(`${d}d`);
+  if (h) parts.push(`${h}h`);
+  if (m) parts.push(`${m}m`);
+  if (s || parts.length === 0) parts.push(`${s}s`);
+  return parts.join(" ");
 }
