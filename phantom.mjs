@@ -462,22 +462,60 @@ __r.PROVIDERS = PROVIDERS;
       const p = getProvider();
       return !!(p.keyEnv ? getKey(p) : p === PROVIDERS.ollama);
     },
-    async chat(messages, opts = {}) {
-      const p = getProvider();
-      const key = getKey(p);
-      if (p.keyEnv && !key) return `[${PHANTOM_LLM_PROVIDER}] No API key. Set ${p.keyEnv} env or in config.json`;
-      const model = opts.model || p.defaultModel;
-      try {
-        let url = `${p.url}${p.chatPath.replace("{model}", model)}`;
-        const headers = { "Content-Type": "application/json", ...p.auth(key) };
-        if (p.urlMod) url = p.urlMod(url, p.chatPath.replace("{model}", model), key);
-        const body = JSON.stringify(p.fmt({ model, messages }));
-        const r = await fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(60000) });
-        if (!r.ok) { const t = await r.text().catch(() => ""); return `[${PHANTOM_LLM_PROVIDER} ${r.status}] ${t.substring(0, 200)}`; }
-        const d = await r.json();
-        return p.parse(d) || "...";
-      } catch (e) { return `[${PHANTOM_LLM_PROVIDER} err] ${e.message}`; }
-    },
+    chat: async function(messages, opts = {}) {
+            const p = getProvider();
+            const key = getKey(p);
+            if (p.keyEnv && !key) return `[${PHANTOM_LLM_PROVIDER}] No API key. Set ${p.keyEnv} env or in config.json`;
+            const model = opts.model || p.defaultModel;
+   
+            // Fallback chain on rate limits / errors
+            const fallbackOrder = ["openai", "anthropic", "groq", "gemini", "deepseek", "mistral", "openrouter", "opencode"];
+            let currentProvider = PHANTOM_LLM_PROVIDER;
+            let lastError = "";
+   
+            for (const providerName of fallbackOrder) {
+              const provider = PROVIDERS[providerName];
+              if (!provider) continue;
+     
+              const providerKey = getKey(provider);
+              if (provider.keyEnv && !providerKey && providerName !== "ollama") continue;
+     
+              try {
+                let url = `${provider.url}${provider.chatPath.replace("{model}", model)}`;
+                const headers = { "Content-Type": "application/json", ...provider.auth(providerKey) };
+                if (provider.urlMod) url = provider.urlMod(url, provider.chatPath.replace("{model}", model), providerKey);
+                const body = JSON.stringify(provider.fmt({ model, messages }));
+       
+                const r = await fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(60000) });
+       
+                if (!r.ok) {
+                  const t = await r.text().catch(() => "");
+                  lastError = `[${providerName} ${r.status}] ${t.substring(0, 200)}`;
+         
+                  // Fallback on rate limit or service errors
+                  if (r.status === 429 || r.status === 503 || r.status >= 500) {
+                    console.log(`[LLM Fallback] ${providerName} returned ${r.status}, trying next provider...`);
+                    continue; // Try next provider
+                  }
+                  return lastError;
+                }
+       
+                const d = await r.json();
+                const result = provider.parse(d) || "...";
+       
+                if (providerName !== currentProvider) {
+                  console.log(`[LLM Fallback] Switched to ${providerName}`);
+                }
+                return result;
+              } catch (e) {
+                lastError = `[${providerName} err] ${e.message}`;
+                console.log(`[LLM Fallback] ${providerName} error: ${e.message}, trying next...`);
+                continue;
+              }
+            }
+   
+            return `[LLM Fallback] All providers exhausted. Last error: ${lastError}`;
+          },
     async transcribe(filePath) {
       const key = process.env.OPENCODE_ZEN_API_KEY;
       if (!key) return "[Transcribe] Set OPENCODE_ZEN_API_KEY";
