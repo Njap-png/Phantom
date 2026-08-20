@@ -594,16 +594,71 @@ async function loadSchedules() {
 function renderSchedules(list) {
   const div = document.getElementById('scheduleList');
   if (!list.length) { div.innerHTML = '<div style="color:#5a6a7a">No active schedules. Use @schedule|daily|tool|target to create one.</div>'; return; }
-  div.innerHTML = list.map(s => \`
-    <div class="schedule-item">
-      <div class="header">
-        <span class="tool">@\${s.tool}</span>
-        <span class="next">Next: \${s.nextAtHuman}</span>
-      </div>
-      <div class="target">Target: \${s.target}</div>
-      <div class="interval">Interval: \${s.interval} • ID: \${s.id}</div>
-    </div>
-  \`).join('');
+  div.innerHTML = list.map(function(s) {
+    return '<div class="schedule-item">' +
+      '<div class="header">' +
+        '<span class="tool">@' + s.tool + '</span>' +
+        '<span class="next">Next: ' + s.nextAtHuman + '</span>' +
+      '</div>' +
+      '<div class="target">Target: ' + s.target + '</div>' +
+      '<div class="interval">Interval: ' + s.interval + ' • ID: ' + s.id + '</div>' +
+      '<div style="margin-top:8px;display:flex;gap:4px">' +
+        '<button onclick="editSchedule(' + s.id + ', \'' + s.tool + '\', \'' + s.target.replace(/'/g, "\\'") + '\', \'' + s.interval + '\')" style="background:#a855f722;color:#c084fc;border:1px solid #a855f744;padding:4px 8px;border-radius:3px;cursor:pointer;font-size:10px">✏ Edit</button>' +
+        '<button onclick="deleteSchedule(' + s.id + ')" style="background:#f8717122;color:#f87171;border:1px solid #f8717144;padding:4px 8px;border-radius:3px;cursor:pointer;font-size:10px">🗑 Delete</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+async function editSchedule(id, tool, target, interval) {
+  const newInterval = prompt('Edit interval (daily, hourly, 30m, etc):', interval);
+  if (newInterval === null) return;
+  const newTarget = prompt('Edit target:', target);
+  if (newTarget === null) return;
+  
+  try {
+    const r = await api('/api/run', { 
+      method:'POST', 
+      headers:{'Content-Type':'application/json'}, 
+      body:JSON.stringify({tool:'schedule', args:'stop ' + id}) 
+    });
+    
+    const r2 = await api('/api/run', { 
+      method:'POST', 
+      headers:{'Content-Type':'application/json'}, 
+      body:JSON.stringify({tool:'schedule', args:newInterval + '|' + tool + '|' + newTarget}) 
+    });
+    
+    loadSchedules();
+    const out = document.getElementById('output');
+    out.classList.add('show');
+    out.innerHTML += '<span class="prompt">$</span> @schedule ' + newInterval + '|' + tool + '|' + newTarget + '\\n';
+    out.innerHTML += '<span class=ok>' + r2.result + '</span>\\n\\n';
+    out.scrollTop = out.scrollHeight;
+  } catch(e) {
+    alert('Error editing schedule: ' + e.message);
+  }
+}
+
+async function deleteSchedule(id) {
+  if (!confirm('Delete schedule ' + id + '?')) return;
+  
+  try {
+    const r = await api('/api/run', { 
+      method:'POST', 
+      headers:{'Content-Type':'application/json'}, 
+      body:JSON.stringify({tool:'schedule', args:'stop ' + id}) 
+    });
+    
+    loadSchedules();
+    const out = document.getElementById('output');
+    out.classList.add('show');
+    out.innerHTML += '<span class="prompt">$</span> @schedule stop ' + id + '\\n';
+    out.innerHTML += '<span class=ok>' + r.result + '</span>\\n\\n';
+    out.scrollTop = out.scrollHeight;
+  } catch(e) {
+    alert('Error deleting schedule: ' + e.message);
+  }
 }
 
 async function loadTasks() {
