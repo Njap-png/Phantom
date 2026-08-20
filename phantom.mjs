@@ -65,10 +65,41 @@ const LEARNED_DIR = resolve(new URL(".", import.meta.url).pathname, "lib", "lear
 
 // ── Config ─────────────────────────────────────────────────
 let _config = {};
+
+// Load config from project root first (for USB portability), then from ~/.config/phantom
+const PROJECT_ROOT = resolve(new URL(".", import.meta.url).pathname);
+const projectConfigPath = resolve(PROJECT_ROOT, "config.json");
+const userConfigPath = resolve(BASE_DIR, "config.json");
+
+// Deep merge: user config overrides project config
+function deepMerge(target, source) {
+  const result = { ...target };
+  for (const key of Object.keys(source)) {
+    if (source[key] && typeof source[key] === "object" && !Array.isArray(source[key]) &&
+        target[key] && typeof target[key] === "object" && !Array.isArray(target[key])) {
+      result[key] = deepMerge(target[key], source[key]);
+    } else {
+      result[key] = source[key];
+    }
+  }
+  return result;
+}
+
+let projectConfig = {};
 try {
-  const configPath = resolve(BASE_DIR, "config.json");
-  if (fs.existsSync(configPath)) _config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  if (fs.existsSync(projectConfigPath)) {
+    projectConfig = JSON.parse(fs.readFileSync(projectConfigPath, "utf-8"));
+  }
 } catch {}
+
+let userConfig = {};
+try {
+  if (fs.existsSync(userConfigPath)) {
+    userConfig = JSON.parse(fs.readFileSync(userConfigPath, "utf-8"));
+  }
+} catch {}
+
+_config = deepMerge(projectConfig, userConfig);
 __r._config = _config;
 if (_config.VT_API_KEY && !process.env.VT_API_KEY) process.env.VT_API_KEY = _config.VT_API_KEY;
 // Load all provider API keys from config
@@ -77,7 +108,7 @@ for (const k of PROVIDER_KEYS) { if (_config[k] && !process.env[k]) process.env[
 // Selected provider: env > config > "openai"
 let PHANTOM_LLM_PROVIDER = process.env.PHANTOM_LLM_PROVIDER || _config.default_provider || "openai";
 __r.PHANTOM_LLM_PROVIDER = PHANTOM_LLM_PROVIDER;
-function setProvider(name) { PHANTOM_LLM_PROVIDER = name; process.env.PHANTOM_LLM_PROVIDER = name; _config.default_provider = name; __r.PHANTOM_LLM_PROVIDER = name; try { fs.writeFileSync(resolve(BASE_DIR, "config.json"), JSON.stringify(_config, null, 2)); } catch {} }
+function setProvider(name) { PHANTOM_LLM_PROVIDER = name; process.env.PHANTOM_LLM_PROVIDER = name; _config.default_provider = name; __r.PHANTOM_LLM_PROVIDER = name; try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {} }
 __r.setProvider = setProvider;
 
 // LLM instance — set after createProvider()
@@ -3640,7 +3671,7 @@ if (ENV.interactive) {
         if (key.trim()) {
           process.env[envVar] = key.trim();
           _config[envVar] = key.trim();
-          try { fs.writeFileSync(resolve(BASE_DIR, "config.json"), JSON.stringify(_config, null, 2)); } catch {}
+          try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {}
           console.log(`${c("green")}✓${R} ${label} API key saved to config.json\n`);
           // Re-detect
           const avail2 = await llm.detectProviders();
