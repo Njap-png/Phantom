@@ -1844,8 +1844,19 @@ class ConversationalUI {
       return this.runMissionTask(taskPart);
     }
     
-    // HackerOne
-    if (text.includes("hackerone") || text.includes("bug bounty")) {
+    // HackerOne / Bugcrowd / Bug Bounty
+    if (text.includes("hackerone") || text.includes("bugcrowd") || text.includes("bug bounty") || text.includes("bugbounty")) {
+      // Unified bugbounty tool
+      if (text.includes("bugcrowd") || text.includes("bugbounty")) {
+        if (text.includes("program")) return hackerTools.bugbounty("bugcrowd programs");
+        if (text.includes("scope")) {
+          const match = text.match(/(?:scope|targets?)\s+(\S+)/);
+          return match ? hackerTools.bugbounty(`bugcrowd scope ${match[1]}`) : "Usage: bugcrowd scope <program_uuid>";
+        }
+        if (text.includes("submission")) return hackerTools.bugbounty("bugcrowd submissions");
+        return hackerTools.bugbounty("bugcrowd programs");
+      }
+      // HackerOne specific
       if (text.includes("program")) return hackerTools.hackerone("programs");
       if (text.includes("scope")) {
         const match = text.match(/scope\s+(\S+)/);
@@ -3154,13 +3165,20 @@ class ConversationalUI {
         console.log(`  ${c("green")}tools${R}                       — list all 149 tools`);
         console.log(`  ${c("green")}clear${R} / ${c("green")}cls${R}                     — clear screen`);
         console.log(`  ${c("green")}quit${R} / ${c("green")}exit${R}                    — exit Phantom`);
-        console.log(`\n${D}Bug Bounty / HackerOne:${R}`);
-        console.log(`  ${c("green")}hackerone programs${R}          — list all HackerOne programs`);
-        console.log(`  ${c("green")}hackerone scope <program>${R}    — view program scope`);
-        console.log(`  ${c("green")}hackerone reports <program>${R}  — view submitted reports`);
-        console.log(`  ${c("green")}hackerone report <id>${R}        — view single report`);
-        console.log(`  ${c("green")}hackerone me${R}                 — authenticated user info`);
-        console.log(`  ${c("green")}hackerone test${R}               — test auth`);
+        console.log(`\\n${D}Bug Bounty / HackerOne / Bugcrowd:${R}`);
+                console.log(`  ${c("green")}hackerone programs${R}          — list all HackerOne programs`);
+                console.log(`  ${c("green")}hackerone scope <program>${R}    — view program scope`);
+                console.log(`  ${c("green")}hackerone reports <program>${R}  — view submitted reports`);
+                console.log(`  ${c("green")}hackerone report <id>${R}        — view single report`);
+                console.log(`  ${c("green")}hackerone me${R}                 — authenticated user info`);
+                console.log(`  ${c("green")}hackerone test${R}               — test auth`);
+                console.log(`  ${c("green")}bugcrowd programs${R}            — list all Bugcrowd programs`);
+                console.log(`  ${c("green")}bugcrowd scope <uuid>${R}        — view program scope (targets)`);
+                console.log(`  ${c("green")}bugcrowd submissions <uuid>${R}  — view submissions`);
+                console.log(`  ${c("green")}bugcrowd submission <id>${R}     — view single submission`);
+                console.log(`  ${c("green")}bugcrowd me${R}                  — authenticated user info`);
+                console.log(`  ${c("green")}bugcrowd test${R}                — test auth`);
+                console.log(`  ${c("green")}bugbounty <platform> <cmd>${R}   — unified: hackerone|bugcrowd`);
         console.log(`\n${D}Recon & Scanning:${R}`);
         console.log(`  ${c("green")}recon <domain>${R}               — full recon pipeline`);
         console.log(`  ${c("green")}port scan <target>${R}           — port scan`);
