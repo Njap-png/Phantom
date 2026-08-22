@@ -431,7 +431,7 @@ const genId = () => `PH-${(++idCounter).toString(36).toUpperCase().padStart(4, "
 // ── LLM Provider ──────────────────────────────────────────
 function createProvider() {
   const PROVIDERS = {
-    openai:      { url: "https://opencode.ai/zen/v1",                keyEnv: "OPENCODE_ZEN_API_KEY",     defaultModel: "deepseek-v4-flash-free", chatPath: "/chat/completions", fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 16384 }),               parse: d => { const c = d.choices?.[0]?.message?.content?.trim(); return c || (d.choices?.[0]?.finish_reason === "length" ? "[Response truncated — increase max_tokens]" : "…"); }, auth: k => ({ "Authorization": `Bearer ${k}` }) },
+    openai:      { url: "https://opencode.ai/zen/v1",                keyEnv: "OPENCODE_ZEN_API_KEY",     defaultModel: "nemotron-3-ultra-free", chatPath: "/chat/completions", fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 16384 }),               parse: d => { const c = d.choices?.[0]?.message?.content?.trim(); return c || (d.choices?.[0]?.finish_reason === "length" ? "[Response truncated — increase max_tokens]" : "…"); }, auth: k => ({ "Authorization": `Bearer ${k}` }) },
     anthropic:   { url: "https://api.anthropic.com/v1",         keyEnv: "ANTHROPIC_API_KEY",   defaultModel: "claude-sonnet-4-20250514", chatPath: "/messages",         fmt: o => ({ model: o.model, messages: o.messages, max_tokens: 512 }),                                 parse: d => d.content?.[0]?.text || d.content?.toString() || "...",                                                                                                      auth: k => ({ "x-api-key": k, "anthropic-version": "2023-06-01" }) },
     gemini:      { url: "https://generativelanguage.googleapis.com/v1beta", keyEnv: "GEMINI_API_KEY", defaultModel: "gemini-2.0-flash", chatPath: "/models/{model}:generateContent", fmt: o => ({ contents: o.messages.map(m => ({ role: m.role === "assistant" ? "model" : m.role, parts: [{ text: m.content }] })) }), parse: d => d.candidates?.[0]?.content?.parts?.[0]?.text || "...",                                             auth: () => ({}), urlMod: (u, m, k) => `${u}${m}?key=${k}` },
     groq:        { url: "https://api.groq.com/openai/v1",       keyEnv: "GROQ_API_KEY",        defaultModel: "llama-3.3-70b-versatile", chatPath: "/chat/completions", fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
@@ -439,7 +439,7 @@ function createProvider() {
     mistral:     { url: "https://api.mistral.ai/v1",            keyEnv: "MISTRAL_API_KEY",     defaultModel: "mistral-large-latest", chatPath: "/chat/completions", fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
     openrouter:  { url: "https://openrouter.ai/api/v1",         keyEnv: "OPENROUTER_API_KEY",  defaultModel: "anthropic/claude-sonnet-4", chatPath: "/chat/completions", fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 512 }),               parse: d => d.choices?.[0]?.message?.content?.trim() || "...",                                                                                                       auth: k => ({ "Authorization": `Bearer ${k}` }) },
     ollama:      { url: process.env.OLLAMA_HOST || "http://localhost:11434", keyEnv: "",        defaultModel: "llama3",         chatPath: "/api/chat",           fmt: o => ({ model: o.model, messages: o.messages, stream: false }),                                  parse: d => d.message?.content?.trim() || "...",                                                                                                                       auth: () => ({}) },
-    opencode:    { url: "https://opencode.ai/zen/v1",                keyEnv: "OPENCODE_ZEN_API_KEY",     defaultModel: "deepseek-v4-flash-free", chatPath: "/chat/completions",     fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 16384 }),               parse: d => { const c = d.choices?.[0]?.message?.content?.trim(); return c || (d.choices?.[0]?.finish_reason === "length" ? "[Response truncated — increase max_tokens or shorten context]" : "…"); },                                                        auth: k => ({ "Authorization": `Bearer ${k}` }) },
+    opencode:    { url: "https://opencode.ai/zen/v1",                keyEnv: "OPENCODE_ZEN_API_KEY",     defaultModel: "nemotron-3-ultra-free", chatPath: "/chat/completions",     fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 256 }),               parse: d => { const c = d.choices?.[0]?.message?.content?.trim(); return c || (d.choices?.[0]?.finish_reason === "length" ? "[Response truncated — increase max_tokens or shorten context]" : "…"); },                                                        auth: k => ({ "Authorization": `Bearer ${k}` }) },
   };
 __r.PROVIDERS = PROVIDERS;
 
@@ -1679,6 +1679,113 @@ class MinimalUI {
   }
   w(msg) { this.log.push(msg); if (this.log.length > 100) this.log.shift(); }
   flush() { if (this.log.length > 0) console.log(this.log[this.log.length - 1]); }
+  
+  // Natural language parser for MinimalUI (maps common phrases to tool calls)
+  async parseNaturalLanguage(input) {
+    const text = input.trim().toLowerCase();
+    
+    // Mission/task commands
+    if (text.includes("task") || text.includes("list tasks")) {
+      return "command"; // Will show command help
+    }
+    if (text.startsWith("run ") || text.startsWith("execute ")) {
+      const taskPart = text.replace(/^(run|execute)\s+/, "");
+      return `run ${taskPart}`;
+    }
+    
+    // Subdomain enumeration (standalone, before recon check)
+    if (text.startsWith("subdomain ") || text.startsWith("subdomains ")) {
+      const target = text.replace("subdomain ", "").replace("subdomains ", "").trim();
+      return hackerTools.sub_enum(target);
+    }
+    
+    // HackerOne / Bugcrowd / Bug Bounty
+    if (text.includes("hackerone") || text.includes("bugcrowd") || text.includes("bug bounty") || text.includes("bugbounty")) {
+      // Unified bugbounty tool
+      if (text.includes("bugcrowd") || text.includes("bugbounty")) {
+        if (text.includes("program")) return hackerTools.bugbounty("bugcrowd programs");
+        if (text.includes("scope")) {
+          const match = text.match(/(?:scope|targets?)\s+(\S+)/);
+          return match ? hackerTools.bugbounty(`bugcrowd scope ${match[1]}`) : "Usage: bugcrowd scope <program_uuid>";
+        }
+        if (text.includes("submission")) return hackerTools.bugbounty("bugcrowd submissions");
+        return hackerTools.bugbounty("bugcrowd programs");
+      }
+      // HackerOne specific
+      if (text.includes("program")) return hackerTools.hackerone("programs");
+      if (text.includes("scope")) {
+        const match = text.match(/scope\s+(\S+)/);
+        return match ? hackerTools.hackerone(`scope ${match[1]}`) : "Usage: hackerone scope <program>";
+      }
+      if (text.includes("report")) return hackerTools.hackerone("reports");
+      return hackerTools.hackerone("programs");
+    }
+    
+    // Recon
+    if (text.includes("recon") || text.includes("scan") || text.includes("enumerate")) {
+      const targetMatch = text.match(/(?:recon|scan|enumerate)\s+(\S+)/) || text.match(/(\S+\.\S+)/);
+      const target = targetMatch?.[1] || "";
+      if (target) {
+        if (text.includes("subdomain")) return hackerTools.sub_enum(target);
+        if (text.includes("dns")) return hackerTools.dns_lookup(target);
+        if (text.includes("http") || text.includes("header")) return hackerTools.http_headers(target);
+        if (text.includes("port")) return hackerTools.port_scan(target);
+        if (text.includes("ssl")) return hackerTools.ssl_check(target);
+        if (text.includes("whois")) return hackerTools.whois(target);
+        return hackerTools.recon(target);
+      }
+      return "Please specify a target domain (e.g., 'recon example.com')";
+    }
+    
+    // Network tools
+    if (text.includes("port scan") || text.includes("portscan")) {
+      const targetMatch = text.match(/(\S+\.\S+)/);
+      return targetMatch ? hackerTools.port_scan(targetMatch[1]) : "Usage: port scan <target>";
+    }
+    if (text.includes("ssl") || text.includes("cert")) {
+      const targetMatch = text.match(/(\S+\.\S+)/);
+      return targetMatch ? hackerTools.ssl_check(targetMatch[1]) : "Usage: ssl check <target>";
+    }
+    if (text.includes("whois")) {
+      const targetMatch = text.match(/(\S+\.\S+)/);
+      return targetMatch ? hackerTools.whois(targetMatch[1]) : "Usage: whois <target>";
+    }
+    
+    // Vulnerability
+    if (text.includes("cve")) {
+      const query = text.replace(/cve\s+/, "");
+      return query ? hackerTools.cve_search(query) : "Usage: cve <query>";
+    }
+    if (text.includes("exploit")) {
+      const query = text.replace(/exploit\s+/, "");
+      return query ? hackerTools.searchsploit(query) : "Usage: exploit <query>";
+    }
+    
+    // Web
+    if (text.includes("crawl")) {
+      const targetMatch = text.match(/(\S+\.\S+)/);
+      return targetMatch ? hackerTools.crawl(targetMatch[1]) : "Usage: crawl <url>";
+    }
+    if (text.includes("tech") || text.includes("whatweb")) {
+      const targetMatch = text.match(/(\S+\.\S+)/);
+      return targetMatch ? hackerTools.whatweb(targetMatch[1]) : "Usage: tech detect <target>";
+    }
+    
+    // Mission auto
+    if (text.includes("auto") && text.includes("mission")) {
+      const match = text.match(/mission\s+(\S+)/);
+      return match ? hackerTools.mission(`auto ${match[1]}`) : "Usage: mission auto <mission-id>";
+    }
+    
+    // OSINT
+    if (text.includes("dns enum") || text.includes("dns enumeration")) {
+      const targetMatch = text.match(/(\S+\.\S+)/);
+      return targetMatch ? hackerTools.sub_enum(targetMatch[1]) : "Usage: dns enum <target>";
+    }
+    
+    return null; // No match
+  }
+  
   start() {
     const toolCount = Object.keys(hackerTools).length;
     const isWide = process.stdout.columns >= 100;
@@ -1727,22 +1834,85 @@ class MinimalUI {
       else this.prompt();
     });
   }
-  handleCommand(cmd) {
-    const p = cmd.trim().split(/\s+/);
-    const op = p[0]?.toLowerCase(), args = p.slice(1);
-    switch (op) {
-      case "spawn": case "s": this.am.spawn(args[0], args[1], args.slice(2).join(" ")); break;
-      case "list": case "ls": log.info(`Agents: ${this.am.list.map(a => `${a.name}[${this.am.agents.get(a.id).status}]`).join(", ")}`); break;
-      case "broadcast": case "b": { const f = this.am.list[0]?.id; if (f) this.am.broadcast(f, args.join(" ")); break; }
-      case "debate": case "d": this.am.debate(args.join(" ") || "what should we build?"); break;
-      case "evolve": case "e": this.am.evolveAll(); break;
-      case "clear": case "c": this.log = []; break;
-      case "quit": case "exit": case "q": this.running = false; log.ok("Bye."); process.exit(0);
-      default: console.log(`? ${cmd}`);
+  async handleCommand(cmd) {
+      const p = cmd.trim().split(/\s+/);
+      const op = p[0]?.toLowerCase(), args = p.slice(1);
+      switch (op) {
+        case "spawn": case "s": this.am.spawn(args[0], args[1], args.slice(2).join(" ")); break;
+        case "list": case "ls": log.info(`Agents: ${this.am.list.map(a => `${a.name}[${this.am.agents.get(a.id).status}]`).join(", ")}`); break;
+        case "broadcast": case "b": { const f = this.am.list[0]?.id; if (f) this.am.broadcast(f, args.join(" ")); break; }
+        case "debate": case "d": this.am.debate(args.join(" ") || "what should we build?"); break;
+        case "evolve": case "e": this.am.evolveAll(); break;
+        case "clear": case "c": this.log = []; break;
+        case "quit": case "exit": case "q": this.running = false; log.ok("Bye."); process.exit(0);
+        case "tools":
+          const names = Object.keys(hackerTools).sort();
+          log.art(`\n${B}${c("green")}PHANTOM TOOLS (${names.length})${R}`);
+          for (let i = 0; i < names.length; i += 4) console.log(`  ${names.slice(i, i + 4).map(n => `${c("cyan")}${n.padEnd(20)}${R}`).join("")}`);
+          console.log("");
+          break;
+        case "command":
+          console.log(`\n${B}${c("green")}PHANTOM TASKS${R}`);
+          console.log(`${D}Core commands:${R}`);
+          console.log(`  ${c("green")}help${R} / ${c("green")}?${R} / ${c("green")}command${R}    — show this help`);
+          console.log(`  ${c("green")}tools${R}                       — list all ${Object.keys(hackerTools).length} tools`);
+          console.log(`  ${c("green")}clear${R} / ${c("green")}cls${R}                     — clear screen`);
+          console.log(`  ${c("green")}quit${R} / ${c("green")}exit${R}                    — exit Phantom`);
+          console.log(`\n${D}Type naturally (e.g. "hackerone programs", "recon example.com")${R}\n`);
+          break;
+        case "help": case "h": case "?":
+          console.log(`\n${B}${c("green")}PHANTOM COMMANDS${R}`);
+          console.log(`  ${c("green")}  /help${R}        — show this help\n  ${c("green")}  /command${R}    — list all commands`);
+          console.log(`  ${c("green")}  /tools${R}        — list ${Object.keys(hackerTools).length} tools`);
+          console.log(`  ${c("green")}  /gui${R}          — start web dashboard (port 8080)`);
+          console.log(`  ${c("green")}  /api${R}          — start REST API (port 9090)`);
+          console.log(`  ${c("green")}  /model${R}        — show/switch LLM`);
+          console.log(`  ${c("green")}  /clear${R}        — clear screen\n  ${c("green")}  /stop${R}         — cancel current operation`);
+          console.log(`  ${c("green")}  /queue${R}        — show queued inputs\n  ${c("green")}  /flushqueue${R}   — clear all queued inputs`);
+          console.log(`  ${c("green")}  /delegate${R}     — delegate task to agent\n  ${c("green")}  /talk${R} <a>     — talk directly to an agent`);
+          console.log(`  ${c("green")}  /agents${R}       — list team with status\n  ${c("green")}  /save${R} <n>     — save session`);
+          console.log(`  ${c("green")}  /load${R} <n>     — load session\n  ${c("green")}  /quit${R}         — exit\n`);
+          console.log(`${D}Type anything to chat. Use \\ for multi-line.${R}`);
+          console.log(`${D}The AI auto-uses tools via @tool_name|args syntax.${R}`);
+          console.log(`${D}@pipe${R}          — chain tools: @pipe|subfinder|example.com|httpx`);
+          console.log(`${D}@schedule${R}      — scheduled scans: @schedule|daily|recon|target`);
+          console.log(`${D}@scope${R}         — manage targets: @scope|add|example.com`);
+          console.log(`${D}@workspace_write${R} — save findings: @workspace_write|key|value`);
+          console.log(`${D}@self_evolve${R}   — run auto-evolution pipeline`);
+          console.log(`${D}@self_evolve|status${R} — show evolution state`);
+          console.log(`${D}TAB${R}            — cycle suggestions, autocomplete @tool`);
+          console.log(`${D}↑↓${R}            — navigate suggestions / history`);
+          console.log(`${D}↩${R}             — accept highlighted suggestion`);
+          console.log(`${D}ESC${R}           — dismiss suggestions`);
+          console.log(`${D}--quiet${R}        — suppress banner/status (env: PHANTOM_QUIET)\n`);
+          break;
+        default:
+          // Try natural language parsing for unrecognized commands
+          const nlResult = await this.parseNaturalLanguage(cmd);
+          if (nlResult) {
+            if (typeof nlResult === "string" && (nlResult.startsWith("hackerone") || nlResult.startsWith("bugcrowd") || nlResult.startsWith("bugbounty") || nlResult.startsWith("recon ") || nlResult.startsWith("port_scan") || nlResult.startsWith("ssl_check") || nlResult.startsWith("whois") || nlResult.startsWith("cve_search") || nlResult.startsWith("searchsploit") || nlResult.startsWith("crawl") || nlResult.startsWith("whatweb") || nlResult.startsWith("mission auto") || nlResult.startsWith("dns_lookup") || nlResult.startsWith("sub_enum") || nlResult.startsWith("hash ") || nlResult.startsWith("decode ") || nlResult.startsWith("wayback") || nlResult.startsWith("cert_expiry") || nlResult.startsWith("http_headers") || nlResult.startsWith("dir_bruteforce") || nlResult.startsWith("xss_scan") || nlResult.startsWith("sql_detect") || nlResult.startsWith("open_redirect") || nlResult.startsWith("shodan_search") || nlResult.startsWith("email_breach") || nlResult.startsWith("github_dork"))) {
+              console.log(nlResult);
+            } else if (typeof nlResult === "string" && nlResult.startsWith("run ")) {
+              const result = this.runMissionTask(nlResult.slice(4).trim());
+              console.log(result);
+            } else if (nlResult === "command") {
+              console.log(`\n${B}${c("green")}PHANTOM TASKS${R}`);
+              console.log(`${D}Core commands:${R}`);
+              console.log(`  ${c("green")}help${R} / ${c("green")}?${R} / ${c("green")}command${R}    — show this help`);
+              console.log(`  ${c("green")}tools${R}                       — list all ${Object.keys(hackerTools).length} tools`);
+              console.log(`  ${c("green")}clear${R} / ${c("green")}cls${R}                     — clear screen`);
+              console.log(`  ${c("green")}quit${R} / ${c("green")}exit${R}                    — exit Phantom`);
+              console.log(`\n${D}Type naturally (e.g. "hackerone programs", "recon example.com")${R}\n`);
+            } else {
+              console.log(nlResult);
+            }
+          } else {
+            console.log(`? ${cmd}`);
+          }
+      }
+      if (this.running) this.prompt();
     }
-    if (this.running) this.prompt();
   }
-}
 
 // ── UI: Conversational REPL (Claude Code / Hermes style) ──
 class ConversationalUI {
@@ -2435,6 +2605,14 @@ class ConversationalUI {
     let inCode = false;
     let codeLang = "";
 
+    const logLine = (text) => {
+      if (this.tui?.active) {
+        this.tui.log(text);
+      } else {
+        process.stdout.write(text + "\n");
+      }
+    };
+
     for (const line of lines) {
       const trimmed = line.trimEnd();
       const codeFence = trimmed.match(/^```(\w*)/);
@@ -2443,13 +2621,13 @@ class ConversationalUI {
           inCode = false;
         } else {
           codeLang = codeFence[1] || "";
-          if (codeLang) { const _l = `  ${c("dim")}${codeLang}${R}`; if (this.tui?.active) this.tui.log(_l); else process.stdout.write(_l + "\n"); }
+          if (codeLang) { const _l = `  ${c("dim")}${codeLang}${R}`; logLine(_l); }
           inCode = true;
         }
         continue;
       }
       if (inCode) {
-        console.log(`  ${c("dim")}│${R} ${trimmed}`);
+        logLine(`  ${c("dim")}│${R} ${trimmed}`);
         continue;
       }
       // Tool calls shown during execution
@@ -2458,28 +2636,28 @@ class ConversationalUI {
       }
       // Empty lines
       if (trimmed === "") {
-        console.log("");
+        logLine("");
         continue;
       }
       // Section headers (## or ###)
       const heading = trimmed.match(/^(#{2,3}|\[)\s*(.+?)\]?\s*$/);
       if (heading) {
         const text = heading[2].trim();
-        console.log(`\n${c("magenta")}${text}${R}`);
+        logLine(`\n${c("magenta")}${text}${R}`);
         continue;
       }
       // Bullet points
       if (trimmed.match(/^[\s]*[-*•]\s/)) {
-        console.log(`  ${c("cyan")}•${R} ${trimmed.replace(/^[\s]*[-*•]\s/, "")}`);
+        logLine(`  ${c("cyan")}•${R} ${trimmed.replace(/^[\s]*[-*•]\s/, "")}`);
         continue;
       }
       // Numbered lists
       if (trimmed.match(/^\s*\d+[.)]\s/)) {
-        console.log(`  ${trimmed}`);
+        logLine(`  ${trimmed}`);
         continue;
       }
       // Default: normal text
-      console.log(` ${trimmed}`);
+      logLine(` ${trimmed}`);
     }
   }
 
