@@ -35,10 +35,10 @@ export const defaultConfig: PhantomConfig = {
     animationSpeed: 50,
   },
   providers: {
-      openai: { apiKey: process.env.OPENAI_API_KEY || "", baseUrl: "https://api.openai.com/v1" },
-      anthropic: { apiKey: process.env.ANTHROPIC_API_KEY || "" },
-      ollama: { baseUrl: process.env.OLLAMA_HOST || "http://localhost:11434", model: "llama3" },
-    },
+    openai: { apiKey: process.env.OPENAI_API_KEY || "", baseUrl: "https://api.openai.com/v1" },
+    anthropic: { apiKey: process.env.ANTHROPIC_API_KEY || "" },
+    ollama: { baseUrl: process.env.OLLAMA_HOST || "http://localhost:11434", model: "llama3" },
+  },
 };
 
 export function loadConfig(): PhantomConfig {
