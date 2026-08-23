@@ -35,10 +35,10 @@ export const defaultConfig: PhantomConfig = {
     animationSpeed: 50,
   },
   providers: {
-    openai: { apiKey: process.env.OPENAI_API_KEY || "", baseUrl: "https://api.openai.com/v1" },
-    anthropic: { apiKey: process.env.ANTHROPIC_API_KEY || "" },
-    ollama: { baseUrl: process.env.OLLAMA_HOST || "http://localhost:11434", model: "llama3" },
-  },
+      openai: { apiKey: process.env.OPENAI_API_KEY || "", baseUrl: "https://api.openai.com/v1" },
+      anthropic: { apiKey: process.env.ANTHROPIC_API_KEY || "" },
+      ollama: { baseUrl: process.env.OLLAMA_HOST || "http://localhost:11434", model: "llama3" },
+    },
 };
 
 export function loadConfig(): PhantomConfig {
@@ -51,7 +51,25 @@ export function loadConfig(): PhantomConfig {
       return defaultConfig;
     }
     const raw = readFileSync(CONFIG_PATH, "utf-8");
-    return { ...defaultConfig, ...JSON.parse(raw) };
+    const userConfig = JSON.parse(raw);
+    
+    // Deep merge: user config overrides defaults, preserving nested objects
+    function deepMerge(target: any, source: any): any {
+      const result = { ...target };
+      for (const key of Object.keys(source)) {
+        const sourceVal = source[key];
+        const targetVal = target[key];
+        if (sourceVal && typeof sourceVal === "object" && !Array.isArray(sourceVal) &&
+            targetVal && typeof targetVal === "object" && !Array.isArray(targetVal)) {
+          result[key] = deepMerge(targetVal, sourceVal);
+        } else {
+          result[key] = sourceVal;
+        }
+      }
+      return result;
+    }
+    
+    return deepMerge(defaultConfig, userConfig) as PhantomConfig;
   } catch {
     return defaultConfig;
   }
