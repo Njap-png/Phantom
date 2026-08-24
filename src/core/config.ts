@@ -52,7 +52,7 @@ export function loadConfig(): PhantomConfig {
     }
     const raw = readFileSync(CONFIG_PATH, "utf-8");
     const userConfig = JSON.parse(raw);
-    
+
     // Deep merge: user config overrides defaults, preserving nested objects
     function deepMerge(target: any, source: any): any {
       const result = { ...target };
@@ -68,7 +68,7 @@ export function loadConfig(): PhantomConfig {
       }
       return result;
     }
-    
+
     return deepMerge(defaultConfig, userConfig) as PhantomConfig;
   } catch {
     return defaultConfig;
