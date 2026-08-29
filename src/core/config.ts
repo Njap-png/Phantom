@@ -1,6 +1,15 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { homedir } from "os";
 import { resolve } from "path";
+import { fileURLToPath } from "url";
+
+// Dynamic project root detection for USB portability
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = resolve(__filename, "..", "..", "..");
+const PROJECT_ROOT = __dirname;
+const CONFIG_DIR = resolve(homedir(), ".config", "phantom");
+const PROJECT_CONFIG_PATH = resolve(PROJECT_ROOT, "config.json");
+const USER_CONFIG_PATH = resolve(CONFIG_DIR, "config.json");
 
 export interface PhantomConfig {
   agents: {
@@ -19,9 +28,6 @@ export interface PhantomConfig {
     ollama: { baseUrl: string; model: string };
   };
 }
-
-const CONFIG_DIR = resolve(homedir(), ".config", "phantom");
-const CONFIG_PATH = resolve(CONFIG_DIR, "config.json");
 
 export const defaultConfig: PhantomConfig = {
   agents: {
@@ -46,14 +52,8 @@ export function loadConfig(): PhantomConfig {
     if (!existsSync(CONFIG_DIR)) {
       mkdirSync(CONFIG_DIR, { recursive: true });
     }
-    if (!existsSync(CONFIG_PATH)) {
-      writeFileSync(CONFIG_PATH, JSON.stringify(defaultConfig, null, 2));
-      return defaultConfig;
-    }
-    const raw = readFileSync(CONFIG_PATH, "utf-8");
-    const userConfig = JSON.parse(raw);
 
-    // Deep merge: user config overrides defaults, preserving nested objects
+    // Deep merge: project config (USB) -> user config (~/.config/phantom) -> defaults
     function deepMerge(target: any, source: any): any {
       const result = { ...target };
       for (const key of Object.keys(source)) {
@@ -69,7 +69,23 @@ export function loadConfig(): PhantomConfig {
       return result;
     }
 
-    return deepMerge(defaultConfig, userConfig) as PhantomConfig;
+    let projectConfig = {};
+    try {
+      if (existsSync(PROJECT_CONFIG_PATH)) {
+        projectConfig = JSON.parse(readFileSync(PROJECT_CONFIG_PATH, "utf-8"));
+      }
+    } catch {}
+
+    let userConfig = {};
+    try {
+      if (existsSync(USER_CONFIG_PATH)) {
+        userConfig = JSON.parse(readFileSync(USER_CONFIG_PATH, "utf-8"));
+      }
+    } catch {}
+
+    // Merge: defaults -> project -> user (user wins)
+    const merged = deepMerge(defaultConfig, projectConfig);
+    return deepMerge(merged, userConfig) as PhantomConfig;
   } catch {
     return defaultConfig;
   }
