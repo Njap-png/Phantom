@@ -1,7 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { runTool, runPipe, formatExternal } from "../lib/runtime.mjs";
 import { hackerTools } from "../lib/tools.mjs";
+
+const CWD = dirname(dirname(fileURLToPath(import.meta.url)));
 
 describe("runTool wrapper", () => {
   it("wraps a normal tool call", async () => {
@@ -75,7 +79,7 @@ describe("formatExternal edge cases", () => {
 describe("CLI --json smoke", () => {
   it("--tool --json shell returns valid JSON", async () => {
     const { execSync } = await import("child_process");
-    const out = execSync("node phantom.mjs --tool --json shell 'echo json_test_cli' 2>&1", { cwd: "/root/usb/Phantom", encoding: "utf-8", timeout: 10000 });
+    const out = execSync("node phantom.mjs --tool --json shell 'echo json_test_cli' 2>&1", { cwd: CWD, encoding: "utf-8", timeout: 10000 });
     const parsed = JSON.parse(out);
     assert.equal(parsed.ok, true);
     assert.equal(parsed.tool, "shell");
@@ -85,7 +89,7 @@ describe("CLI --json smoke", () => {
   it("--tool --json with bad tool exits 1 with error", async () => {
     const { execSync } = await import("child_process");
     try {
-      execSync("node phantom.mjs --tool --json bad_tool_xyz '' 2>&1", { cwd: "/root/usb/Phantom", encoding: "utf-8", timeout: 10000 });
+      execSync("node phantom.mjs --tool --json bad_tool_xyz '' 2>&1", { cwd: CWD, encoding: "utf-8", timeout: 10000 });
       assert.fail("Should have thrown");
     } catch (e) {
       const out = e.stdout;

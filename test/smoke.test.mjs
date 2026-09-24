@@ -2,8 +2,10 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const CWD = "/root/usb/Phantom";
+const CWD = dirname(dirname(fileURLToPath(import.meta.url)));
 
 describe("CLI smoke", () => {
   it("--list runs without error", async () => {
