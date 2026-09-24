@@ -502,7 +502,7 @@ __r.PROVIDERS = PROVIDERS;
             const p = getProvider();
             const key = getKey(p);
             if (p.keyEnv && !key) return `[${PHANTOM_LLM_PROVIDER}] No API key. Set ${p.keyEnv} env or in config.json`;
-            const model = opts.model || p.defaultModel;
+            const model = opts.model || _config.default_model || p.defaultModel;
    
             // Fallback chain on rate limits / errors
             const fallbackOrder = ["openai", "anthropic", "groq", "gemini", "deepseek", "mistral", "openrouter", "opencode"];
