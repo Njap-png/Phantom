@@ -488,6 +488,35 @@ __r.PROVIDERS = PROVIDERS;
     return null;
   }
 
+  // ── Free OpenRouter models ──────────────────────────────
+  // OpenRouter's free tier rotates, so we discover live ":free" models and
+  // fall back across them instead of hardcoding one.
+  let _freeModelsCache = null;
+  let _freeModelsAt = 0;
+  async function getFreeOpenRouterModels(key) {
+    if (_freeModelsCache && Date.now() - _freeModelsAt < 3600e3) return _freeModelsCache;
+    try {
+      const r = await fetch("https://openrouter.ai/api/v1/models", {
+        headers: key ? { Authorization: `Bearer ${key}` } : {},
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!r.ok) return _freeModelsCache || [];
+      const d = await r.json();
+      const free = (d.data || [])
+        .filter(m => m.id && m.id.endsWith(":free"))
+        .map(m => m.id);
+      if (free.length) { _freeModelsCache = free; _freeModelsAt = Date.now(); }
+      return free;
+    } catch { return _freeModelsCache || []; }
+  }
+  // Ordered candidate list for OpenRouter: configured free default first, then live free models.
+  async function freeOpenRouterModels(key) {
+    const live = await getFreeOpenRouterModels(key);
+    const preferred = PROVIDERS.openrouter.defaultModel;
+    const ordered = [preferred, ...live.filter(m => m !== preferred)];
+    return ordered.slice(0, 5);
+  }
+
   return {
     get provider() { return PHANTOM_LLM_PROVIDER; },
     set provider(name) { if (PROVIDERS[name]) setProvider(name); },
@@ -500,8 +529,17 @@ __r.PROVIDERS = PROVIDERS;
     },
     chat: async function(messages, opts = {}) {
             const p = getProvider();
-            const key = getKey(p);
-            if (p.keyEnv && !key) return `[${PHANTOM_LLM_PROVIDER}] No API key. Set ${p.keyEnv} env or in config.json`;
+            let key = getKey(p);
+            if (p.keyEnv && !key) {
+              // Ask for the key on demand (TTY only), then save to the vault
+              try {
+                const { ensure } = await import("./credentials.mjs");
+                const entered = await ensure(p.keyEnv);
+                if (entered) key = entered;
+              } catch {}
+            }
+            if (p.keyEnv && !key) return `[${PHANTOM_LLM_PROVIDER}] No API key. Set ${p.keyEnv} env or in config.json (run interactively to be prompted)`;
+
             const model = opts.model || _config.default_model || p.defaultModel;
    
             // Fallback chain on rate limits / errors
@@ -512,41 +550,55 @@ __r.PROVIDERS = PROVIDERS;
             for (const providerName of fallbackOrder) {
               const provider = PROVIDERS[providerName];
               if (!provider) continue;
-     
+      
               const providerKey = getKey(provider);
               if (provider.keyEnv && !providerKey && providerName !== "ollama") continue;
-     
-              try {
-                let url = `${provider.url}${provider.chatPath.replace("{model}", model)}`;
-                const headers = { "Content-Type": "application/json", ...provider.auth(providerKey) };
-                if (provider.urlMod) url = provider.urlMod(url, provider.chatPath.replace("{model}", model), providerKey);
-                const body = JSON.stringify(provider.fmt({ model, messages }));
-       
-                const r = await fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(60000) });
-       
-                if (!r.ok) {
-                  const t = await r.text().catch(() => "");
-                  lastError = `[${providerName} ${r.status}] ${t.substring(0, 200)}`;
-         
-                  // Fallback on rate limit or service errors
-                  if (r.status === 429 || r.status === 503 || r.status >= 500) {
-                    console.log(`[LLM Fallback] ${providerName} returned ${r.status}, trying next provider...`);
-                    continue; // Try next provider
+
+              // For OpenRouter with no explicit model, try free models in order.
+              let models = [model];
+              if (providerName === "openrouter" && !opts.model && !_config.default_model) {
+                models = await freeOpenRouterModels(providerKey);
+              }
+
+              for (let mi = 0; mi < models.length; mi++) {
+                const candidate = models[mi];
+                try {
+                  let url = `${provider.url}${provider.chatPath.replace("{model}", candidate)}`;
+                  const headers = { "Content-Type": "application/json", ...provider.auth(providerKey) };
+                  if (provider.urlMod) url = provider.urlMod(url, provider.chatPath.replace("{model}", candidate), providerKey);
+                  const body = JSON.stringify(provider.fmt({ model: candidate, messages }));
+        
+                  const r = await fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(60000) });
+        
+                  if (!r.ok) {
+                    const t = await r.text().catch(() => "");
+                    lastError = `[${providerName} ${r.status}] ${t.substring(0, 200)}`;
+          
+                    // Free model unavailable/retired — try the next free model
+                    if (providerName === "openrouter" && (r.status === 404 || r.status === 400) && mi < models.length - 1) {
+                      console.log(`[LLM] ${candidate} unavailable, trying another free model...`);
+                      continue;
+                    }
+                    // Fallback on rate limit or service errors
+                    if (r.status === 429 || r.status === 503 || r.status >= 500) {
+                      console.log(`[LLM Fallback] ${providerName} returned ${r.status}, trying next provider...`);
+                      break; // next provider
+                    }
+                    return lastError;
                   }
-                  return lastError;
+        
+                  const d = await r.json();
+                  const result = provider.parse(d) || "...";
+        
+                  if (providerName !== currentProvider) {
+                    console.log(`[LLM Fallback] Switched to ${providerName}`);
+                  }
+                  return result;
+                } catch (e) {
+                  lastError = `[${providerName} err] ${e.message}`;
+                  console.log(`[LLM Fallback] ${providerName} error: ${e.message}, trying next...`);
+                  continue; // next model
                 }
-       
-                const d = await r.json();
-                const result = provider.parse(d) || "...";
-       
-                if (providerName !== currentProvider) {
-                  console.log(`[LLM Fallback] Switched to ${providerName}`);
-                }
-                return result;
-              } catch (e) {
-                lastError = `[${providerName} err] ${e.message}`;
-                console.log(`[LLM Fallback] ${providerName} error: ${e.message}, trying next...`);
-                continue;
               }
             }
    
