@@ -7,7 +7,6 @@ dist/
 tmp/
 config.json
 lib/generated/
-lib/learned/
 .config/phantom/
 *.vtt
 *.srt

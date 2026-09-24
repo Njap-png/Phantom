@@ -1897,8 +1897,8 @@ describe("recon-planner", () => {
           // Add a result for allowed.com to trigger next action on a different target
           // We can't easily inject this, so test that scope guard works
           const result = await hackerTools.mission(`execute-next ${mission.id}`);
-          // Should either execute on allowed.com or deny if next action is for out-of-scope
-          assert.ok(result.includes("Executed") || result.includes("denied") || result.includes("No valid actions") || result.includes("Error") || result.includes("completed"));
+          // Should either execute on allowed.com, skip in offline mode, or deny if next action is out-of-scope
+          assert.ok(result.includes("Executed") || result.includes("Skipped") || result.includes("denied") || result.includes("No valid actions") || result.includes("Error") || result.includes("completed"));
    
           // Verify no network call was made to out-of-scope target by checking activity log
           const m = loadMission(mission.id);
