@@ -21,6 +21,7 @@ import { autoEvolve, startupEvolve, getEvolveStatus, analyzeError, loadAutoTools
 import { populateEnv, autoInstallSecurity } from "./lib/env.mjs";
 import { ensureReconTools } from "./lib/install-tools.mjs";
 import { saveSession, loadSession, autoLinkFromBooks } from "./lib/session.mjs";
+import { get as vaultGet, set as vaultSet } from "./lib/vault.mjs";
 
 // ── Merge auto-generated tools into hackerTools ──
 // Runs once at module init so all agents & CLIs pick them up.
@@ -106,6 +107,9 @@ if (_config.VT_API_KEY && !process.env.VT_API_KEY) process.env.VT_API_KEY = _con
 // Load all provider API keys from config
 const PROVIDER_KEYS = ["OPENAI_API_KEY","ANTHROPIC_API_KEY","GEMINI_API_KEY","GROQ_API_KEY","DEEPSEEK_API_KEY","MISTRAL_API_KEY","OPENROUTER_API_KEY","SHODAN_API_KEY","HIBP_API_KEY","OPENCODE_ZEN_API_KEY","HACKERONE_API_USERNAME","HACKERONE_API_TOKEN","BUGCROWD_API_TOKEN","BUGCROWD_API_USERNAME"];
 for (const k of PROVIDER_KEYS) { if (_config[k] && !process.env[k]) process.env[k] = _config[k]; }
+// Vault fallback: secrets live in the phantom vault, not plaintext config
+for (const k of PROVIDER_KEYS) { if (!process.env[k]) { const vv = vaultGet(k); if (vv) process.env[k] = vv; } }
+if (!process.env.VT_API_KEY) { const vv = vaultGet("VT_API_KEY"); if (vv && !process.env.VT_API_KEY) process.env.VT_API_KEY = vv; }
 // Selected provider: env > config > "openai"
 let PHANTOM_LLM_PROVIDER = process.env.PHANTOM_LLM_PROVIDER || _config.default_provider || "openai";
 __r.PHANTOM_LLM_PROVIDER = PHANTOM_LLM_PROVIDER;
@@ -3872,9 +3876,14 @@ if (ENV.interactive) {
         rl2.close();
         if (key.trim()) {
           process.env[envVar] = key.trim();
-          _config[envVar] = key.trim();
+          if (/_KEY$|_TOKEN$|_SECRET$|PASSWORD/.test(envVar)) {
+            vaultSet(envVar, key.trim());
+            delete _config[envVar];
+          } else {
+            _config[envVar] = key.trim();
+          }
           try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {}
-          console.log(`${c("green")}✓${R} ${label} API key saved to config.json\n`);
+          console.log(`${c("green")}✓${R} ${label} API key saved (secrets to vault)\n`);
           // Re-detect
           const avail2 = await llm.detectProviders();
           const ready2 = Object.entries(avail2).filter(([, v]) => v !== "no").map(([n]) => n);
@@ -3912,10 +3921,12 @@ if (ENV.interactive) {
       if (username.trim() && token.trim()) {
         process.env.HACKERONE_API_USERNAME = username.trim();
         process.env.HACKERONE_API_TOKEN = token.trim();
-        _config.HACKERONE_API_USERNAME = username.trim();
-        _config.HACKERONE_API_TOKEN = token.trim();
+        vaultSet("HACKERONE_API_USERNAME", username.trim());
+        vaultSet("HACKERONE_API_TOKEN", token.trim());
+        delete _config.HACKERONE_API_USERNAME;
+        delete _config.HACKERONE_API_TOKEN;
         try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {}
-        console.log(`${c("green")}✓${R} HackerOne API keys saved to config.json\n`);
+        console.log(`${c("green")}✓${R} HackerOne API keys saved to the secret vault\n`);
       }
     }
 
@@ -3925,9 +3936,10 @@ if (ENV.interactive) {
       rlT.close();
       if (token.trim()) {
         process.env.BUGCROWD_API_TOKEN = token.trim();
-        _config.BUGCROWD_API_TOKEN = token.trim();
+        vaultSet("BUGCROWD_API_TOKEN", token.trim());
+        delete _config.BUGCROWD_API_TOKEN;
         try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {}
-        console.log(`${c("green")}✓${R} Bugcrowd API token saved to config.json\n`);
+        console.log(`${c("green")}✓${R} Bugcrowd API token saved to the secret vault\n`);
       }
     }
   } catch {}

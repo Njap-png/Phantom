@@ -38,10 +38,13 @@ describe("persisted config (~/.config/phantom/config.json)", () => {
     assert.ok(fs.existsSync(USER_CONFIG), `${USER_CONFIG} missing`);
   });
 
-  it("HackerOne credentials are stored", () => {
+  it("HackerOne credentials are stored (in the secret vault, not plaintext config)", async () => {
+    const { get, status } = await import(join(CWD, "lib", "vault.mjs"));
+    assert.ok(status().location, "vault location missing");
+    assert.ok(get("HACKERONE_API_USERNAME"), "HACKERONE_API_USERNAME missing from vault");
+    assert.ok(get("HACKERONE_API_TOKEN"), "HACKERONE_API_TOKEN missing from vault");
     const cfg = JSON.parse(fs.readFileSync(USER_CONFIG, "utf-8"));
-    assert.ok(cfg.HACKERONE_API_USERNAME, "HACKERONE_API_USERNAME missing");
-    assert.ok(cfg.HACKERONE_API_TOKEN, "HACKERONE_API_TOKEN missing");
+    assert.equal(cfg.HACKERONE_API_TOKEN, undefined, "token must NOT be in plaintext config");
   });
 
   it("OpenRouter key + default provider are stored", () => {
