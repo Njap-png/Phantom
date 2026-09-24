@@ -211,6 +211,19 @@ describe("hackerTools", () => {
 // ── Mission orchestration ──────────────────────────────────
 
 describe("mission orchestration", () => {
+  // Create and persist a mission with a real in-scope target so tests are
+  // self-contained (no dependency on state left behind by other tests).
+  async function makeScopedMission(handle) {
+    const { createMission, saveMission } = await import("../lib/mission.mjs");
+    const mission = createMission({ handle, name: handle }, {
+      inScope: [{ identifier: `${handle}.local`, normalized: `${handle}.local`, isWildcard: false, assetType: "URL" }],
+      exclusions: [],
+      restrictions: []
+    });
+    saveMission(mission);
+    return mission;
+  }
+
   it("mission tool exists and shows help", async () => {
     const { hackerTools } = await import("../lib/tools.mjs");
     const r = await hackerTools.mission("");
@@ -227,11 +240,17 @@ describe("mission orchestration", () => {
 
   it("mission list returns existing missions", async () => {
     const { hackerTools } = await import("../lib/tools.mjs");
+    await makeScopedMission("list-test");
     const r = await hackerTools.mission("list");
     assert.match(r, /mission-/);
   });
 
   it("mission auto creates mission from HackerOne program", async () => {
+    const hasH1Creds = !!(process.env.HACKERONE_API_USERNAME && process.env.HACKERONE_API_TOKEN);
+    if (!hasH1Creds) {
+      // Skip live HackerOne test when no credentials are configured.
+      return;
+    }
     const { hackerTools } = await import("../lib/tools.mjs");
     const r = await hackerTools.mission("auto cloudflare");
     assert.match(r, /Mission.*created/);
@@ -358,17 +377,14 @@ describe("mission orchestration", () => {
 
   it("mission auto creates plan for valid existing mission", async () => {
     const { hackerTools } = await import("../lib/tools.mjs");
-    const { listMissions } = await import("../lib/mission.mjs");
     const { getExecutionState } = await import("../lib/recon.mjs");
 
-    const missions = listMissions();
-    if (missions.length > 0) {
-      const missionId = missions[0].id;
-      const r = await hackerTools.mission(`auto ${missionId}`);
-      assert.match(r, /auto-planned and passive recon completed/);
-      const state = getExecutionState(missionId);
-      assert.equal(state, "completed");
-    }
+    const mission = await makeScopedMission("plan-test");
+    const missionId = mission.id;
+    const r = await hackerTools.mission(`auto ${missionId}`);
+    assert.match(r, /auto-planned and passive recon completed/);
+    const state = getExecutionState(missionId);
+    assert.equal(state, "completed");
   });
 
   it("mission auto rejects missing mission", async () => {
@@ -391,19 +407,16 @@ describe("mission orchestration", () => {
 
   it("mission auto executes phases successfully", async () => {
     const { hackerTools } = await import("../lib/tools.mjs");
-    const { listMissions } = await import("../lib/mission.mjs");
     const { getMissionFindings } = await import("../lib/recon.mjs");
 
-    const missions = listMissions();
-    if (missions.length > 0) {
-      const missionId = missions[0].id;
-      const r = await hackerTools.mission(`auto ${missionId}`);
-      assert.match(r, /RECON COMPLETE/);
+    const mission = await makeScopedMission("phase-test");
+    const missionId = mission.id;
+    const r = await hackerTools.mission(`auto ${missionId}`);
+    assert.match(r, /RECON COMPLETE/);
 
-      const findings = getMissionFindings(missionId);
-      assert.ok(Array.isArray(findings));
-      assert.ok(findings.length >= 0);
-    }
+    const findings = getMissionFindings(missionId);
+    assert.ok(Array.isArray(findings));
+    assert.ok(findings.length >= 0);
   });
 
   it("mission auto rejects unauthorized mission (no HackerOne scope)", async () => {
@@ -423,29 +436,23 @@ describe("mission orchestration", () => {
 
   it("mission auto persists execution state for resume/pause/stop", async () => {
     const { hackerTools } = await import("../lib/tools.mjs");
-    const { listMissions } = await import("../lib/mission.mjs");
     const { getExecutionState, setExecutionState, EXEC_STATES } = await import("../lib/recon.mjs");
 
-    const missions = listMissions();
-    if (missions.length > 0) {
-      const missionId = missions[0].id;
-      setExecutionState(missionId, EXEC_STATES.PAUSED);
-      await hackerTools.mission(`auto ${missionId}`);
-      const state = getExecutionState(missionId);
-      assert.equal(state, "completed");
-    }
+    const mission = await makeScopedMission("exec-state-test");
+    const missionId = mission.id;
+    setExecutionState(missionId, EXEC_STATES.PAUSED);
+    await hackerTools.mission(`auto ${missionId}`);
+    const state = getExecutionState(missionId);
+    assert.equal(state, "completed");
   });
 
   it("mission auto handles recoverable tool failures gracefully", async () => {
     const { hackerTools } = await import("../lib/tools.mjs");
-    const { listMissions } = await import("../lib/mission.mjs");
 
-    const missions = listMissions();
-    if (missions.length > 0) {
-      const missionId = missions[0].id;
-      const r = await hackerTools.mission(`auto ${missionId}`);
-      assert.match(r, /RECON COMPLETE/);
-    }
+    const mission = await makeScopedMission("recover-test");
+    const missionId = mission.id;
+    const r = await hackerTools.mission(`auto ${missionId}`);
+    assert.match(r, /RECON COMPLETE/);
   });
 
   it("mission auto scope rejection - default deny enforced", async () => {
@@ -469,49 +476,43 @@ describe("mission orchestration", () => {
 
   it("mission auto pause/stop behavior", async () => {
     const { hackerTools } = await import("../lib/tools.mjs");
-    const { listMissions } = await import("../lib/mission.mjs");
     const { pauseRecon, stopRecon, getExecutionState, EXEC_STATES } = await import("../lib/recon.mjs");
 
-    const missions = listMissions();
-    if (missions.length > 0) {
-      const missionId = missions[0].id;
-      await hackerTools.mission(`auto ${missionId}`);
+    const mission = await makeScopedMission("pause-stop-test");
+    const missionId = mission.id;
+    await hackerTools.mission(`auto ${missionId}`);
 
-      let pauseError = null;
-      try {
-        pauseRecon(missionId);
-      } catch (e) {
-        pauseError = e.message;
-      }
-      assert.ok(pauseError !== null);
-      assert.match(pauseError, /Cannot pause|already/);
-
-      const stopResult = stopRecon(missionId);
-      assert.ok(stopResult.success === false);
-      assert.match(stopResult.message, /No active/);
+    let pauseError = null;
+    try {
+      pauseRecon(missionId);
+    } catch (e) {
+      pauseError = e.message;
     }
+    assert.ok(pauseError !== null);
+    assert.match(pauseError, /Cannot pause|already/);
+
+    const stopResult = stopRecon(missionId);
+    assert.ok(stopResult.success === false);
+    assert.match(stopResult.message, /No active/);
   });
 
   it("mission auto persisted results are retrievable", async () => {
     const { hackerTools } = await import("../lib/tools.mjs");
-    const { listMissions } = await import("../lib/mission.mjs");
     const { loadMissionResults, loadMissionErrors, loadMissionActivity } = await import("../lib/recon.mjs");
 
-    const missions = listMissions();
-    if (missions.length > 0) {
-      const missionId = missions[0].id;
-      await hackerTools.mission(`auto ${missionId}`);
+    const mission = await makeScopedMission("persist-test");
+    const missionId = mission.id;
+    await hackerTools.mission(`auto ${missionId}`);
 
-      const results = loadMissionResults(missionId);
-      assert.ok(Array.isArray(results));
+    const results = loadMissionResults(missionId);
+    assert.ok(Array.isArray(results));
 
-      const errors = loadMissionErrors(missionId);
-      assert.ok(Array.isArray(errors));
+    const errors = loadMissionErrors(missionId);
+    assert.ok(Array.isArray(errors));
 
-      const activity = loadMissionActivity(missionId);
-      assert.ok(Array.isArray(activity));
-      assert.ok(activity.length > 0);
-    }
+    const activity = loadMissionActivity(missionId);
+    assert.ok(Array.isArray(activity));
+    assert.ok(activity.length > 0);
   });
 
   it("existing mission functionality remains intact", async () => {
@@ -1085,25 +1086,30 @@ describe("recon learning integration", () => {
   it("generates learning after successful completion", async () => {
     const { hackerTools } = await import("../lib/tools.mjs");
     const { loadLearning, clearLearning } = await import("../lib/recon-learning.mjs");
-    const { listMissions } = await import("../lib/mission.mjs");
+    const { createMission, saveMission } = await import("../lib/mission.mjs");
     clearLearning();
     
-    const missions = listMissions();
-    if (missions.length > 0) {
-      const missionId = missions[0].id;
-      // Run auto which completes recon and generates learning
-      await hackerTools.mission(`auto ${missionId}`);
-      
-      // Wait a moment for async learning write
-      await new Promise(r => setTimeout(r, 100));
-      
-      const learning = loadLearning({ missionId, type: "recon_learning" });
-      assert.ok(learning.length >= 1);
-      // Learning recorded (techniques may be empty if tools aren't installed)
-      assert.ok(Array.isArray(learning[0].successfulTechniques));
-      assert.ok(Array.isArray(learning[0].discoveryMethods));
-      assert.ok(typeof learning[0].duration === "number" || learning[0].duration === null);
-    }
+    // Create a new scoped mission so the test is self-contained.
+    const mission = createMission({ handle: "learning-ok", name: "Learning OK" }, {
+      inScope: [{ identifier: "learning-ok.local", normalized: "learning-ok.local", isWildcard: false, assetType: "URL" }],
+      exclusions: [],
+      restrictions: []
+    });
+    saveMission(mission);
+    const missionId = mission.id;
+
+    // Run auto which completes recon and generates learning
+    await hackerTools.mission(`auto ${missionId}`);
+    
+    // Wait a moment for async learning write
+    await new Promise(r => setTimeout(r, 100));
+    
+    const learning = loadLearning({ missionId, type: "recon_learning" });
+    assert.ok(learning.length >= 1);
+    // Learning recorded (techniques may be empty if tools aren't installed)
+    assert.ok(Array.isArray(learning[0].successfulTechniques));
+    assert.ok(Array.isArray(learning[0].discoveryMethods));
+    assert.ok(typeof learning[0].duration === "number" || learning[0].duration === null);
   });
 
   it("generates learning with tool failures", async () => {
@@ -1132,29 +1138,34 @@ describe("recon learning integration", () => {
   it("prevents duplicate learning on re-run", async () => {
     const { hackerTools } = await import("../lib/tools.mjs");
     const { loadLearning, clearLearning } = await import("../lib/recon-learning.mjs");
-    const { listMissions } = await import("../lib/mission.mjs");
+    const { createMission, saveMission } = await import("../lib/mission.mjs");
     clearLearning();
     
-    const missions = listMissions();
-    if (missions.length > 0) {
-      const missionId = missions[0].id;
-      // First run
-      await hackerTools.mission(`auto ${missionId}`);
-      await new Promise(r => setTimeout(r, 100));
-      
-      const firstLearning = loadLearning({ missionId, type: "recon_learning" });
-      const firstCount = firstLearning.length;
-      
-      // Second run (should not create duplicate)
-      await hackerTools.mission(`auto ${missionId}`);
-      await new Promise(r => setTimeout(r, 100));
-      
-      const secondLearning = loadLearning({ missionId, type: "recon_learning" });
-      const secondCount = secondLearning.length;
-      
-      // Should not create duplicate
-      assert.equal(firstCount, secondCount);
-    }
+    // Create a new scoped mission so the test is self-contained.
+    const mission = createMission({ handle: "learning-dup", name: "Learning Dup" }, {
+      inScope: [{ identifier: "learning-dup.local", normalized: "learning-dup.local", isWildcard: false, assetType: "URL" }],
+      exclusions: [],
+      restrictions: []
+    });
+    saveMission(mission);
+    const missionId = mission.id;
+
+    // First run
+    await hackerTools.mission(`auto ${missionId}`);
+    await new Promise(r => setTimeout(r, 100));
+    
+    const firstLearning = loadLearning({ missionId, type: "recon_learning" });
+    const firstCount = firstLearning.length;
+    
+    // Second run (should not create duplicate)
+    await hackerTools.mission(`auto ${missionId}`);
+    await new Promise(r => setTimeout(r, 100));
+    
+    const secondLearning = loadLearning({ missionId, type: "recon_learning" });
+    const secondCount = secondLearning.length;
+    
+    // Should not create duplicate
+    assert.equal(firstCount, secondCount);
   });
 
   it("handles interrupted/resumed mission learning", async () => {
@@ -1828,34 +1839,41 @@ describe("recon-planner", () => {
   // ── Mission execute-next integration tests ─────────────────────
 
   describe("mission execute-next integration", () => {
+    const makeScopedMission = async (handle) => {
+      const { createMission, saveMission } = await import("../lib/mission.mjs");
+      const mission = createMission({ handle, name: handle }, {
+        inScope: [{ identifier: `${handle}.local`, normalized: `${handle}.local`, isWildcard: false, assetType: "URL" }],
+        exclusions: [],
+        restrictions: []
+      });
+      saveMission(mission);
+      return mission;
+    };
+
     it("planner -> executor integration: execute-next runs next planned action", async () => {
           const { hackerTools } = await import("../lib/tools.mjs");
-          const { listMissions } = await import("../lib/mission.mjs");
           const { loadMission } = await import("../lib/mission.mjs");
           const { getNextAction } = await import("../lib/recon-planner.mjs");
           const { getExecutionState, EXEC_STATES } = await import("../lib/recon.mjs");
 
-          const missions = listMissions();
-          if (missions.length > 0) {
-            const missionId = missions[0].id;
-            const mission = loadMission(missionId);
+          const mission = await makeScopedMission("exec-next-test");
+          const missionId = mission.id;
+
+          // Get the next planned action
+          const nextAction = getNextAction(missionId);
+          if (nextAction.action) {
+            // Execute it
+            const result = await hackerTools.mission(`execute-next ${missionId}`);
+            // Result should indicate some outcome (executed, skipped, denied, error, or completed/no actions)
+            assert.ok(result.includes("Executed") || result.includes("skipped") || result.includes("denied") || result.includes("Error") || result.includes("No valid actions") || result.includes("completed"));
      
-            // Get the next planned action
-            const nextAction = getNextAction(missionId);
-            if (nextAction.action) {
-              // Execute it
-              const result = await hackerTools.mission(`execute-next ${missionId}`);
-              // Result should indicate some outcome (executed, skipped, denied, error, or completed/no actions)
-              assert.ok(result.includes("Executed") || result.includes("skipped") || result.includes("denied") || result.includes("Error") || result.includes("No valid actions") || result.includes("completed"));
-       
-              // Verify state transition
-              const state = getExecutionState(missionId);
-              assert.ok([EXEC_STATES.RECONNAISSANCE, EXEC_STATES.COMPLETED, EXEC_STATES.PAUSED, EXEC_STATES.FAILED, EXEC_STATES.READY].includes(state));
-            } else {
-              // No action available - this is also valid
-              const result = await hackerTools.mission(`execute-next ${missionId}`);
-              assert.ok(result.includes("No valid actions") || result.includes("completed") || result.includes("Error"));
-            }
+            // Verify state transition
+            const state = getExecutionState(missionId);
+            assert.ok([EXEC_STATES.RECONNAISSANCE, EXEC_STATES.COMPLETED, EXEC_STATES.PAUSED, EXEC_STATES.FAILED, EXEC_STATES.READY].includes(state));
+          } else {
+            // No action available - this is also valid
+            const result = await hackerTools.mission(`execute-next ${missionId}`);
+            assert.ok(result.includes("No valid actions") || result.includes("completed") || result.includes("Error"));
           }
         });
 
@@ -1890,80 +1908,69 @@ describe("recon-planner", () => {
 
     it("successful execution persists structured result", async () => {
       const { hackerTools } = await import("../lib/tools.mjs");
-      const { listMissions } = await import("../lib/mission.mjs");
       const { loadMissionResults } = await import("../lib/recon.mjs");
 
-      const missions = listMissions();
-      if (missions.length > 0) {
-        const missionId = missions[0].id;
-        const beforeResults = loadMissionResults(missionId).length;
-      
-        const result = await hackerTools.mission(`execute-next ${missionId}`);
-      
-        const afterResults = loadMissionResults(missionId).length;
-        // If execution succeeded, result count should increase
-        if (result.includes("Executed")) {
-          assert.ok(afterResults >= beforeResults);
-        }
+      const mission = await makeScopedMission("exec-result-test");
+      const missionId = mission.id;
+      const beforeResults = loadMissionResults(missionId).length;
+    
+      const result = await hackerTools.mission(`execute-next ${missionId}`);
+    
+      const afterResults = loadMissionResults(missionId).length;
+      // If execution succeeded, result count should increase
+      if (result.includes("Executed")) {
+        assert.ok(afterResults >= beforeResults);
       }
     });
 
     it("tool failure recovery: mission continues after tool error", async () => {
           const { hackerTools } = await import("../lib/tools.mjs");
-          const { listMissions } = await import("../lib/mission.mjs");
           const { loadMissionErrors } = await import("../lib/recon.mjs");
 
-          const missions = listMissions();
-          if (missions.length > 0) {
-            const missionId = missions[0].id;
-            const beforeErrors = loadMissionErrors(missionId).length;
+          const mission = await makeScopedMission("exec-error-test");
+          const missionId = mission.id;
+          const beforeErrors = loadMissionErrors(missionId).length;
      
-            const result = await hackerTools.mission(`execute-next ${missionId}`);
+          const result = await hackerTools.mission(`execute-next ${missionId}`);
      
-            // Tool failure should be recorded in errors, mission should not crash
-            const afterErrors = loadMissionErrors(missionId).length;
-            if (result.includes("failed")) {
-              assert.ok(afterErrors >= beforeErrors);
-            }
-            // Mission should still be in valid state - result should contain outcome info
-            assert.ok(result.includes("recorded") || result.includes("continue") || result.includes("Executed") || result.includes("skipped") || result.includes("denied") || result.includes("No valid actions") || result.includes("completed") || result.includes("Error"));
+          // Tool failure should be recorded in errors, mission should not crash
+          const afterErrors = loadMissionErrors(missionId).length;
+          if (result.includes("failed")) {
+            assert.ok(afterErrors >= beforeErrors);
           }
+          // Mission should still be in valid state - result should contain outcome info
+          assert.ok(result.includes("recorded") || result.includes("continue") || result.includes("Executed") || result.includes("skipped") || result.includes("denied") || result.includes("No valid actions") || result.includes("completed") || result.includes("Error"));
         });
 
     it("duplicate prevention: completed action not re-executed", async () => {
           const { hackerTools } = await import("../lib/tools.mjs");
-          const { listMissions } = await import("../lib/mission.mjs");
 
-          const missions = listMissions();
-          if (missions.length > 0) {
-            const missionId = missions[0].id;
+          const mission = await makeScopedMission("exec-dup-test");
+          const missionId = mission.id;
      
-            // Run execute-next twice
-            const result1 = await hackerTools.mission(`execute-next ${missionId}`);
-            const result2 = await hackerTools.mission(`execute-next ${missionId}`);
+          // Run execute-next twice
+          const result1 = await hackerTools.mission(`execute-next ${missionId}`);
+          const result2 = await hackerTools.mission(`execute-next ${missionId}`);
      
-            // Second run should either skip duplicate or move to next action
-            // But per spec: "do not select replacement automatically" on duplicate
-            // So it should report duplicate skipped OR no more valid actions
-            assert.ok(
-              result2.includes("skipped") || 
-              result2.includes("Executed") || 
-              result2.includes("No valid actions") ||
-              result2.includes("denied") ||
-              result2.includes("completed") ||
-              result2.includes("Error")
-            );
-          }
+          // Second run should either skip duplicate or move to next action
+          // But per spec: "do not select replacement automatically" on duplicate
+          // So it should report duplicate skipped OR no more valid actions
+          assert.ok(
+            result2.includes("skipped") || 
+            result2.includes("Executed") || 
+            result2.includes("No valid actions") ||
+            result2.includes("denied") ||
+            result2.includes("completed") ||
+            result2.includes("Error")
+          );
         });
 
     it("pause/stop: execute-next respects paused state", async () => {
           const { hackerTools } = await import("../lib/tools.mjs");
-          const { listMissions } = await import("../lib/mission.mjs");
           const { pauseRecon, getExecutionState, EXEC_STATES, setExecutionState } = await import("../lib/recon.mjs");
 
-          const missions = listMissions();
-          if (missions.length > 0) {
-            const missionId = missions[0].id;
+          const mission = await makeScopedMission("exec-pause-test");
+          const missionId = mission.id;
         
             // Set mission to a state where we can pause it (RECONNAISSANCE)
             setExecutionState(missionId, EXEC_STATES.RECONNAISSANCE);
@@ -1976,32 +1983,28 @@ describe("recon-planner", () => {
             // Try execute-next on paused mission
             const result = await hackerTools.mission(`execute-next ${missionId}`);
             assert.ok(result.includes("Cannot execute-next") || result.includes("paused"));
-          }
         });
 
     it("result persistence: activity log and result files created", async () => {
       const { hackerTools } = await import("../lib/tools.mjs");
-      const { listMissions } = await import("../lib/mission.mjs");
       const { loadMissionActivity, loadMissionResults } = await import("../lib/recon.mjs");
 
-      const missions = listMissions();
-      if (missions.length > 0) {
-        const missionId = missions[0].id;
-        const beforeActivity = loadMissionActivity(missionId).length;
-        const beforeResults = loadMissionResults(missionId).length;
-      
-        const result = await hackerTools.mission(`execute-next ${missionId}`);
-      
-        const afterActivity = loadMissionActivity(missionId).length;
-        const afterResults = loadMissionResults(missionId).length;
-      
-        // Activity should be recorded
-        assert.ok(afterActivity >= beforeActivity);
-      
-        // If executed successfully, result should persist
-        if (result.includes("Executed")) {
-          assert.ok(afterResults >= beforeResults);
-        }
+      const mission = await makeScopedMission("exec-act-test");
+      const missionId = mission.id;
+      const beforeActivity = loadMissionActivity(missionId).length;
+      const beforeResults = loadMissionResults(missionId).length;
+    
+      const result = await hackerTools.mission(`execute-next ${missionId}`);
+    
+      const afterActivity = loadMissionActivity(missionId).length;
+      const afterResults = loadMissionResults(missionId).length;
+    
+      // Activity should be recorded
+      assert.ok(afterActivity >= beforeActivity);
+    
+      // If executed successfully, result should persist
+      if (result.includes("Executed")) {
+        assert.ok(afterResults >= beforeResults);
       }
     });
   });
