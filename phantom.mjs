@@ -531,11 +531,15 @@ __r.PROVIDERS = PROVIDERS;
             const p = getProvider();
             let key = getKey(p);
             if (p.keyEnv && !key) {
-              // Ask for the key on demand (TTY only), then save to the vault
+              // Ask for the key on demand (TTY only), save to the vault, and
+              // remember this provider so it is reused automatically next time.
               try {
                 const { ensure } = await import("./credentials.mjs");
                 const entered = await ensure(p.keyEnv);
-                if (entered) key = entered;
+                if (entered) {
+                  key = entered;
+                  try { setProvider(PHANTOM_LLM_PROVIDER); } catch {}
+                }
               } catch {}
             }
             if (p.keyEnv && !key) return `[${PHANTOM_LLM_PROVIDER}] No API key. Set ${p.keyEnv} env or in config.json (run interactively to be prompted)`;
