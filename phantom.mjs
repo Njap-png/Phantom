@@ -1126,10 +1126,12 @@ const linked = autoLinkFromBooks();
 if (linked > 0) log.debug(`knowledge graph: ${linked} tool↔book links restored`);
 
 // Auto-install missing security tools (background, non-blocking)
-autoInstallSecurity(__r.ENV, (msg) => log.ok(msg));
+// In --json mode keep raw stdout usable for the payload (status noise goes nowhere).
+const noise = process.argv.includes("--json") ? () => {} : (msg) => log.ok(msg);
+autoInstallSecurity(__r.ENV, noise);
 
 // Self-provision missing ProjectDiscovery recon tools (background, non-blocking)
-ensureReconTools((msg) => log.ok(msg)).catch(() => {});
+ensureReconTools(noise).catch(() => {});
 
 // ── ANSI adapters (based on color capability) ─────────────
 const ansi = (() => {
