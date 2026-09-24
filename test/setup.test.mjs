@@ -48,9 +48,11 @@ describe("persisted config (~/.config/phantom/config.json)", { skip: HAS_CONFIG 
     assert.equal(cfg.HACKERONE_API_TOKEN, undefined, "token must NOT be in plaintext config");
   });
 
-  it("OpenRouter key + default provider are stored", () => {
+  it("OpenRouter key + default provider are stored", async () => {
+    const { get } = await import(join(CWD, "lib", "vault.mjs"));
+    assert.ok(get("OPENROUTER_API_KEY"), "OPENROUTER_API_KEY missing from vault");
     const cfg = JSON.parse(fs.readFileSync(USER_CONFIG, "utf-8"));
-    assert.ok(cfg.OPENROUTER_API_KEY, "OPENROUTER_API_KEY missing");
+    assert.equal(cfg.OPENROUTER_API_KEY, undefined, "key must NOT be in plaintext config");
     assert.equal(cfg.default_provider, "openrouter");
   });
 });
