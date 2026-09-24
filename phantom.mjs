@@ -19,6 +19,7 @@ import { hackerTools } from "./lib/tools.mjs";
 import { initApiDeps, startApiServer, startGuiDashboard, setChatAgent } from "./lib/server.mjs";
 import { autoEvolve, startupEvolve, getEvolveStatus, analyzeError, loadAutoTools } from "./lib/evolve.mjs";
 import { populateEnv, autoInstallSecurity } from "./lib/env.mjs";
+import { ensureReconTools } from "./lib/install-tools.mjs";
 import { saveSession, loadSession, autoLinkFromBooks } from "./lib/session.mjs";
 
 // ── Merge auto-generated tools into hackerTools ──
@@ -1126,6 +1127,9 @@ if (linked > 0) log.debug(`knowledge graph: ${linked} tool↔book links restored
 
 // Auto-install missing security tools (background, non-blocking)
 autoInstallSecurity(__r.ENV, (msg) => log.ok(msg));
+
+// Self-provision missing ProjectDiscovery recon tools (background, non-blocking)
+ensureReconTools((msg) => log.ok(msg)).catch(() => {});
 
 // ── ANSI adapters (based on color capability) ─────────────
 const ansi = (() => {

@@ -112,7 +112,8 @@ describe("startup bug-bounty prompt wiring (phantom.mjs)", () => {
   });
 });
 
-describe("live integration checks", () => {
+const LIVE = process.env.PHANTOM_LIVE_TESTS === "1";
+describe("live integration checks", { skip: LIVE ? false : "set PHANTOM_LIVE_TESTS=1 to run network/credential checks" }, () => {
   it("HackerOne tool authenticates with stored credentials", async () => {
     const { hackerTools } = await import("../lib/tools.mjs");
     const r = await hackerTools.hackerone("test");

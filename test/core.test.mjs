@@ -2,6 +2,10 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { runExternal, formatExternal } from "../lib/runtime.mjs";
 
+// Keep live recon out of unit tests (orchestration is still exercised).
+process.env.PHANTOM_RECON_SKIP_NETWORK = process.env.PHANTOM_RECON_SKIP_NETWORK || "1";
+process.env.PHANTOM_RECON_MAX_TARGETS = process.env.PHANTOM_RECON_MAX_TARGETS || "1";
+
 // ── Runtime helpers ──────────────────────────────────────
 
 describe("formatExternal", () => {
