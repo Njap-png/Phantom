@@ -103,7 +103,7 @@ _config = deepMerge(projectConfig, userConfig);
 __r._config = _config;
 if (_config.VT_API_KEY && !process.env.VT_API_KEY) process.env.VT_API_KEY = _config.VT_API_KEY;
 // Load all provider API keys from config
-const PROVIDER_KEYS = ["OPENAI_API_KEY","ANTHROPIC_API_KEY","GEMINI_API_KEY","GROQ_API_KEY","DEEPSEEK_API_KEY","MISTRAL_API_KEY","OPENROUTER_API_KEY","SHODAN_API_KEY","HIBP_API_KEY","OPENCODE_ZEN_API_KEY"];
+const PROVIDER_KEYS = ["OPENAI_API_KEY","ANTHROPIC_API_KEY","GEMINI_API_KEY","GROQ_API_KEY","DEEPSEEK_API_KEY","MISTRAL_API_KEY","OPENROUTER_API_KEY","SHODAN_API_KEY","HIBP_API_KEY","OPENCODE_ZEN_API_KEY","HACKERONE_API_USERNAME","HACKERONE_API_TOKEN","BUGCROWD_API_TOKEN","BUGCROWD_API_USERNAME"];
 for (const k of PROVIDER_KEYS) { if (_config[k] && !process.env[k]) process.env[k] = _config[k]; }
 // Selected provider: env > config > "openai"
 let PHANTOM_LLM_PROVIDER = process.env.PHANTOM_LLM_PROVIDER || _config.default_provider || "openai";
@@ -3878,6 +3878,50 @@ if (ENV.interactive) {
             process.env.PHANTOM_PROVIDERS_READY = ready2.join(",");
           }
         }
+      }
+    }
+  } catch {}
+}
+
+// ── Bug bounty API key setup ──
+if (ENV.interactive) {
+  try {
+    console.log(`\n${B}Set up bug bounty API keys?${R} (${D}enter number or leave blank to skip${R})`);
+    console.log(`  1) HackerOne (username + API token)`);
+    console.log(`  2) Bugcrowd (API token)`);
+    console.log(`  3) Both`);
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const pick = await new Promise(r => rl.question(`\n${c("cyan")}?${R} Choice (1-3, blank to skip): `, r));
+    rl.close();
+    const wantH1 = pick === "1" || pick === "3";
+    const wantBC = pick === "2" || pick === "3";
+
+    if (wantH1) {
+      const rlU = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const username = await new Promise(r => rlU.question(`${c("cyan")}👤${R} HackerOne username (API token identifier): `, r));
+      rlU.close();
+      const rlT = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const token = await new Promise(r => rlT.question(`${c("cyan")}🔑${R} HackerOne API token: `, r));
+      rlT.close();
+      if (username.trim() && token.trim()) {
+        process.env.HACKERONE_API_USERNAME = username.trim();
+        process.env.HACKERONE_API_TOKEN = token.trim();
+        _config.HACKERONE_API_USERNAME = username.trim();
+        _config.HACKERONE_API_TOKEN = token.trim();
+        try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {}
+        console.log(`${c("green")}✓${R} HackerOne API keys saved to config.json\n`);
+      }
+    }
+
+    if (wantBC) {
+      const rlT = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const token = await new Promise(r => rlT.question(`${c("cyan")}🔑${R} Bugcrowd API token: `, r));
+      rlT.close();
+      if (token.trim()) {
+        process.env.BUGCROWD_API_TOKEN = token.trim();
+        _config.BUGCROWD_API_TOKEN = token.trim();
+        try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {}
+        console.log(`${c("green")}✓${R} Bugcrowd API token saved to config.json\n`);
       }
     }
   } catch {}
