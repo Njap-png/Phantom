@@ -4,6 +4,8 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runTool, runPipe, formatExternal } from "../lib/runtime.mjs";
 import { hackerTools } from "../lib/tools.mjs";
+import { TUI } from "../lib/tui.mjs";
+import { log } from "../lib/logger.mjs";
 
 const CWD = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -179,5 +181,193 @@ describe("hackerone tool", () => {
   it("returns unknown command error for invalid command", async () => {
     const r = await hackerTools.hackerone("invalid_command");
     assert.match(r, /Unknown command/);
+  });
+});
+
+class FakeTerminal {
+  constructor(rows, cols) {
+    this.rows = rows;
+    this.cols = cols;
+    this.listeners = new Map();
+    this.pending = "";
+    this.raw = "";
+    this.reset();
+  }
+
+  reset() {
+    this.cells = Array.from({ length: this.rows }, () => Array(this.cols).fill(" "));
+    this.row = 1;
+    this.col = 1;
+  }
+
+  on(event, handler) {
+    if (!this.listeners.has(event)) this.listeners.set(event, new Set());
+    this.listeners.get(event).add(handler);
+  }
+
+  removeListener(event, handler) {
+    this.listeners.get(event)?.delete(handler);
+  }
+
+  resize(rows, cols) {
+    this.rows = rows;
+    this.cols = cols;
+    this.reset();
+    for (const handler of this.listeners.get("resize") || []) handler();
+  }
+
+  write(value) {
+    const text = String(value);
+    this.raw += text;
+    this.pending += text;
+    while (this.pending) {
+      if (this.pending.startsWith("\x1b[")) {
+        const match = this.pending.match(/^\x1b\[([0-9;?]*)([A-Za-z])/);
+        if (!match) break;
+        this.pending = this.pending.slice(match[0].length);
+        const params = match[1] || "0";
+        const command = match[2];
+        if (command === "H") {
+          const [row = 1, col = 1] = params.split(";").map(Number);
+          this.row = row;
+          this.col = col;
+        } else if (command === "J" && params === "2") {
+          this.reset();
+        } else if (command === "K" && params === "2") {
+          this.cells[this.row - 1].fill(" ");
+        }
+        continue;
+      }
+      const char = this.pending[0];
+      this.pending = this.pending.slice(1);
+      if (char === "\r") {
+        this.col = 1;
+      } else if (char === "\n") {
+        this.row = Math.min(this.rows, this.row + 1);
+      } else if (char >= " ") {
+        this.cells[this.row - 1][this.col - 1] = char;
+        this.col++;
+        if (this.col > this.cols) {
+          this.col = 1;
+          this.row = Math.min(this.rows, this.row + 1);
+        }
+      }
+    }
+    return true;
+  }
+
+  lines() {
+    return this.cells.map(row => row.join("").trimEnd());
+  }
+}
+
+const flushFrame = () => new Promise(resolve => setImmediate(resolve));
+const plain = value => value.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+
+describe("TUI output isolation", () => {
+  it("keeps overflowing conversation output out of the input area", async () => {
+    const output = new FakeTerminal(10, 24);
+    const tui = new TUI({ stdout: output, rows: 10, cols: 24 });
+    tui.enter();
+    tui.setInput("draft", 5);
+    for (let i = 0; i < 20; i++) tui.log(`message ${i}`);
+    await flushFrame();
+
+    const lines = output.lines();
+    assert.match(lines.slice(2, 7).join("\n"), /message 19/);
+    assert.doesNotMatch(lines.slice(7).join("\n"), /message \d+/);
+    assert.match(lines[9], /draft/);
+    tui.exit();
+  });
+
+  it("keeps multiline, wrapped, and status output in reserved rows", async () => {
+    const output = new FakeTerminal(14, 16);
+    const tui = new TUI({ stdout: output, rows: 14, cols: 16 });
+    tui.enter();
+    tui.setInput("typing while output arrives", 26);
+    tui.log("first line\nsecond line\n0123456789abcdefghijklmnopqrstuvwxyz");
+    tui.setStatus("working");
+    await flushFrame();
+
+    const lines = output.lines();
+    assert.match(lines.slice(6, 11).join("\n"), /first line/);
+    assert.match(lines.slice(6, 11).join("\n"), /second line/);
+    assert.match(lines[11], /working/);
+    assert.match(lines[13], /utput arrives$/);
+    assert.ok(plain(lines[13]).length <= 16);
+    tui.exit();
+  });
+
+  it("handles tiny terminals and wide glyphs without overwriting input", async () => {
+    const output = new FakeTerminal(1, 1);
+    const tui = new TUI({ stdout: output, rows: 1, cols: 1 });
+    tui.enter();
+    tui.setInput("", 0);
+    tui.log("界");
+    await flushFrame();
+    assert.equal(output.lines().length, 1);
+
+    output.resize(3, 6);
+    tui.setInput("ok", 2);
+    tui.log("wide");
+    await flushFrame();
+    assert.match(output.lines()[0], /wide/);
+    assert.match(output.lines()[2], /ok/);
+    tui.exit();
+  });
+
+  it("strips terminal controls while preserving color across wraps", async () => {
+    const output = new FakeTerminal(8, 12);
+    const tui = new TUI({ stdout: output, rows: 8, cols: 12 });
+    tui.enter();
+    tui.log("\x1b[2Jowned\x1b[10;1Hbad\x1b[31m123456789012345\x1b[0m");
+    await flushFrame();
+
+    const lines = output.lines();
+    assert.match(lines.join("\n"), /ownedbad/);
+    assert.doesNotMatch(output.raw, /owned\x1b\[10;1Hbad/);
+    assert.ok((output.raw.match(/\x1b\[31m/g) || []).length >= 2);
+    tui.exit();
+  });
+
+  it("masks credential input and clips the logo to narrow terminals", () => {
+    const output = new FakeTerminal(8, 8);
+    const tui = new TUI({ stdout: output, rows: 8, cols: 8 });
+    tui.enter();
+    tui.setInput("secret", 6, { masked: true });
+    assert.match(tui._inputView().visible, /^•+$/);
+    assert.ok(tui._inputView().visible.length <= 5);
+    assert.ok(tui._frame().rows.every(row => plain(row).length <= 8));
+    tui.exit();
+  });
+
+  it("redraws safely after a resize", async () => {
+    const output = new FakeTerminal(10, 24);
+    const tui = new TUI({ stdout: output, rows: 10, cols: 24 });
+    tui.enter();
+    tui.setInput("resize me", 9);
+    output.resize(12, 30);
+    tui.log("after resize");
+    await flushFrame();
+
+    const lines = output.lines();
+    assert.match(lines.join("\n"), /after resize/);
+    assert.match(lines[11], /resize me/);
+    assert.doesNotMatch(lines.slice(-2).join("\n"), /after resize/);
+    tui.exit();
+  });
+});
+
+describe("logger routing", () => {
+  it("resolves console methods when called", () => {
+    const original = console.log;
+    const output = [];
+    console.log = (...args) => output.push(args.join(" "));
+    try {
+      log.info("late-bound output");
+    } finally {
+      console.log = original;
+    }
+    assert.deepEqual(output, ["late-bound output"]);
   });
 });

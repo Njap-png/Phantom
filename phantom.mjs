@@ -22,6 +22,7 @@ import { populateEnv, autoInstallSecurity } from "./lib/env.mjs";
 import { ensureReconTools } from "./lib/install-tools.mjs";
 import { saveSession, loadSession, autoLinkFromBooks } from "./lib/session.mjs";
 import { get as vaultGet, set as vaultSet } from "./lib/vault.mjs";
+import { askHidden } from "./lib/credentials.mjs";
 
 // ── Merge auto-generated tools into hackerTools ──
 // Runs once at module init so all agents & CLIs pick them up.
@@ -34,7 +35,7 @@ loadAutoTools().then(at => {
     }
   }
   if (added.length > 0 && !process.argv.includes("--json")) {
-    process.stderr.write(`[auto-tools] merged ${added.length} tool(s): ${added.join(", ")}\n`);
+    console.warn(`[auto-tools] merged ${added.length} tool(s): ${added.join(", ")}`);
   }
 }).catch(() => {});
 
@@ -60,7 +61,7 @@ const LEARNED_DIR = resolve(new URL(".", import.meta.url).pathname, "lib", "lear
       } catch {}
     }
     if (count > 0 && !process.argv.includes("--json")) {
-      process.stderr.write(`[self-improve] loaded ${count} learned module(s)\n`);
+      console.warn(`[self-improve] loaded ${count} learned module(s)`);
     }
   } catch {}
 })();
@@ -2044,18 +2045,183 @@ class ConversationalUI {
     ];
 
     // ── TUI init ──
-    this.tui = new TUI({ onExit: () => { this.running = false; try { raw(false); } catch {} } });
-    // Route console.log through TUI when active (auto-redraws input bar after each write)
-    const _origLog = console.log.bind(console);
-    const _self = this;
-    console.log = function(...args) {
-      const text = args.map(a => typeof a === "string" ? a : String(a)).join(" ");
-      if (_self.tui?.active) { _self.tui.log(text); }
-      else { _origLog(text); }
+    const consoleMethods = ["log", "info", "warn", "error", "debug", "table", "trace", "dir", "dirxml", "group", "groupCollapsed", "groupEnd", "assert", "count", "timeLog", "timeEnd", "clear"];
+    const originalConsole = {};
+    const routedConsole = {};
+    for (const method of consoleMethods) {
+      originalConsole[method] = console[method].bind(console);
+      routedConsole[method] = (...args) => {
+        if (this.tui?.active) {
+          if (method === "clear") {
+            this.tui.clear();
+            return;
+          }
+          const text = args.map(a => typeof a === "string" ? a : String(a)).join(" ");
+          this.tui.log(text);
+        } else {
+          originalConsole[method](...args);
+        }
+      };
+    }
+    this._restoreConsole = () => {
+      for (const method of consoleMethods) {
+        if (console[method] === routedConsole[method]) console[method] = originalConsole[method];
+      }
     };
+    this.tui = new TUI({ onExit: () => {
+      this._restoreConsole();
+      if (globalThis.__phantomTUI === this.tui) delete globalThis.__phantomTUI;
+      if (globalThis.__phantomPrompt === this._phantomPrompt) delete globalThis.__phantomPrompt;
+      if (this._inputResolver) {
+        this._inputResolver(null);
+        this._inputResolver = null;
+      }
+      for (const request of this._promptQueue || []) request.resolve(null);
+      if (this._promptQueue) this._promptQueue.length = 0;
+      this._promptInput = "";
+      this._promptCursor = 0;
+      this.running = false;
+      try { raw(false); } catch {}
+    } });
+    for (const method of consoleMethods) console[method] = routedConsole[method];
+    this._phantomPrompt = question => this.promptForInput(question);
+    globalThis.__phantomTUI = this.tui;
+    globalThis.__phantomPrompt = this._phantomPrompt;
   }
 
   log(msg) { this.logLines.push(msg); if (this.logLines.length > 1000) this.logLines.shift(); }
+
+  promptForInput(question) {
+    if (!this.tui?.active) return Promise.resolve(undefined);
+    if (!this._promptQueue) this._promptQueue = [];
+    return new Promise(resolve => {
+      this._promptQueue.push({ question: String(question ?? ""), resolve });
+      this._activateNextPrompt();
+    });
+  }
+
+  _activateNextPrompt() {
+    if (this._inputResolver || !this._promptQueue?.length) return;
+    const request = this._promptQueue.shift();
+    this._inputResolver = request.resolve;
+    this.tui.log(request.question);
+    this._promptInput = "";
+    this._promptCursor = 0;
+    this.tui.setInput("", 0, { masked: true });
+    this._seedPromptFromPaste();
+  }
+
+  _seedPromptFromPaste() {
+    const rest = this._promptPasteRest;
+    if (!rest) return;
+    const newlineIndex = rest.search(/[\r\n]/);
+    if (newlineIndex < 0) {
+      this._insertPromptText(rest);
+      this._promptPasteRest = "";
+      return;
+    }
+    let after = rest.slice(newlineIndex + 1);
+    if (rest[newlineIndex] === "\r" && after.startsWith("\n")) after = after.slice(1);
+    this._insertPromptText(rest.slice(0, newlineIndex));
+    this._promptPasteRest = after;
+    const value = this._promptInput.trim();
+    this._promptInput = "";
+    this._promptCursor = 0;
+    if (value) {
+      queueMicrotask(() => this._finishPromptInput(value));
+    } else {
+      this._seedPromptFromPaste();
+    }
+  }
+
+  _finishPromptInput(value) {
+    const resolve = this._inputResolver;
+    if (!resolve) return;
+    this._inputResolver = null;
+    this._promptInput = "";
+    this._promptCursor = 0;
+    let display = this.inputBuf;
+    if (this.inputLines.length > 0) {
+      display += ` ${c("dim")}(+${this.inputLines.length} more line${this.inputLines.length > 1 ? "s" : ""})${R}`;
+    }
+    this.tui.setInput(display, this.cursorPos);
+    resolve(value);
+    this._ignoreInput = true;
+    this._ignoreInputUntil = Date.now() + 50;
+    setTimeout(() => {
+      this._ignoreInput = false;
+      if (this._promptHeld && this._inputResolver) {
+        const held = this._promptHeld;
+        this._promptHeld = "";
+        this.onPromptKey(Buffer.from(held));
+      } else {
+        this._promptHeld = "";
+      }
+      if (this._promptPasteRest && !this._inputResolver && !this._promptQueue?.length) this._promptPasteRest = "";
+    }, 50);
+    this._activateNextPrompt();
+    this._maybeResumeQueue();
+  }
+
+  _maybeResumeQueue() {
+    if (this._inputResolver || this._promptQueue?.length || this._busy || !this.promptQueue.length) return;
+    this._queueBlocked = false;
+    setImmediate(() => {
+      if (!this._inputResolver && !this._busy) this.processQueue();
+    });
+  }
+
+  _insertPromptText(value) {
+    const text = Array.from(String(value ?? "")).filter(char => {
+      const codePoint = char.codePointAt(0);
+      return codePoint >= 32 && codePoint !== 127 && !(codePoint >= 0x80 && codePoint <= 0x9f);
+    }).join("");
+    const chars = Array.from(this._promptInput);
+    chars.splice(this._promptCursor, 0, ...Array.from(text));
+    this._promptInput = chars.join("");
+    this._promptCursor += Array.from(text).length;
+  }
+
+  onPromptKey(buf) {
+    const str = buf.toString();
+    if (str === "\x03" || str === "\x04") { this._promptPasteRest = ""; this._promptHeld = ""; this._finishPromptInput(null); return; }
+    if (str === "\r" || str === "\n") {
+      if (str === "\n" && !this._promptInput) return;
+      this._finishPromptInput(this._promptInput.trim()); return;
+    }
+    const newlineIndex = str.search(/[\r\n]/);
+    if (newlineIndex >= 0) {
+      if (newlineIndex === 0) {
+        this.onPromptKey(Buffer.from(str.replace(/^[\r\n]+/, "")));
+        return;
+      }
+      let rest = str.slice(newlineIndex + 1);
+      if (str[newlineIndex] === "\r" && rest.startsWith("\n")) rest = rest.slice(1);
+      if (rest) this._promptPasteRest = (this._promptPasteRest || "") + rest;
+      this._insertPromptText(str.slice(0, newlineIndex));
+      this._finishPromptInput(this._promptInput.trim());
+      return;
+    }
+    if (str === "\x1b[D") { this._promptCursor = Math.max(0, this._promptCursor - 1); }
+    else if (str === "\x1b[C") { this._promptCursor = Math.min(Array.from(this._promptInput).length, this._promptCursor + 1); }
+    else if (str === "\x1b[H" || str === "\x01") { this._promptCursor = 0; }
+    else if (str === "\x1b[F" || str === "\x05") { this._promptCursor = Array.from(this._promptInput).length; }
+    else if (str === "\x7f" || str === "\b") {
+      if (this._promptCursor > 0) {
+        const chars = Array.from(this._promptInput);
+        chars.splice(this._promptCursor - 1, 1);
+        this._promptInput = chars.join("");
+        this._promptCursor--;
+      }
+    } else if (str === "\x1b[3~") {
+      const chars = Array.from(this._promptInput);
+      if (this._promptCursor < chars.length) chars.splice(this._promptCursor, 1);
+      this._promptInput = chars.join("");
+    } else if (!str.includes("\x1b")) {
+      this._insertPromptText(str);
+    }
+    this.tui.setInput(this._promptInput, this._promptCursor, { masked: true });
+  }
 
   // ── Suggestion Engine ────────────────────────────────────
   _getToolNameList() {
@@ -2788,14 +2954,12 @@ class ConversationalUI {
   }
 
   prompt() {
-    if (!this.running) return;
-    this.inputBuf = "";
+    if (!this.running || this._inputResolver) return;
     this.historyIdx = this.inputHistory.length;
-    this.cursorPos = 0;
-    this.inputLines = [];
+    this.cursorPos = Math.min(this.cursorPos, Array.from(this.inputBuf).length);
     this._ignoreInput = false;
 
-    this.tui.setInput("");
+    this.redrawLine();
 
     raw(true);
     // Remove stale listener to prevent duplicate accumulation
@@ -2806,10 +2970,65 @@ class ConversationalUI {
     process.stdin.on("data", this.inputHandler);
   }
 
+  _commitInput(fullInput) {
+    if (this._busy) {
+      if (this.promptQueue.length > 0 && this.promptQueue[this.promptQueue.length - 1] === fullInput) {
+        this.sayLine(`${c("yellow")}📥${R} Duplicate skipped`, "yellow");
+      } else if (fullInput) {
+        this.promptQueue.push(fullInput);
+        this.sayLine(`${c("yellow")}📥${R} Queued (${this.promptQueue.length})`, "yellow");
+      }
+      return;
+    }
+
+    this.tui.log("");
+    this._ignoreInput = true;
+    this._ignoreInputUntil = Date.now() + 50;
+    setTimeout(() => {
+      this._ignoreInput = false;
+      if (this._promptHeld && this._inputResolver) {
+        const held = this._promptHeld;
+        this._promptHeld = "";
+        this.onPromptKey(Buffer.from(held));
+      } else {
+        this._promptHeld = "";
+      }
+      if (this._promptPasteRest && !this._inputResolver && !this._promptQueue?.length) this._promptPasteRest = "";
+    }, 50);
+
+    if (!fullInput) { this.redrawLine(); return; }
+
+    if (this.inputHistory.length === 0 || this.inputHistory[this.inputHistory.length - 1] !== fullInput) {
+      this.inputHistory.push(fullInput);
+    }
+
+      this.handleInput(fullInput).catch(() => {});
+    }
+
   onKey(buf) {
     if (!this.running) return;
-    // Ignore input burst right after submit (paste split across data events)
-    if (this._ignoreInput) return;
+    if (this._inputResolver) {
+      if (this._ignoreInput && Date.now() < (this._ignoreInputUntil || 0)) {
+        if (!this._promptHeld) this._promptHeld = "";
+        this._promptHeld += buf.toString();
+        return;
+      }
+      this._ignoreInput = false;
+      if (this._promptHeld) {
+        const held = Buffer.concat([Buffer.from(this._promptHeld), buf]);
+        this._promptHeld = "";
+        this.onPromptKey(held);
+        return;
+      }
+      this.onPromptKey(buf);
+      return;
+    }
+    if (this._ignoreInput) {
+      if (this._promptPasteRest && Date.now() < (this._ignoreInputUntil || 0)) {
+        this._promptPasteRest += buf.toString();
+      }
+      return;
+    }
     const str = buf.toString();
 
     // Up / Down arrows — suggestion navigation OR history
@@ -2941,39 +3160,12 @@ class ConversationalUI {
         }
         return;
       }
-      // Submit
       const fullInput = this.inputLines.concat([this.inputBuf]).join("\n").trim();
       this.inputLines = [];
       this.inputBuf = "";
       this.cursorPos = 0;
       if (this.tui?.active) this.tui.setInput("");
-
-      // If agent is busy, queue input silently
-      if (this._busy) {
-        // Dedup: skip if same as last queued item
-        if (this.promptQueue.length > 0 && this.promptQueue[this.promptQueue.length - 1] === fullInput) {
-          this.sayLine(`${c("yellow")}📥${R} Duplicate skipped`, "yellow");
-        } else if (fullInput) {
-          this.promptQueue.push(fullInput);
-          this.sayLine(`${c("yellow")}📥${R} Queued (${this.promptQueue.length})`, "yellow");
-        }
-        return;
-      }
-
-      // Not busy — submit
-      this.tui.log(""); // blank line to separate turn
-      // Debounce: ignore residual data events from paste buffer
-      this._ignoreInput = true;
-      setTimeout(() => { this._ignoreInput = false; }, 50);
-
-      if (!fullInput) { this.redrawLine(); return; }
-
-      // Save to input history
-      if (this.inputHistory.length === 0 || this.inputHistory[this.inputHistory.length - 1] !== fullInput) {
-        this.inputHistory.push(fullInput);
-      }
-
-      this.handleInput(fullInput);
+      this._commitInput(fullInput);
       return;
     }
 
@@ -2985,7 +3177,7 @@ class ConversationalUI {
         const pasteCmd = isTermux ? "termux-clipboard-get" : process.platform === "darwin" ? "pbpaste" : "xclip -selection clipboard -o";
         const clip = execSync(pasteCmd, { encoding: "utf-8", timeout: 3000 }).toString();
         if (clip) {
-          const parts = clip.split("\n");
+          const parts = clip.split(/\r\n|\r|\n/);
           // First line goes to inputBuf, rest to inputLines (multi-line)
           this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + parts[0] + this.inputBuf.slice(this.cursorPos);
           this.cursorPos += parts[0].length;
@@ -3000,19 +3192,28 @@ class ConversationalUI {
 
     // Paste detection: terminal dumped multi-char text (not a control sequence)
     if (str.length > 1) {
-      const parts = str.split("\n");
+      const parts = str.split(/\r\n|\r|\n/);
       // First line to inputBuf, rest to inputLines
       this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + parts[0] + this.inputBuf.slice(this.cursorPos);
       this.cursorPos += parts[0].length;
       for (let i = 1; i < parts.length; i++) {
         if (parts[i].length || i < parts.length - 1) this.inputLines.push(parts[i]);
       }
+      if (/[\r\n]$/.test(str)) {
+        const pasteInput = [this.inputBuf].concat(this.inputLines).join("\n").trim();
+        this.inputLines = [];
+        this.inputBuf = "";
+        this.cursorPos = 0;
+        if (this.tui?.active) this.tui.setInput("");
+        this._commitInput(pasteInput);
+        return;
+      }
       if (this._busy) {
         let display = this.inputBuf;
         if (this.inputLines.length > 0) {
           display += ` ${c("dim")}(+${this.inputLines.length} more)${R}`;
         }
-        this.tui.setInput(display);
+        this.tui.setInput(display, this.cursorPos);
       } else { this.redrawLine(); }
       return;
     }
@@ -3027,7 +3228,7 @@ class ConversationalUI {
         if (this.inputLines.length > 0) {
           display += ` ${c("dim")}(+${this.inputLines.length} more)${R}`;
         }
-        this.tui.setInput(display);
+        this.tui.setInput(display, this.cursorPos);
         return;
       }
       this.inputBuf = this.inputBuf.slice(0, this.cursorPos) + str + this.inputBuf.slice(this.cursorPos);
@@ -3042,11 +3243,7 @@ class ConversationalUI {
     if (this.inputLines.length > 0) {
       display += ` ${c("dim")}(+${this.inputLines.length} more line${this.inputLines.length > 1 ? 's' : ''})${R}`;
     }
-    this.tui.setInput(display);
-    // Reposition cursor at end of actual inputBuf (not the indicator)
-    if (this.tui?.active) {
-      process.stdout.write(`\x1b[${this.tui._rows};${4 + this.inputBuf.length}H`);
-    }
+    this.tui.setInput(display, this.cursorPos);
     // ── Render suggestion bar below ──
     this.updateSuggestions();
     if (this.suggestionActive && this.suggestions.length > 0) {
@@ -3061,12 +3258,29 @@ class ConversationalUI {
 
   async handleInput(input) {
     this._cancelled = false;
-    if (input.startsWith("/")) { this.handleCommand(input.slice(1).trim().split(/\s+/)); return; }
+    if (input.startsWith("/")) {
+      const wasBusy = this._busy;
+      try {
+        await this.handleCommand(input.slice(1).trim().split(/\s+/));
+      } catch (err) {
+        if (this.running) {
+          this.sayLine(`✕ ${err.message}`, "red");
+          this._busy = false;
+          this.prompt();
+        }
+      } finally {
+        if (wasBusy && this.running) {
+          this._busy = false;
+          this.processQueue();
+        }
+      }
+      return;
+    }
     
     // Try natural language parsing first (before LLM)
     const nlResult = this.parseNaturalLanguage(input);
     if (nlResult) {
-      this.handleInput(nlResult); // Recursively handle the mapped command
+      await this.handleInput(nlResult); // Recursively handle the mapped command
       return;
     }
     
@@ -3181,10 +3395,7 @@ class ConversationalUI {
   setupAgentHandlers() {
     const tui = this.tui?.active ? this.tui : null;
     const spinner = createSpinner(this.startTime, {
-      write: tui ? (s) => {
-        // Write spinner at the last line of conversation area (just above input bar)
-        process.stdout.write(`\x1b[${tui._rows - 2};1H\x1b[2K${s.replace(/\r/g, '')}`);
-      } : undefined
+      write: tui ? (s) => tui.setStatus(s) : undefined
     });
     this._spinner = spinner;
     this._queueBuf = "";
@@ -3283,12 +3494,24 @@ class ConversationalUI {
   }
 
   processQueue() {
+    if (this._inputResolver) {
+      this._queueBlocked = this.promptQueue.length > 0;
+      return;
+    }
     // Process next queued item
     if (this.promptQueue.length > 0) {
       const next = this.promptQueue.shift();
       this.sayLine(`${c("cyan")}📤${R} Next queued: ${next}`, "cyan");
       this._busy = true;
-      setImmediate(() => this.handleInput(next));
+      setImmediate(() => {
+        this.handleInput(next).catch(err => {
+          if (this.running) {
+            this.sayLine(`✕ ${err.message}`, "red");
+            this._busy = false;
+            this.processQueue();
+          }
+        });
+      });
     } else {
       // Blank line separates conversation turns
       this.tui.log("");
@@ -3494,13 +3717,7 @@ class ConversationalUI {
       clear: () => {
         this.logLines = [];
         if (this.tui?.active) {
-          this.tui._buf.length = 0;
-          for (let r = this.tui._convTop; r <= this.tui._convBot; r++) {
-            process.stdout.write(`\x1b[${r};1H\x1b[2K`);
-          }
-          this.tui._cursorRow = this.tui._convTop;
-          process.stdout.write(`\x1b[${this.tui._convTop};1H`);
-          this.tui.setInput("");
+          this.tui.clear();
         } else {
           process.stdout.write(cls + home);
           console.log(`\n${c("magenta")}${c("dim")}·   ·   ·   ·   ·   ·   ${R}\n${c("cyan")}  ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄${R}\n${c("cyan")} █${c("magenta")} ═══ ═══ ═══ ═══ ═══${c("cyan")} █${R}\n${c("cyan")}▐█${c("magenta")} ·   ·   ·   ·   ·${c("cyan")} █▌${R}\n${c("cyan")}▐█   ${c("magenta")}╔═══════════╗${c("cyan")}   █▌${R}\n${c("cyan")}▐█   ${c("magenta")}║ ${c("green")}◈     ◈${c("magenta")} ║${c("cyan")}   █▌${R}\n${c("cyan")}▐█   ${c("magenta")}║${c("dim")}  ╔═══╗${c("magenta")}   ║${c("cyan")}   █▌${R}\n${c("cyan")}▐█   ${c("magenta")}╚═══════════╝${c("cyan")}   █▌${R}\n${c("cyan")} █   ${c("magenta")}┊ ${c("magenta")}${c("dim")}║${c("magenta")}   ${c("magenta")}${c("dim")}║${c("magenta")} ┊${c("cyan")}   █${R}\n${c("cyan")} █   ${c("magenta")}┊ ${c("magenta")}${c("dim")}║${c("magenta")} ● ${c("magenta")}${c("dim")}║${c("magenta")} ┊${c("cyan")}   █${R}\n${c("cyan")} ▀▄  ${c("magenta")}${c("dim")}║${c("magenta")} ═══ ${c("magenta")}${c("dim")}║${c("cyan")}  ▄▀${R}\n  ${c("magenta")}${B}P H A N T O M${R}  ${c("dim")}cleared${R}\n`);
@@ -3927,9 +4144,7 @@ if (ENV.interactive) {
       const idx = parseInt(pick) - 1;
       if (idx >= 0 && idx < keyProviders.length) {
         const [, envVar, label] = keyProviders[idx];
-        const rl2 = readline.createInterface({ input: process.stdin, output: process.stdout });
-        const key = await new Promise(r => rl2.question(`${c("cyan")}🔑${R} Enter ${label} API key: `, r));
-        rl2.close();
+        const key = await askHidden(`${c("cyan")}🔑${R} Enter ${label} API key: `);
         if (key.trim()) {
           process.env[envVar] = key.trim();
           if (/_KEY$|_TOKEN$|_SECRET$|PASSWORD/.test(envVar)) {
@@ -3971,9 +4186,7 @@ if (ENV.interactive) {
       const rlU = readline.createInterface({ input: process.stdin, output: process.stdout });
       const username = await new Promise(r => rlU.question(`${c("cyan")}👤${R} HackerOne username (API token identifier): `, r));
       rlU.close();
-      const rlT = readline.createInterface({ input: process.stdin, output: process.stdout });
-      const token = await new Promise(r => rlT.question(`${c("cyan")}🔑${R} HackerOne API token: `, r));
-      rlT.close();
+      const token = await askHidden(`${c("cyan")}🔑${R} HackerOne API token: `);
       if (username.trim() && token.trim()) {
         process.env.HACKERONE_API_USERNAME = username.trim();
         process.env.HACKERONE_API_TOKEN = token.trim();
@@ -3987,9 +4200,7 @@ if (ENV.interactive) {
     }
 
     if (wantBC) {
-      const rlT = readline.createInterface({ input: process.stdin, output: process.stdout });
-      const token = await new Promise(r => rlT.question(`${c("cyan")}🔑${R} Bugcrowd API token: `, r));
-      rlT.close();
+      const token = await askHidden(`${c("cyan")}🔑${R} Bugcrowd API token: `);
       if (token.trim()) {
         process.env.BUGCROWD_API_TOKEN = token.trim();
         vaultSet("BUGCROWD_API_TOKEN", token.trim());
