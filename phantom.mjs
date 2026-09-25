@@ -10,14 +10,14 @@ import { pathToFileURL } from "url";
 import { createRequire } from "module";
 const $r = createRequire(import.meta.url);
 
-import { BASE_DIR, MEMORY_DIR, KNOWLEDGE_DIR, BOOKS_DIR, TOOLS_DIR, REPORTS_DIR, PLAYBOOKS_DIR, PHANTOM_VERSION } from "./lib/config.mjs";
+import { BASE_DIR, MEMORY_DIR, KNOWLEDGE_DIR, BOOKS_DIR, TOOLS_DIR, REPORTS_DIR, PLAYBOOKS_DIR, PHANTOM_VERSION, PHANTOM_DIR } from "./lib/config.mjs";
 import { __r, runTool, runPipe, runScheduledScan } from "./lib/runtime.mjs";
 import { log } from "./lib/logger.mjs";
 import { renderLogo, renderBanner, prompt, icons, createSpinner, chatBorder } from "./lib/visual.mjs";
 import { TUI } from "./lib/tui.mjs";
 import { hackerTools } from "./lib/tools.mjs";
 import { initApiDeps, startApiServer, startGuiDashboard, setChatAgent } from "./lib/server.mjs";
-import { autoEvolve, startupEvolve, getEvolveStatus, analyzeError, loadAutoTools } from "./lib/evolve.mjs";
+import { autoEvolve, startupEvolve, getEvolveStatus, analyzeError, loadAutoTools, verifyEvolution } from "./lib/evolve.mjs";
 import { populateEnv, autoInstallSecurity } from "./lib/env.mjs";
 import { ensureReconTools } from "./lib/install-tools.mjs";
 import { saveSession, loadSession, autoLinkFromBooks } from "./lib/session.mjs";
@@ -3461,15 +3461,21 @@ class ConversationalUI {
   triggerPostEvolution() {
     if (!process.env.PHANTOM_NO_EVOLVE && this.evolutionXP >= this.evolutionMaxXP) {
       console.log(`  ${c("dim")}⚡ evolving...${R}`);
-      startupEvolve().then(async ev => {
-        const { execSync } = $r("child_process");
-        let ok = true;
-        const phantomDir = resolve(homedir(), "Phantom");
-        for (const f of ["phantom.mjs", "lib/tools.mjs", "lib/visual.mjs", "lib/evolve.mjs"]) { try { execSync(`node --check "${resolve(phantomDir, f)}"`, { encoding: "utf-8", timeout: 5000 }); } catch { ok = false; break; } }
-        if (ok) { try { execSync(`node test/core.test.mjs`, { cwd: phantomDir, encoding: "utf-8", timeout: 30000 }); } catch { ok = false; } }
-        if (ok) { this.evolutionXP = 0; console.log(`  ${c("dim")}✓ evolved${ev.wrappers_created > 0 ? ` +${ev.wrappers_created} wrappers` : ""}${R}`); }
-        else console.log(`  ${c("dim")}⚠ evolve check failed — XP held${R}`);
-      }).catch(() => {});
+      startupEvolve()
+        .then(async ev => {
+          // Self-heal, then verify. Previously this inlined a check against
+          // homedir()+"Phantom", which failed on every clone not sitting in
+          // ~/Phantom and held XP forever with no way to recover.
+          const v = await verifyEvolution({ heal: true });
+          if (v.ok) {
+            this.evolutionXP = 0;
+            console.log(`  ${c("dim")}✓ evolved${ev.wrappers_created > 0 ? ` +${ev.wrappers_created} wrappers` : ""} — ${v.reason}${R}`);
+          } else {
+            console.log(`  ${c("dim")}⚠ evolve check failed (${v.phase}) — XP held${R}`);
+            console.log(`  ${c("dim")}  ${v.reason}${R}`);
+          }
+        })
+        .catch(e => console.log(`  ${c("dim")}⚠ evolve error — XP held: ${(e?.message || e).toString().slice(0, 120)}${R}`));
     }
   }
 
@@ -4207,6 +4213,45 @@ if (ENV.interactive) {
         delete _config.BUGCROWD_API_TOKEN;
         try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {}
         console.log(`${c("green")}✓${R} Bugcrowd API token saved to the secret vault\n`);
+      }
+    }
+  } catch {}
+}
+
+// ── GitHub credentials setup ──
+// Auto-push runs unattended, so it needs a token it can use without prompting.
+// Stored in the secret vault, never in config.json and never in .git/config.
+if (ENV.interactive) {
+  try {
+    const { load: loadCred } = await import("./lib/credentials.mjs");
+    const existing = loadCred("GITHUB_TOKEN");
+    let remoteUrl = "";
+    try {
+      const { execSync } = $r("child_process");
+      remoteUrl = execSync("git remote get-url origin 2>/dev/null", {
+        cwd: PHANTOM_DIR, encoding: "utf-8", timeout: 5000,
+      }).trim();
+    } catch {}
+
+    if (existing) {
+      console.log(`${D}GitHub token already in the vault — auto-push will use it.${R}`);
+    } else if (remoteUrl && /github\.com/.test(remoteUrl)) {
+      console.log(`\n${B}Set up GitHub credentials for auto-push?${R} ${D}(a remote is configured: ${remoteUrl.replace(/\/\/.*@/, "//")})${R}`);
+      console.log(`${D}  1) Yes, enter a token now`);
+      console.log(`  2) Skip — auto-push will stay off until you run @github_setup${R}`);
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const pick = await new Promise(r => rl.question(`\n${c("cyan")}?${R} Choice (1-2, blank to skip): `, r));
+      rl.close();
+      if (pick.trim() === "1") {
+        console.log(`${D}  Create one at https://github.com/settings/tokens — scope "repo" for pushing.${R}`);
+        console.log(`${D}  A fine-grained token with write access to this one repo is enough.${R}`);
+        const token = await askHidden(`${c("cyan")}🔑${R} Enter GitHub token: `);
+        if (token.trim()) {
+          const value = token.trim();
+          vaultSet("GITHUB_TOKEN", value);
+          process.env.GITHUB_TOKEN = value;
+          console.log(`${c("green")}✓${R} GitHub token saved to the secret vault — auto-push is enabled\n`);
+        }
       }
     }
   } catch {}
