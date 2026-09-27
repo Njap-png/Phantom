@@ -22,7 +22,7 @@ import { populateEnv, autoInstallSecurity } from "./lib/env.mjs";
 import { ensureReconTools } from "./lib/install-tools.mjs";
 import { saveSession, loadSession, autoLinkFromBooks } from "./lib/session.mjs";
 import { get as vaultGet, set as vaultSet } from "./lib/vault.mjs";
-import { askHidden } from "./lib/credentials.mjs";
+import { askHidden, releaseStdin } from "./lib/credentials.mjs";
 
 // ── Merge auto-generated tools into hackerTools ──
 // Runs once at module init so all agents & CLIs pick them up.
@@ -1346,6 +1346,13 @@ function raw(on) {
   }
 }
 
+// readline.Interface.close() pauses process.stdin, and a paused stream is *not*
+// resumed by adding a "data" listener (Readable only auto-resumes when
+// flowing !== false). Any readline prompt that runs before the REPL therefore
+// leaves the input line deaf — and, with nothing else keeping the loop alive,
+// lets the process drain and exit. Every rl.close() below is therefore
+// followed by releaseStdin() (lib/credentials.mjs), which hands stdin back.
+
 function getSize() {
   try {
     if (process.stdout.getWindowSize) {
@@ -1774,6 +1781,7 @@ class TermuxUI {
     });
     rl.question(`${c("cyan")}⚡${R} `, (ans) => {
       rl.close();
+      releaseStdin();
       if (ans.trim()) this.handleCommand(ans.trim());
       else { this.draw(); this.prompt(); }
     });
@@ -1980,6 +1988,7 @@ class MinimalUI {
     });
     rl.question(`${c("cyan")}⚡${R} `, (ans) => {
       rl.close();
+      releaseStdin();
       if (ans.trim()) this.handleCommand(ans.trim());
       else this.prompt();
     });
@@ -3053,6 +3062,10 @@ class ConversationalUI {
     }
     this.inputHandler = (buf) => this.onKey(buf);
     process.stdin.on("data", this.inputHandler);
+    // readline.close() pauses stdin, and a paused stream stays paused when a
+    // "data" listener is added — so the REPL would never see a keystroke and
+    // the process would drain its event loop and exit. Force it flowing.
+    try { if (process.stdin.isPaused()) process.stdin.resume(); } catch {}
   }
 
   _commitInput(fullInput) {
@@ -4255,6 +4268,7 @@ if (ENV.interactive && !process.env.PHANTOM_NO_SETUP) {
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       const a = await new Promise(r => rl.question(q, r));
       rl.close();
+      releaseStdin();
       return a.trim();
     };
 
@@ -4361,6 +4375,7 @@ if (ENV.interactive) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     const pick = await new Promise(r => rl.question(`\n${c("cyan")}?${R} Choice (1-3, blank to skip): `, r));
     rl.close();
+    releaseStdin();
     const wantH1 = pick === "1" || pick === "3";
     const wantBC = pick === "2" || pick === "3";
 
@@ -4368,6 +4383,7 @@ if (ENV.interactive) {
       const rlU = readline.createInterface({ input: process.stdin, output: process.stdout });
       const username = await new Promise(r => rlU.question(`${c("cyan")}👤${R} HackerOne username (API token identifier): `, r));
       rlU.close();
+      releaseStdin();
       const token = await askHidden(`${c("cyan")}🔑${R} HackerOne API token: `);
       if (username.trim() && token.trim()) {
         process.env.HACKERONE_API_USERNAME = username.trim();
@@ -4418,6 +4434,7 @@ if (ENV.interactive) {
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       const pick = await new Promise(r => rl.question(`\n${c("cyan")}?${R} Choice (1-2, blank to skip): `, r));
       rl.close();
+      releaseStdin();
       if (pick.trim() === "1") {
         console.log(`${D}  Create one at https://github.com/settings/tokens — scope "repo" for pushing.${R}`);
         console.log(`${D}  A fine-grained token with write access to this one repo is enough.${R}`);

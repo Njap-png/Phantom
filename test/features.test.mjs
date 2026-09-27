@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { dirname } from "node:path";
+import fs from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runTool, runPipe, formatExternal } from "../lib/runtime.mjs";
 import { hackerTools } from "../lib/tools.mjs";
@@ -355,6 +356,42 @@ describe("TUI output isolation", () => {
     assert.match(lines[11], /resize me/);
     assert.doesNotMatch(lines.slice(-2).join("\n"), /after resize/);
     tui.exit();
+  });
+});
+
+describe("REPL input stays live after startup prompts", () => {
+  // readline.Interface.close() pauses process.stdin, and Readable only
+  // auto-resumes when flowing !== false — so the "data" listener the REPL
+  // attaches never receives a keystroke, and the process exits once its event
+  // loop drains. Every prompt must hand stdin back.
+  it("releaseStdin resumes a paused stdin", async () => {
+    const { releaseStdin } = await import("../lib/credentials.mjs");
+    let paused = true;
+    let resumed = 0;
+    const fake = { isPaused: () => paused, resume: () => { resumed++; paused = false; } };
+
+    releaseStdin(fake);
+    assert.equal(resumed, 1);
+
+    releaseStdin(fake);
+    assert.equal(resumed, 1, "already-flowing stdin must not be resumed again");
+  });
+
+  it("every readline close in the REPL entry point hands stdin back", () => {
+    const src = fs.readFileSync(join(CWD, "phantom.mjs"), "utf-8");
+    const lines = src.split("\n");
+    assert.ok(lines.some(line => /^\s*rl\w*\.close\(\);$/.test(line)), "expected readline closes in phantom.mjs");
+    const orphans = lines.filter((line, i) =>
+      /^\s*rl\w*\.close\(\);$/.test(line) && !/releaseStdin\(\)/.test(lines[i + 1] || "")
+    );
+    assert.deepEqual(orphans, [], "readline.close() must be followed by releaseStdin()");
+  });
+
+  it("the REPL input line resumes stdin when it attaches its handler", () => {
+    const src = fs.readFileSync(join(CWD, "phantom.mjs"), "utf-8");
+    const prompt = src.slice(src.indexOf("  prompt() {"), src.indexOf("  _commitInput(fullInput) {"));
+    assert.match(prompt, /process\.stdin\.on\("data", this\.inputHandler\)/);
+    assert.match(prompt, /process\.stdin\.resume\(\)/);
   });
 });
 
