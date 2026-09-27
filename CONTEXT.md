@@ -104,10 +104,28 @@ node phantom.mjs                     # same as above
 
 Default mode is a **Hermes/Claude Code** style interactive shell. Features:
 - `❯` prompt with arrow-key history, cursor movement, multi-line (`\` continuation)
-- `/help`, `/tools`, `/model`, `/clear`, `/save`, `/load`, `/quit` commands
+- `/help`, `/tools`, `/model`, `/setup`, `/clear`, `/save`, `/load`, `/quit` commands
 - Code blocks rendered with `┌─` / `│` / `└─` box-drawing
 - Tool calls shown with `⚡ @tool|args`
 - Auto-detects LLM provider; falls back to tools-only mode if no key set
+
+## First-run Setup
+
+The API key wizards (LLM provider/model, HackerOne/Bugcrowd, GitHub auto-push) run **once**.
+Answers are stored in the secret vault and the fact that setup ran is recorded in
+`~/.config/phantom/config.json` under `setup`, so later starts just report what is in use
+instead of asking again.
+
+Start a new setup session whenever you want to change any of it:
+```bash
+phantom --setup        # re-run both wizards at startup
+```
+```
+/setup                 # same, from inside the REPL (alias: /creds)
+```
+
+The LLM wizard also re-opens by itself if the remembered provider stops working
+(revoked key, Ollama not running).
 
 ## REST API (`--api`)
 

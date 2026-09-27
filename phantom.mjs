@@ -117,6 +117,34 @@ __r.PHANTOM_LLM_PROVIDER = PHANTOM_LLM_PROVIDER;
 function setProvider(name) { PHANTOM_LLM_PROVIDER = name; process.env.PHANTOM_LLM_PROVIDER = name; _config.default_provider = name; __r.PHANTOM_LLM_PROVIDER = name; try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {} }
 __r.setProvider = setProvider;
 
+// ── Setup memory ────────────────────────────────────────────
+// The first-run wizard (LLM provider/model + bug bounty keys) must run once,
+// not on every start: secrets already live in the vault, so re-asking on each
+// boot is pure noise. We remember that setup ran in config.setup and stay quiet
+// afterwards, until the user explicitly asks for a new one (`/setup`, `--setup`).
+// Read lazily: --setup is parsed out of argv long after this point, so a value
+// snapshotted at import time would always be false.
+const setupForced = () => !!process.env.PHANTOM_SETUP;
+function setupState() { return _config.setup && typeof _config.setup === "object" && !Array.isArray(_config.setup) ? _config.setup : {}; }
+function setupDone(step) { const s = setupState(); return !!(s.done && (step ? s[step] : true)); }
+function markSetup(step) {
+  const s = { ...setupState(), done: true, at: new Date().toISOString() };
+  if (step) s[step] = true;
+  _config.setup = s;
+  __r._config = _config;
+  try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {}
+}
+function clearSetup() {
+  delete _config.setup;
+  __r._config = _config;
+  try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {}
+}
+// A previous session already settled the LLM: either we recorded it, or a
+// provider choice was persisted in config. Either way the wizard has nothing
+// left to ask, so it stays closed.
+function llmSetupRemembered() { return setupDone("llm") || !!_config.default_provider; }
+__r.setupState = setupState;
+
 // LLM instance — set after createProvider()
 let llmInstance = null;
 
@@ -2026,6 +2054,7 @@ class MinimalUI {
           console.log(`  ${c("green")}  /gui${R}          — start web dashboard (port 8080)`);
           console.log(`  ${c("green")}  /api${R}          — start REST API (port 9090)`);
           console.log(`  ${c("green")}  /model${R}        — show/switch LLM`);
+          console.log(`  ${c("green")}  /setup${R}       — re-run API key / model setup`);
           console.log(`  ${c("green")}  /clear${R}        — clear screen\n  ${c("green")}  /stop${R}         — cancel current operation`);
           console.log(`  ${c("green")}  /queue${R}        — show queued inputs\n  ${c("green")}  /flushqueue${R}   — clear all queued inputs`);
           console.log(`  ${c("green")}  /delegate${R}     — delegate task to agent\n  ${c("green")}  /talk${R} <a>     — talk directly to an agent`);
@@ -2122,6 +2151,7 @@ class ConversationalUI {
       ["api", "start REST API server (port 9090)"],
       ["rest", "alias for api"],
       ["model", "show/switch LLM provider"],
+      ["setup", "re-run API key / model setup"],
       ["clear", "clear screen"],
       ["c", "alias for clear"],
       ["delegate", "delegate task to agent"],
@@ -3789,6 +3819,7 @@ class ConversationalUI {
         console.log(`  ${c("green")}config set <key> <value>${R}     — set config`);
         console.log(`  ${c("green")}save <name>${R}                  — save session`);
         console.log(`  ${c("green")}load <name>${R}                  — load session`);
+        console.log(`  ${c("green")}setup${R}                       — re-run API key / model setup`);
         console.log(`  ${c("green")}agents${R}                       — list AI agents`);
         console.log(`\n${D}Agent Commands (ESC then type):${R}`);
         console.log(`  ${c("green")}spawn [name] [role]${R}          — create agent`);
@@ -3902,6 +3933,16 @@ class ConversationalUI {
       },
       t: "talk",
       save: function(rest) { if (rest[0]) { saveMemory(`session_${rest[0]}`, this.conversation); console.log(`\n${c("green")}✓${R} Saved: ${B}${rest[0]}${R}\n`); } },
+      // Setup is remembered across restarts, so /setup is how the user asks for
+      // a new one: it forgets the stored choices and re-runs both wizards live.
+      setup: async function() {
+        console.log(`\n${B}New setup session${R} ${D}(previous choices are kept until you overwrite them)${R}\n`);
+        clearSetup();
+        try { await runLLMSetup(true); } catch {}
+        try { await runBugBountySetup(true); } catch {}
+        console.log(`\n${c("green")}✓${R} Setup saved. ${D}It will not ask again on the next start.${R}\n`);
+      },
+      creds: "setup",
       load: function(rest) {
         if (rest[0]) {
           const m = loadMemory(`session_${rest[0]}`);
@@ -4075,6 +4116,14 @@ if (quietIdx !== -1) {
   args.splice(quietIdx, 1);
 }
 
+// Pre-scan for --setup: start a new setup session, re-running the API key /
+// model wizards even when a previous session already settled them.
+const setupIdx = args.indexOf("--setup");
+if (setupIdx !== -1) {
+  process.env.PHANTOM_SETUP = "1";
+  args.splice(setupIdx, 1);
+}
+
 if (args.length > 0 && !args[0].startsWith("--")) {
   // No --flag: pass as interactive input to phantom
 } else if (args.length > 0) {
@@ -4103,6 +4152,7 @@ Usage:
   phantom --tool --json <name> <input>  JSON structured output
   phantom --tool --pipe "sub | dom | httpx"  Pipe tools (chain output→input)
   phantom --repl                        Force conversational REPL mode
+  phantom --setup                       Re-run API key / model setup wizard
   phantom --list                        List all tools
   phantom --list --json                 List tools as JSON
   phantom --gui                         Start web dashboard (port 8080)
@@ -4250,164 +4300,201 @@ __r.llmInstance = llmInstance;
 }
 
 // ── Provider + model selection ──
+const SETUP_LABELS = {
+  openai: "OpenAI (opencode.ai/zen)", opencode: "OpenCode Zen",
+  anthropic: "Anthropic", gemini: "Google Gemini", groq: "Groq",
+  deepseek: "DeepSeek", mistral: "Mistral", openrouter: "OpenRouter",
+  ollama: "Ollama (local, no key)",
+};
+const SETUP_PICK_ORDER = ["openai", "opencode", "anthropic", "gemini", "groq", "deepseek", "mistral", "openrouter", "ollama"];
+
+// Run the LLM provider/model wizard. `force` re-asks even when setup is already
+// remembered (explicit `/setup` or `--setup` = "start a new session").
+async function runLLMSetup(force = false) {
+  // Labels and key env vars are read from the live registry so the picker can
+  // never drift from what chat() actually uses.
+  const P = __r.PROVIDERS || {};
+  const LABELS = SETUP_LABELS;
+  const choices = SETUP_PICK_ORDER.filter(n => P[n]);
+  if (!choices.length) return;
+
+  const askQ = async (q) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const a = await new Promise(r => rl.question(q, r));
+    rl.close();
+    releaseStdin();
+    return a.trim();
+  };
+
+  const avail = await llm.detectProviders();
+  const ready = Object.entries(avail).filter(([, v]) => v !== "no").map(([n]) => n);
+  process.env.PHANTOM_PROVIDERS_READY = ready.join(",");
+
+  // A provider only counts as configured if it is actually reachable. Ollama
+  // needs no key, so it is accepted when the user explicitly selected it.
+  const usable = n => n === "ollama" ? ready.includes("ollama") : ready.includes(n);
+  if (!usable(llm.provider)) {
+    const best = llm.selectBest(avail);
+    if (best) {
+      console.log(`\n${D}Provider "${_config.default_provider || "none"}" is unavailable — falling back to ${c("cyan")}${best}${R}.${R}`);
+      llm.provider = best;
+    }
+  }
+
+  // Never leave the user on an unconfigured provider with no key at all.
+  if (!usable(llm.provider) && P[llm.provider]?.keyEnv && !process.env.PHANTOM_LLM_PROVIDER) {
+    llm.provider = "ollama";
+  }
+
+  const showModel = async (name) => {
+    const models = await llm.listModels(name).catch(() => []);
+    if (!models.length) return false;
+    const cap = Math.min(models.length, 12);
+    console.log(`\n${B}Models for ${name}${name === llm.provider ? ` ${D}(current: ${llm.model})${R}` : ""}:${R}`);
+    models.slice(0, 12).forEach((m, i) => console.log(`  ${c("cyan")}${i + 1}${R}) ${m}`));
+    const mr = await askQ(`\n${c("cyan")}?${R} Model [1-${cap}] or name ${D}(Enter for ${P[name].defaultModel})${R}: `);
+    if (mr) {
+      const m = /^\d+$/.test(mr) ? models[parseInt(mr) - 1] : mr;
+      if (m) llm.model = m;
+    }
+    return true;
+  };
+
+  const ensureKey = async (name) => {
+    if (!P[name].keyEnv) return;
+    if (ready.includes(name)) return;
+    const envVar = P[name].keyEnv;
+    const entered = await askHidden(`${c("cyan")}🔑${R} Enter ${LABELS[name] || name} API key ${D}(${envVar})${R}: `);
+    if (!entered || !entered.trim()) return;
+    process.env[envVar] = entered.trim();
+    vaultSet(envVar, entered.trim());
+    delete _config[envVar];
+    try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {}
+    console.log(`${c("green")}✓${R} ${LABELS[name] || name} API key saved to vault\n`);
+    ready.push(name);
+    process.env.PHANTOM_PROVIDERS_READY = [...new Set(ready)].join(",");
+  };
+
+  // Setup already ran and the remembered provider is still usable: report and
+  // stay out of the way. Re-ask only when the provider went away (stale key,
+  // Ollama not running) or the user asked for a new session.
+  if (llmSetupRemembered() && !force && usable(llm.provider)) {
+    console.log(`\n${c("green")}✓${R} Using ${B}${llm.provider}/${llm.model}${R} ${D}(/setup to change)${R}\n`);
+    markSetup("llm");
+    return;
+  }
+
+  if (ready.length === 0) {
+    console.log(`\n${c("yellow")}⚠ No LLM provider configured.${R}`);
+    console.log(`${D}Run Ollama locally, or set an API key.${R}`);
+  }
+
+  console.log(`\n${B}LLM:${R} ${c("cyan")}${llm.provider}${R} / ${c("cyan")}${llm.model}${R}  ${D}(Enter to keep, "m" to change model)${R}`);
+  for (let i = 0; i < choices.length; i++) {
+    const n = choices[i];
+    const mark = n === llm.provider ? `${c("green")}*${R}` : " ";
+    const tag = n === "ollama"
+      ? (ready.includes("ollama") ? `${c("green")}running${R}` : `${D}not running${R}`)
+      : P[n].keyEnv ? `${D}${P[n].keyEnv}${R}` : "";
+    console.log(` ${mark} ${String(i + 1).padStart(2)}) ${(LABELS[n] || n).padEnd(26)} ${tag}`);
+  }
+
+  const pick = await askQ(`\n${c("cyan")}?${R} Provider [1-${choices.length}], name, or blank to keep: `);
+  let picked = null;
+  if (pick) {
+    if (/^\d+$/.test(pick)) picked = choices[parseInt(pick) - 1];
+    else if (pick.toLowerCase() === "m") picked = null;
+    else picked = pick.toLowerCase();
+  }
+
+  if (picked && P[picked]) {
+    llm.provider = picked;
+    await ensureKey(picked);
+    if (picked !== "ollama" && !ready.includes(picked)) {
+      console.log(`${c("yellow")}⚠${R} No API key for ${LABELS[picked] || picked} — requests will fall back.\n`);
+    }
+    await showModel(picked);
+  } else if (picked) {
+    console.log(`${c("yellow")}⚠${R} Unknown provider "${picked}". Keeping ${c("cyan")}${llm.provider}${R}.\n`);
+  } else if (pick.toLowerCase() === "m") {
+    await showModel(llm.provider);
+  }
+
+  if (ready.length === 0 && !usable(llm.provider)) {
+    console.log(`${D}No LLM available. Run ${c("cyan")}ollama serve${R}, set a key, or use tools-only mode.\n`);
+  } else {
+    console.log(`${c("green")}✓${R} Using ${B}${llm.provider}/${llm.model}${R}\n`);
+  }
+
+  // Remember that this session's LLM is settled, so the next start stays quiet.
+  markSetup("llm");
+}
+
 if (ENV.interactive && !process.env.PHANTOM_NO_SETUP) {
-  try {
-    // Labels and key env vars are read from the live registry so the picker can
-    // never drift from what chat() actually uses.
-    const P = __r.PROVIDERS || {};
-    const LABELS = {
-      openai: "OpenAI (opencode.ai/zen)", opencode: "OpenCode Zen",
-      anthropic: "Anthropic", gemini: "Google Gemini", groq: "Groq",
-      deepseek: "DeepSeek", mistral: "Mistral", openrouter: "OpenRouter",
-      ollama: "Ollama (local, no key)",
-    };
-    const PICK_ORDER = ["openai", "opencode", "anthropic", "gemini", "groq", "deepseek", "mistral", "openrouter", "ollama"];
-    const choices = PICK_ORDER.filter(n => P[n]);
-
-    const askQ = async (q) => {
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      const a = await new Promise(r => rl.question(q, r));
-      rl.close();
-      releaseStdin();
-      return a.trim();
-    };
-
-    const avail = await llm.detectProviders();
-    const ready = Object.entries(avail).filter(([, v]) => v !== "no").map(([n]) => n);
-    process.env.PHANTOM_PROVIDERS_READY = ready.join(",");
-
-    // A provider only counts as configured if it is actually reachable. Ollama
-    // needs no key, so it is accepted when the user explicitly selected it.
-    const usable = n => n === "ollama" ? ready.includes("ollama") : ready.includes(n);
-    if (!usable(llm.provider)) {
-      const best = llm.selectBest(avail);
-      if (best) {
-        console.log(`\n${D}Provider "${_config.default_provider || "none"}" is unavailable — falling back to ${c("cyan")}${best}${R}.${R}`);
-        llm.provider = best;
-      }
-    }
-
-    // Never leave the user on an unconfigured provider with no key at all.
-    if (!usable(llm.provider) && P[llm.provider]?.keyEnv && !process.env.PHANTOM_LLM_PROVIDER) {
-      llm.provider = "ollama";
-    }
-
-    const showModel = async (name) => {
-      const models = await llm.listModels(name).catch(() => []);
-      if (!models.length) return false;
-      const cap = Math.min(models.length, 12);
-      console.log(`\n${B}Models for ${name}${name === llm.provider ? ` ${D}(current: ${llm.model})${R}` : ""}:${R}`);
-      models.slice(0, 12).forEach((m, i) => console.log(`  ${c("cyan")}${i + 1}${R}) ${m}`));
-      const mr = await askQ(`\n${c("cyan")}?${R} Model [1-${cap}] or name ${D}(Enter for ${P[name].defaultModel})${R}: `);
-      if (mr) {
-        const m = /^\d+$/.test(mr) ? models[parseInt(mr) - 1] : mr;
-        if (m) llm.model = m;
-      }
-      return true;
-    };
-
-    const ensureKey = async (name) => {
-      if (!P[name].keyEnv) return;
-      if (ready.includes(name)) return;
-      const envVar = P[name].keyEnv;
-      const entered = await askHidden(`${c("cyan")}🔑${R} Enter ${LABELS[name] || name} API key ${D}(${envVar})${R}: `);
-      if (!entered || !entered.trim()) return;
-      process.env[envVar] = entered.trim();
-      vaultSet(envVar, entered.trim());
-      delete _config[envVar];
-      try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {}
-      console.log(`${c("green")}✓${R} ${LABELS[name] || name} API key saved to vault\n`);
-      ready.push(name);
-      process.env.PHANTOM_PROVIDERS_READY = [...new Set(ready)].join(",");
-    };
-
-    if (ready.length === 0) {
-      console.log(`\n${c("yellow")}⚠ No LLM provider configured.${R}`);
-      console.log(`${D}Run Ollama locally, or set an API key.${R}`);
-    }
-
-    console.log(`\n${B}LLM:${R} ${c("cyan")}${llm.provider}${R} / ${c("cyan")}${llm.model}${R}  ${D}(Enter to keep, "m" to change model)${R}`);
-    for (let i = 0; i < choices.length; i++) {
-      const n = choices[i];
-      const mark = n === llm.provider ? `${c("green")}*${R}` : " ";
-      const tag = n === "ollama"
-        ? (ready.includes("ollama") ? `${c("green")}running${R}` : `${D}not running${R}`)
-        : P[n].keyEnv ? `${D}${P[n].keyEnv}${R}` : "";
-      console.log(` ${mark} ${String(i + 1).padStart(2)}) ${(LABELS[n] || n).padEnd(26)} ${tag}`);
-    }
-
-    const pick = await askQ(`\n${c("cyan")}?${R} Provider [1-${choices.length}], name, or blank to keep: `);
-    let picked = null;
-    if (pick) {
-      if (/^\d+$/.test(pick)) picked = choices[parseInt(pick) - 1];
-      else if (pick.toLowerCase() === "m") picked = null;
-      else picked = pick.toLowerCase();
-    }
-
-    if (picked && P[picked]) {
-      llm.provider = picked;
-      await ensureKey(picked);
-      if (picked !== "ollama" && !ready.includes(picked)) {
-        console.log(`${c("yellow")}⚠${R} No API key for ${LABELS[picked] || picked} — requests will fall back.\n`);
-      }
-      await showModel(picked);
-    } else if (picked) {
-      console.log(`${c("yellow")}⚠${R} Unknown provider "${picked}". Keeping ${c("cyan")}${llm.provider}${R}.\n`);
-    } else if (pick.toLowerCase() === "m") {
-      await showModel(llm.provider);
-    }
-
-    if (ready.length === 0 && !usable(llm.provider)) {
-      console.log(`${D}No LLM available. Run ${c("cyan")}ollama serve${R}, set a key, or use tools-only mode.\n`);
-    } else {
-      console.log(`${c("green")}✓${R} Using ${B}${llm.provider}/${llm.model}${R}\n`);
-    }
-  } catch {}
+  try { await runLLMSetup(setupForced()); } catch {}
 }
 
 // ── Bug bounty API key setup ──
-if (ENV.interactive) {
-  try {
-    console.log(`\n${B}Set up bug bounty API keys?${R} (${D}enter number or leave blank to skip${R})`);
-    console.log(`  1) HackerOne (username + API token)`);
-    console.log(`  2) Bugcrowd (API token)`);
-    console.log(`  3) Both`);
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    const pick = await new Promise(r => rl.question(`\n${c("cyan")}?${R} Choice (1-3, blank to skip): `, r));
-    rl.close();
+// Same rule as the LLM wizard: ask once, remember it. Credentials already in
+// the vault are reported, never re-requested, until /setup starts a new session.
+async function runBugBountySetup(force = false) {
+  const { load: loadCred } = await import("./lib/credentials.mjs");
+  const haveH1 = !!(loadCred("HACKERONE_API_USERNAME") && loadCred("HACKERONE_API_TOKEN"));
+  const haveBC = !!loadCred("BUGCROWD_API_TOKEN");
+
+  if (!force && (setupDone("bugbounty") || haveH1 || haveBC)) {
+    if (haveH1) console.log(`\n${c("green")}✓${R} HackerOne credentials in the vault ${D}(@hackerone ... ready)${R}`);
+    if (haveBC) console.log(`${c("green")}✓${R} Bugcrowd token in the vault${R}`);
+    if (haveH1 || haveBC) console.log(`${D}  Run /setup to change them.${R}\n`);
+    markSetup("bugbounty");
+    return;
+  }
+
+  console.log(`\n${B}Set up bug bounty API keys?${R} (${D}enter number or leave blank to skip${R})`);
+  console.log(`  1) HackerOne (username + API token)`);
+  console.log(`  2) Bugcrowd (API token)`);
+  console.log(`  3) Both`);
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const pick = await new Promise(r => rl.question(`\n${c("cyan")}?${R} Choice (1-3, blank to skip): `, r));
+  rl.close();
+  releaseStdin();
+  const wantH1 = pick === "1" || pick === "3";
+  const wantBC = pick === "2" || pick === "3";
+
+  if (wantH1) {
+    const rlU = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const username = await new Promise(r => rlU.question(`${c("cyan")}👤${R} HackerOne username (API token identifier): `, r));
+    rlU.close();
     releaseStdin();
-    const wantH1 = pick === "1" || pick === "3";
-    const wantBC = pick === "2" || pick === "3";
-
-    if (wantH1) {
-      const rlU = readline.createInterface({ input: process.stdin, output: process.stdout });
-      const username = await new Promise(r => rlU.question(`${c("cyan")}👤${R} HackerOne username (API token identifier): `, r));
-      rlU.close();
-      releaseStdin();
-      const token = await askHidden(`${c("cyan")}🔑${R} HackerOne API token: `);
-      if (username.trim() && token.trim()) {
-        process.env.HACKERONE_API_USERNAME = username.trim();
-        process.env.HACKERONE_API_TOKEN = token.trim();
-        vaultSet("HACKERONE_API_USERNAME", username.trim());
-        vaultSet("HACKERONE_API_TOKEN", token.trim());
-        delete _config.HACKERONE_API_USERNAME;
-        delete _config.HACKERONE_API_TOKEN;
-        try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {}
-        console.log(`${c("green")}✓${R} HackerOne API keys saved to the secret vault\n`);
-      }
+    const token = await askHidden(`${c("cyan")}🔑${R} HackerOne API token: `);
+    if (username.trim() && token.trim()) {
+      process.env.HACKERONE_API_USERNAME = username.trim();
+      process.env.HACKERONE_API_TOKEN = token.trim();
+      vaultSet("HACKERONE_API_USERNAME", username.trim());
+      vaultSet("HACKERONE_API_TOKEN", token.trim());
+      delete _config.HACKERONE_API_USERNAME;
+      delete _config.HACKERONE_API_TOKEN;
+      try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {}
+      console.log(`${c("green")}✓${R} HackerOne API keys saved to the secret vault\n`);
     }
+  }
 
-    if (wantBC) {
-      const token = await askHidden(`${c("cyan")}🔑${R} Bugcrowd API token: `);
-      if (token.trim()) {
-        process.env.BUGCROWD_API_TOKEN = token.trim();
-        vaultSet("BUGCROWD_API_TOKEN", token.trim());
-        delete _config.BUGCROWD_API_TOKEN;
-        try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {}
-        console.log(`${c("green")}✓${R} Bugcrowd API token saved to the secret vault\n`);
-      }
+  if (wantBC) {
+    const token = await askHidden(`${c("cyan")}🔑${R} Bugcrowd API token: `);
+    if (token.trim()) {
+      process.env.BUGCROWD_API_TOKEN = token.trim();
+      vaultSet("BUGCROWD_API_TOKEN", token.trim());
+      delete _config.BUGCROWD_API_TOKEN;
+      try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {}
+      console.log(`${c("green")}✓${R} Bugcrowd API token saved to the secret vault\n`);
     }
-  } catch {}
+  }
+
+  markSetup("bugbounty");
+}
+
+if (ENV.interactive) {
+  try { await runBugBountySetup(setupForced()); } catch {}
 }
 
 // ── GitHub credentials setup ──
@@ -4427,7 +4514,9 @@ if (ENV.interactive) {
 
     if (existing) {
       console.log(`${D}GitHub token already in the vault — auto-push will use it.${R}`);
-    } else if (remoteUrl && /github\.com/.test(remoteUrl)) {
+    } else if (remoteUrl && /github\.com/.test(remoteUrl) && !(setupDone("github") && !setupForced())) {
+      // Same rule as the other wizards: a skip is a decision, not a prompt to
+      // repeat. @github_setup (or /setup) re-opens it.
       console.log(`\n${B}Set up GitHub credentials for auto-push?${R} ${D}(a remote is configured: ${remoteUrl.replace(/\/\/.*@/, "//")})${R}`);
       console.log(`${D}  1) Yes, enter a token now`);
       console.log(`  2) Skip — auto-push will stay off until you run @github_setup${R}`);
@@ -4446,6 +4535,7 @@ if (ENV.interactive) {
           console.log(`${c("green")}✓${R} GitHub token saved to the secret vault — auto-push is enabled\n`);
         }
       }
+      markSetup("github");
     }
   } catch {}
 }
