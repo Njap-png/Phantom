@@ -25,34 +25,63 @@ export function createProvider() {
     opencode:  { url: "https://opencode.ai/zen/v1",              keyEnv: "OPENCODE_ZEN_API_KEY",   defaultModel: "nemotron-3-ultra-free", chatPath: "/chat/completions", fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 256 }), parse: d => d.choices?.[0]?.message?.content?.trim() || "...", auth: k => ({ Authorization: `Bearer ${k}` }) },
   };
 
-  const providerName = process.env.PHANTOM_LLM_PROVIDER || "openai";
+  const MODELS = {
+    openai: ["nemotron-3-ultra-free", "qwen3-coder-free", "grok-code-fast-free", "deepseek-v4-flash-free"],
+    opencode: ["nemotron-3-ultra-free", "qwen3-coder-free", "grok-code-fast-free", "deepseek-v4-flash-free"],
+    anthropic: ["claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219", "claude-3-5-haiku-20241022"],
+    openrouter: ["nvidia/nemotron-3-ultra-550b-a55b:free", "auto"],
+    ollama: ["llama3", "llama3.1", "qwen2.5-coder", "mistral", "gemma3"],
+  };
+
+  // Load config once so default_provider / default_model are honoured here too.
+  let cfg = {};
+  const userConfigPath = resolve(process.env.HOME || "/root", ".config", "phantom", "config.json");
+  const projectConfigPath = resolve(new URL(".", import.meta.url).pathname, "..", "config.json");
+  for (const f of [projectConfigPath, userConfigPath]) {
+    try { cfg = { ...cfg, ...JSON.parse(fs.readFileSync(f, "utf8")) }; } catch {}
+  }
+
+  let providerName = process.env.PHANTOM_LLM_PROVIDER || cfg.default_provider || "openai";
+  if (!PROVIDERS[providerName]) providerName = "openai";
   function getProvider() { return PROVIDERS[providerName] || PROVIDERS.openai; }
   function getKey(p) {
     if (!p.keyEnv) return "";
     const k = process.env[p.keyEnv];
     if (k) return k;
-    // Check project root config (for USB portability)
-    try {
-      const projectRoot = resolve(new URL(".", import.meta.url).pathname, "..");
-      const projectConfigPath = resolve(projectRoot, "config.json");
-      const cfg = JSON.parse(fs.readFileSync(projectConfigPath, "utf8"));
-      if (cfg[p.keyEnv]) return cfg[p.keyEnv];
-    } catch {}
-    // Check user config
-    try {
-      const cfg = JSON.parse(fs.readFileSync(resolve(process.env.HOME || "/root", ".config", "phantom", "config.json"), "utf8"));
-      return cfg[p.keyEnv] || "";
-    } catch { return ""; }
+    if (cfg[p.keyEnv]) return cfg[p.keyEnv];
+    return "";
   }
 
   return {
     get provider() { return providerName; },
+    set provider(name) { if (PROVIDERS[name]) providerName = name; },
+    get providers() { return Object.keys(PROVIDERS); },
+    get models() { return MODELS[providerName] || []; },
+    get model() { return cfg.default_model || getProvider().defaultModel; },
+    set model(name) {
+      if (!name) return;
+      cfg.default_model = name;
+      try { fs.writeFileSync(userConfigPath, JSON.stringify(cfg, null, 2)); } catch {}
+    },
+    async listModels(name) {
+      if (name === "ollama") {
+        try {
+          const r = await fetch(`${PROVIDERS.ollama.url}/api/tags`, { signal: AbortSignal.timeout(3000) });
+          if (r.ok) {
+            const d = await r.json();
+            const live = (d.models || []).map(m => m.name).filter(Boolean);
+            if (live.length) return [...new Set([...live, ...(MODELS.ollama || [])])];
+          }
+        } catch {}
+      }
+      return MODELS[name] || [];
+    },
     get hasLLM() { const p = getProvider(); return !!(p.keyEnv ? getKey(p) : true); },
     async chat(messages, opts = {}) {
       const p = getProvider();
       const key = getKey(p);
       if (p.keyEnv && !key) return `[${providerName}] No API key. Set ${p.keyEnv} env var.`;
-      const model = opts.model || p.defaultModel;
+      const model = opts.model || cfg.default_model || p.defaultModel;
       try {
         let url = `${p.url}${p.chatPath.replace("{model}", model)}`;
         const h = { "Content-Type": "application/json", ...p.auth(key) };
@@ -115,9 +144,18 @@ export async function runChat(llm) {
           return;
         }
         if (cmd === "clear") { history.length = 0; console.log(`${c("dim")}History cleared${R}\n`); ask(); return; }
-        if (cmd.startsWith("model ")) {
-          // Could set model, but for now just show current
-          console.log(`${c("dim")}Model: ${provider.provider}${R}\n`);
+        if (cmd === "model" || cmd.startsWith("model ")) {
+          const arg = trimmed.slice(6).trim();
+          if (!arg) {
+            const models = (await provider.listModels?.(provider.provider).catch(() => [])) || provider.models || [];
+            console.log(`${c("dim")}Provider: ${provider.provider}\nModel:    ${provider.model}${models.length ? `\n\n${models.slice(0, 12).map((m, i) => `  ${i + 1}) ${m}`).join("\n")}\n\n/model <#|name> to switch${R}` : ""}\n`);
+          } else {
+            const n = parseInt(arg);
+            const models = (await provider.listModels?.(provider.provider).catch(() => [])) || [];
+            const m = /^\d+$/.test(arg) ? models[n - 1] : arg;
+            if (m) { provider.model = m; console.log(`${c("dim")}Model: ${provider.model}${R}\n`); }
+            else console.log(`${c("yellow")}No such model: ${arg}${R}\n`);
+          }
           ask();
           return;
         }

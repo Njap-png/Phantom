@@ -447,7 +447,64 @@ function createProvider() {
     ollama:      { url: process.env.OLLAMA_HOST || "http://localhost:11434", keyEnv: "",        defaultModel: "llama3",         chatPath: "/api/chat",           fmt: o => ({ model: o.model, messages: o.messages, stream: false }),                                  parse: d => d.message?.content?.trim() || "...",                                                                                                                       auth: () => ({}) },
     opencode:    { url: "https://opencode.ai/zen/v1",                keyEnv: "OPENCODE_ZEN_API_KEY",     defaultModel: "nemotron-3-ultra-free", chatPath: "/chat/completions",     fmt: o => ({ model: o.model, messages: o.messages, temperature: 0.7, max_tokens: 256 }),               parse: d => { const c = d.choices?.[0]?.message?.content?.trim(); return c || (d.choices?.[0]?.finish_reason === "length" ? "[Response truncated — increase max_tokens or shorten context]" : "…"); },                                                        auth: k => ({ "Authorization": `Bearer ${k}` }) },
   };
-__r.PROVIDERS = PROVIDERS;
+  __r.PROVIDERS = PROVIDERS;
+
+  // ── Model catalogue ─────────────────────────────────────
+  // Curated choices per provider so the picker and `/model` can offer a real
+  // choice instead of silently using the hardcoded default.
+  const MODELS = {
+    openai:     ["nemotron-3-ultra-free", "qwen3-coder-free", "grok-code-fast-free", "deepseek-v4-flash-free"],
+    opencode:   ["nemotron-3-ultra-free", "qwen3-coder-free", "grok-code-fast-free", "deepseek-v4-flash-free"],
+    anthropic:  ["claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219", "claude-3-5-haiku-20241022"],
+    gemini:     ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro"],
+    groq:       ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "qwen/qwen3-32b"],
+    deepseek:   ["deepseek-chat", "deepseek-reasoner"],
+    mistral:    ["mistral-large-latest", "mistral-small-latest", "codestral-latest"],
+    openrouter: ["nvidia/nemotron-3-ultra-550b-a55b:free", "auto"],
+    ollama:     ["llama3", "llama3.1", "qwen2.5-coder", "mistral", "gemma3"],
+  };
+  __r.MODELS = MODELS;
+
+  // Live model discovery: ollama and openrouter both know their own catalogue.
+  const _liveModelsCache = new Map();
+  async function listModels(name) {
+    const curated = MODELS[name] || [];
+    if (name === "ollama") {
+      try {
+        const cached = _liveModelsCache.get(name);
+        if (cached && Date.now() - cached.at < 600e3) return cached.list;
+        const r = await fetch(`${PROVIDERS.ollama.url}/api/tags`, { signal: AbortSignal.timeout(3000) });
+        if (r.ok) {
+          const d = await r.json();
+          const live = (d.models || []).map(m => m.name).filter(Boolean);
+          if (live.length) {
+            const list = [...new Set([...live, ...curated])];
+            _liveModelsCache.set(name, { list, at: Date.now() });
+            return list;
+          }
+        }
+      } catch {}
+    }
+    if (name === "openrouter") {
+      try {
+        const live = await getFreeOpenRouterModels(getKey(PROVIDERS.openrouter));
+        if (live.length) return [...new Set([curated[0], ...live])];
+      } catch {}
+    }
+    return curated;
+  }
+
+  let _ollamaUpAt = 0;
+  let _ollamaUpCache = false;
+  async function ollamaUp(provider) {
+    if (Date.now() - _ollamaUpAt < 60e3) return _ollamaUpCache;
+    try {
+      const r = await fetch(`${provider.url}/api/tags`, { signal: AbortSignal.timeout(2000) });
+      _ollamaUpCache = r.ok;
+    } catch { _ollamaUpCache = false; }
+    _ollamaUpAt = Date.now();
+    return _ollamaUpCache;
+  }
 
   function getProvider() {
     const name = PHANTOM_LLM_PROVIDER || "openai";
@@ -522,6 +579,15 @@ __r.PROVIDERS = PROVIDERS;
     get provider() { return PHANTOM_LLM_PROVIDER; },
     set provider(name) { if (PROVIDERS[name]) setProvider(name); },
     get providers() { return Object.keys(PROVIDERS); },
+    get models() { return MODELS[PHANTOM_LLM_PROVIDER] || []; },
+    get model() { return _config.default_model || getProvider().defaultModel; },
+    set model(name) {
+      if (!name) return;
+      _config.default_model = name;
+      __r._config = _config;
+      try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {}
+    },
+    listModels,
     detectProviders,
     selectBest,
     get hasLLM() {
@@ -545,11 +611,12 @@ __r.PROVIDERS = PROVIDERS;
             }
             if (p.keyEnv && !key) return `[${PHANTOM_LLM_PROVIDER}] No API key. Set ${p.keyEnv} env or in config.json (run interactively to be prompted)`;
 
-            const model = opts.model || _config.default_model || p.defaultModel;
-   
-            // Fallback chain on rate limits / errors
-            const fallbackOrder = ["openai", "anthropic", "groq", "gemini", "deepseek", "mistral", "openrouter", "opencode"];
-            let currentProvider = PHANTOM_LLM_PROVIDER;
+            // The explicitly selected provider is always tried first, otherwise
+            // the choice is silently discarded in favour of the first keyed one.
+            const selected = PROVIDERS[PHANTOM_LLM_PROVIDER] ? PHANTOM_LLM_PROVIDER : "openai";
+            const fallbackOrder = [...new Set([selected, "openai", "ollama", "opencode", "anthropic", "groq", "gemini", "deepseek", "mistral", "openrouter"])]
+              .filter(n => PROVIDERS[n]);
+            let currentProvider = selected;
             let lastError = "";
    
             for (const providerName of fallbackOrder) {
@@ -557,13 +624,29 @@ __r.PROVIDERS = PROVIDERS;
               if (!provider) continue;
       
               const providerKey = getKey(provider);
-              if (provider.keyEnv && !providerKey && providerName !== "ollama") continue;
-
-              // For OpenRouter with no explicit model, try free models in order.
-              let models = [model];
-              if (providerName === "openrouter" && !opts.model && !_config.default_model) {
+              if (providerName !== "ollama" && !providerKey) continue;
+              if (providerName === "ollama" && selected !== "ollama" && !await ollamaUp(provider)) continue;
+   
+              // Resolve the model per provider: an explicit opts.model or a configured
+              // default_model belongs to the selected provider, not to every fallback.
+              // Other providers must use their own default or the request 400s.
+              let models;
+              if (providerName === selected) {
+                models = [opts.model || _config.default_model || provider.defaultModel];
+                // "auto" / "default" means: let the provider choose.
+                if (models[0] === "auto" || models[0] === "default") models = [provider.defaultModel];
+              } else if (opts.model) {
+                models = [opts.model];
+              } else if (_config.default_model) {
+                models = [provider.defaultModel];
+              } else if (providerName === "openrouter") {
+                // OpenRouter's free tier rotates, so try live free models in order.
                 models = await freeOpenRouterModels(providerKey);
+              } else {
+                models = [provider.defaultModel];
               }
+              models = models.filter(Boolean);
+              if (!models.length) models = [provider.defaultModel];
 
               for (let mi = 0; mi < models.length; mi++) {
                 const candidate = models[mi];
@@ -2712,6 +2795,7 @@ class ConversationalUI {
       const sub = lower.replace("llm ", "").replace("model ", "").trim();
       if (sub === "list") return "llm_config list";
       if (sub.startsWith("set ")) return `llm_config set ${sub.slice(4).trim()}`;
+      if (sub) return `llm_config model ${sub}`;
     }
     
     // Help
@@ -2902,8 +2986,9 @@ class ConversationalUI {
 
     // Startup info in conversation area
     const providerName = this.llm?.provider || "no-llm";
+    const modelName = this.llm?.model || "default";
     const ready = this.llm?.hasLLM ? `${c("green")}ready${R}` : `${c("yellow")}tools-only${R}`;
-    this.tui.log(`  ${c("dim")}${providerName} ${ready} · ${toolCount} tools${R}`);
+    this.tui.log(`  ${c("dim")}${providerName} · ${modelName} ${ready} · ${toolCount} tools${R}`);
 
     // ── Spawn agents ──
     if (this.am.count === 0) {
@@ -3547,7 +3632,7 @@ class ConversationalUI {
 
   renderStatusBar() {
     const cols = this.cols;
-    const model = this.llm?.provider || "no LLM";
+    const model = [this.llm?.provider, this.llm?.model].filter(Boolean).join("/") || "no LLM";
     const modelShort = typeof model === "string" ? model.replace(/^custom:/, "").split("/").pop() || model : "ai";
     const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
     const elapsedStr = elapsed >= 3600
@@ -3709,16 +3794,51 @@ class ConversationalUI {
         for (let i = 0; i < names.length; i += 4) console.log(`  ${names.slice(i, i + 4).map(n => `${c("cyan")}${n.padEnd(20)}${R}`).join("")}`);
         console.log("");
       },
-      model: (rest) => {
-        if (rest.length === 0) {
-          const ready = process.env.PHANTOM_PROVIDERS_READY;
-          const avail = ready ? ready.split(",") : [];
-          console.log(`\n${B}Current:${R} ${this.llm?.provider || "none"}`);
+      model: async (rest) => {
+        const arg = (rest || []).join(" ").trim();
+        if (!arg) {
+          // Detect live rather than trusting the snapshot taken at startup.
+          const avail = await this.llm?.detectProviders?.().catch(() => ({})) || {};
+          const cur = this.llm?.provider || "none";
+          console.log(`\n${B}Provider:${R} ${cur}    ${B}Model:${R} ${this.llm?.model || "?"}`);
           console.log(`${D}Available providers:${R}`);
-          for (const p of this.llm?.providers || []) console.log(`  ${p.padEnd(14)}${avail.includes(p) ? `${c("green")} ✅${R}` : `${c("dim")} —${R}`}`);
-          console.log(`${D}/model <provider> to switch${R}\n`);
-        } else if (this.llm?.providers?.includes(rest[0])) { this.llm.provider = rest[0]; console.log(`\n${c("green")}✓${R} Switched to ${B}${rest[0]}${R}\n`); }
-        else console.log(`\n${c("red")}✕${R} Unknown: ${rest[0]}. Available: ${this.llm?.providers?.join(", ") || "none"}\n`);
+          for (const p of this.llm?.providers || []) console.log(`  ${p.padEnd(14)}${avail[p] && avail[p] !== "no" ? `${c("green")} ✅${R}` : `${D}—${R}`}`);
+          const models = await this.llm?.listModels(cur).catch(() => this.llm?.models || []);
+          if (models.length) {
+            console.log(`\n${D}Models for ${cur} (${models.length}):${R}`);
+            models.forEach((m, i) => console.log(`  ${c("cyan")}${i + 1}${R}) ${m}`));
+          }
+          console.log(`\n${D}/model <provider>            switch provider${R}`);
+          console.log(`${D}/model <provider> <model>    switch provider and model${R}`);
+          console.log(`${D}/model <#|model>            switch model on ${cur}\n`);
+        } else if (this.llm?.providers?.includes(arg)) {
+          this.llm.provider = arg;
+          const models = await this.llm?.listModels(arg).catch(() => []);
+          if (models.length) {
+            console.log(`\n${B}Models for ${arg}:${R}`);
+            models.forEach((m, i) => console.log(`  ${c("cyan")}${i + 1}${R}) ${m}`));
+            console.log(`${D}/model ${arg} <#|model> to pick one${R}\n`);
+          }
+          console.log(`${c("green")}✓${R} Switched to ${B}${arg}${R} (model: ${this.llm.model})\n`);
+        } else if (this.llm?.providers?.includes(rest[0]) && rest[1]) {
+          this.llm.provider = rest[0];
+          this.llm.model = rest.slice(1).join(" ");
+          console.log(`\n${c("green")}✓${R} ${B}${rest[0]}/${this.llm.model}${R}\n`);
+        } else {
+          const n = parseInt(arg);
+          if (n >= 1) {
+            const models = await this.llm?.listModels(this.llm?.provider).catch(() => []);
+            if (models[n - 1]) {
+              this.llm.model = models[n - 1];
+              console.log(`\n${c("green")}✓${R} Model: ${B}${models[n - 1]}${R}\n`);
+              return;
+            }
+            console.log(`\n${c("red")}✕${R} No model #${n} for ${this.llm?.provider} (${models.length} available)\n`);
+            return;
+          }
+          this.llm.model = arg;
+          console.log(`\n${c("green")}✓${R} Model: ${B}${arg}${R} (${this.llm.provider})\n`);
+        }
       },
       clear: () => {
         this.logLines = [];
@@ -4116,61 +4236,117 @@ __r.llmInstance = llmInstance;
   process.exit(1);
 }
 
-// ── Provider detection ──
-if (ENV.interactive) {
+// ── Provider + model selection ──
+if (ENV.interactive && !process.env.PHANTOM_NO_SETUP) {
   try {
+    // Labels and key env vars are read from the live registry so the picker can
+    // never drift from what chat() actually uses.
+    const P = __r.PROVIDERS || {};
+    const LABELS = {
+      openai: "OpenAI (opencode.ai/zen)", opencode: "OpenCode Zen",
+      anthropic: "Anthropic", gemini: "Google Gemini", groq: "Groq",
+      deepseek: "DeepSeek", mistral: "Mistral", openrouter: "OpenRouter",
+      ollama: "Ollama (local, no key)",
+    };
+    const PICK_ORDER = ["openai", "opencode", "anthropic", "gemini", "groq", "deepseek", "mistral", "openrouter", "ollama"];
+    const choices = PICK_ORDER.filter(n => P[n]);
+
+    const askQ = async (q) => {
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const a = await new Promise(r => rl.question(q, r));
+      rl.close();
+      return a.trim();
+    };
+
     const avail = await llm.detectProviders();
     const ready = Object.entries(avail).filter(([, v]) => v !== "no").map(([n]) => n);
-    if (ready.length > 0) {
-      if (!ready.includes(llm.provider)) {
-        const best = llm.selectBest(avail);
-        if (best) llm.provider = best;
+    process.env.PHANTOM_PROVIDERS_READY = ready.join(",");
+
+    // A provider only counts as configured if it is actually reachable. Ollama
+    // needs no key, so it is accepted when the user explicitly selected it.
+    const usable = n => n === "ollama" ? ready.includes("ollama") : ready.includes(n);
+    if (!usable(llm.provider)) {
+      const best = llm.selectBest(avail);
+      if (best) {
+        console.log(`\n${D}Provider "${_config.default_provider || "none"}" is unavailable — falling back to ${c("cyan")}${best}${R}.${R}`);
+        llm.provider = best;
       }
-      process.env.PHANTOM_PROVIDERS_READY = ready.join(",");
-    } else {
-      // No LLM available — offer to set up an API key
+    }
+
+    // Never leave the user on an unconfigured provider with no key at all.
+    if (!usable(llm.provider) && P[llm.provider]?.keyEnv && !process.env.PHANTOM_LLM_PROVIDER) {
+      llm.provider = "ollama";
+    }
+
+    const showModel = async (name) => {
+      const models = await llm.listModels(name).catch(() => []);
+      if (!models.length) return false;
+      const cap = Math.min(models.length, 12);
+      console.log(`\n${B}Models for ${name}${name === llm.provider ? ` ${D}(current: ${llm.model})${R}` : ""}:${R}`);
+      models.slice(0, 12).forEach((m, i) => console.log(`  ${c("cyan")}${i + 1}${R}) ${m}`));
+      const mr = await askQ(`\n${c("cyan")}?${R} Model [1-${cap}] or name ${D}(Enter for ${P[name].defaultModel})${R}: `);
+      if (mr) {
+        const m = /^\d+$/.test(mr) ? models[parseInt(mr) - 1] : mr;
+        if (m) llm.model = m;
+      }
+      return true;
+    };
+
+    const ensureKey = async (name) => {
+      if (!P[name].keyEnv) return;
+      if (ready.includes(name)) return;
+      const envVar = P[name].keyEnv;
+      const entered = await askHidden(`${c("cyan")}🔑${R} Enter ${LABELS[name] || name} API key ${D}(${envVar})${R}: `);
+      if (!entered || !entered.trim()) return;
+      process.env[envVar] = entered.trim();
+      vaultSet(envVar, entered.trim());
+      delete _config[envVar];
+      try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {}
+      console.log(`${c("green")}✓${R} ${LABELS[name] || name} API key saved to vault\n`);
+      ready.push(name);
+      process.env.PHANTOM_PROVIDERS_READY = [...new Set(ready)].join(",");
+    };
+
+    if (ready.length === 0) {
       console.log(`\n${c("yellow")}⚠ No LLM provider configured.${R}`);
-      console.log(`${D}You can run Ollama locally or set an API key.${R}`);
-      const keyProviders = [
-        ["openai", "OPENAI_API_KEY", "OpenAI"],
-        ["anthropic", "ANTHROPIC_API_KEY", "Anthropic"],
-        ["groq", "GROQ_API_KEY", "Groq"],
-        ["gemini", "GEMINI_API_KEY", "Google Gemini"],
-        ["deepseek", "DEEPSEEK_API_KEY", "DeepSeek"],
-        ["mistral", "MISTRAL_API_KEY", "Mistral"],
-        ["openrouter", "OPENROUTER_API_KEY", "OpenRouter"],
-      ];
-      console.log(`\n${B}Set up a provider?${R} (${D}enter number or leave blank to skip${R})`);
-      for (let i = 0; i < keyProviders.length; i++) {
-        console.log(`  ${i + 1}) ${keyProviders[i][2]}`);
+      console.log(`${D}Run Ollama locally, or set an API key.${R}`);
+    }
+
+    console.log(`\n${B}LLM:${R} ${c("cyan")}${llm.provider}${R} / ${c("cyan")}${llm.model}${R}  ${D}(Enter to keep, "m" to change model)${R}`);
+    for (let i = 0; i < choices.length; i++) {
+      const n = choices[i];
+      const mark = n === llm.provider ? `${c("green")}*${R}` : " ";
+      const tag = n === "ollama"
+        ? (ready.includes("ollama") ? `${c("green")}running${R}` : `${D}not running${R}`)
+        : P[n].keyEnv ? `${D}${P[n].keyEnv}${R}` : "";
+      console.log(` ${mark} ${String(i + 1).padStart(2)}) ${(LABELS[n] || n).padEnd(26)} ${tag}`);
+    }
+
+    const pick = await askQ(`\n${c("cyan")}?${R} Provider [1-${choices.length}], name, or blank to keep: `);
+    let picked = null;
+    if (pick) {
+      if (/^\d+$/.test(pick)) picked = choices[parseInt(pick) - 1];
+      else if (pick.toLowerCase() === "m") picked = null;
+      else picked = pick.toLowerCase();
+    }
+
+    if (picked && P[picked]) {
+      llm.provider = picked;
+      await ensureKey(picked);
+      if (picked !== "ollama" && !ready.includes(picked)) {
+        console.log(`${c("yellow")}⚠${R} No API key for ${LABELS[picked] || picked} — requests will fall back.\n`);
       }
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      const pick = await new Promise(r => rl.question(`\n${c("cyan")}?${R} Choice (1-${keyProviders.length}): `, r));
-      rl.close();
-      const idx = parseInt(pick) - 1;
-      if (idx >= 0 && idx < keyProviders.length) {
-        const [, envVar, label] = keyProviders[idx];
-        const key = await askHidden(`${c("cyan")}🔑${R} Enter ${label} API key: `);
-        if (key.trim()) {
-          process.env[envVar] = key.trim();
-          if (/_KEY$|_TOKEN$|_SECRET$|PASSWORD/.test(envVar)) {
-            vaultSet(envVar, key.trim());
-            delete _config[envVar];
-          } else {
-            _config[envVar] = key.trim();
-          }
-          try { fs.writeFileSync(userConfigPath, JSON.stringify(_config, null, 2)); } catch {}
-          console.log(`${c("green")}✓${R} ${label} API key saved (secrets to vault)\n`);
-          // Re-detect
-          const avail2 = await llm.detectProviders();
-          const ready2 = Object.entries(avail2).filter(([, v]) => v !== "no").map(([n]) => n);
-          if (ready2.length > 0) {
-            const best = llm.selectBest(avail2);
-            if (best) llm.provider = best;
-            process.env.PHANTOM_PROVIDERS_READY = ready2.join(",");
-          }
-        }
-      }
+      await showModel(picked);
+    } else if (picked) {
+      console.log(`${c("yellow")}⚠${R} Unknown provider "${picked}". Keeping ${c("cyan")}${llm.provider}${R}.\n`);
+    } else if (pick.toLowerCase() === "m") {
+      await showModel(llm.provider);
+    }
+
+    if (ready.length === 0 && !usable(llm.provider)) {
+      console.log(`${D}No LLM available. Run ${c("cyan")}ollama serve${R}, set a key, or use tools-only mode.\n`);
+    } else {
+      console.log(`${c("green")}✓${R} Using ${B}${llm.provider}/${llm.model}${R}\n`);
     }
   } catch {}
 }
